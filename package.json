@@ -1,0 +1,30 @@
+{
+  "name": "air-combat-fable5",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/client",
+    "packages/server"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n client,server -c cyan,magenta \"npm:dev:client\" \"npm:dev:server\"",
+    "dev:client": "npm run dev -w @air-combat/client",
+    "dev:server": "npm run dev -w @air-combat/server",
+    "test": "vitest run",
+    "typecheck": "npm run typecheck --workspaces",
+    "lint": "eslint .",
+    "build": "npm run build -w @air-combat/client -w @air-combat/server"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "concurrently": "^10.0.3",
+    "eslint": "^10.4.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.61.0",
+    "vitest": "^4.1.8"
+  }
+}
