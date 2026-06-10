@@ -48,4 +48,15 @@ Poza zakresem: siły aerodynamiczne, model samolotu, input gracza (poza throttle
 
 ## Wynik (uzupełnić po zakończeniu)
 
-—
+Ukończona 2026-06-10. Kryteria:
+
+- Złote testy zielone: spadek swobodny <0.1% (h0=1000 m — patrz memory: błąd Eulera wymaga
+  dużego h0), rzut ukośny <0.1% (interpolacja przecięcia y=0), kwaternion 4×90° → identyczność,
+  norma stabilna po 60 000 ticków
+- Scena: sześcian spada z 80 m na siatkę, strzałka grawitacji (skala log), F3 toggle,
+  F4 przełącza tick 60↔10 Hz (wizualny test interpolacji — mesh lerp/slerp prev↔curr), R reset
+- Strażnik NaN: wstrzyknięty NaN/Infinity → `PhysicsError` z listą pól i dumpem stanu (test)
+- typecheck + test (13) + lint zielone; commit `faza-1`
+
+Nowe moduły `shared`: `errors.ts`, `math/frame.ts` (getForward/getUp/getRight),
+`physics/{state,forces,loop,nan-guard}.ts`. Klient: `hud.ts`, `force-arrows.ts`, `net-status.ts`.

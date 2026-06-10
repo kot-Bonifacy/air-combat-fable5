@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0 ; aktualny fokus: Faza 1 — Fundament fizyki + obserwowalność
+Fazy ukończone: 0–1 ; aktualny fokus: Faza 2 — Model lotu cz.1 (siły)
 
 ## Stack (skrót)
 
