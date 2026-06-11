@@ -66,3 +66,13 @@ export function nDemandForPitchRate(state: PlaneState, pitchRateRadS: number): n
   if (!liftDirection(state, scratchLiftDir)) return 1; // V≈0: q≈0, wartość bez znaczenia
   return scratchLiftDir.y + (pitchRateRadS * state.velocity.length()) / GRAVITY_MS2;
 }
+
+/**
+ * Odwrotność nDemandForPitchRate: pitch rate [rad/s], przy którym nos podąża
+ * za torem zakrzywianym przez przeciążenie n (fizyka-lotu.md rozdz. 6.1:
+ * ω_pitch = (n − cos(γ/bank)) · g / V; składnik cos to rzut liftDir na pion).
+ */
+export function pitchRateForLoadFactor(state: PlaneState, nG: number): number {
+  if (!liftDirection(state, scratchLiftDir)) return 0;
+  return ((nG - scratchLiftDir.y) * GRAVITY_MS2) / state.velocity.length();
+}

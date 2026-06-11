@@ -19,6 +19,31 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
     fullThrottleHeightM: 4000,
     propEfficiency: 0.8,
     staticThrustN: 10_000,
+    nMaxG: 8,
+    nMinG: -4,
+    rollRateCurve: [
+      [100, 40],
+      [400, 80],
+    ],
+    alignTauS: 0.4,
+    sideslipDampingS: 0.5,
+    sideslipMaxAccelG: 0.3,
+    stall: {
+      buffetOnsetRatio: 0.9,
+      noseDropRateDegS: 12,
+      aileronEffectiveness: 0.3,
+      wingDropDelayS: 1.0,
+      wingDropRateDegS: 40,
+    },
+    instructor: {
+      aggressivenessRoll: 5,
+      aggressivenessPitch: 4,
+      bankThresholdDeg: 20,
+      pushoverConeDeg: 20,
+      smoothingTauS: 0.12,
+      yawGain: 0.5,
+      maxYawRateDegS: 8,
+    },
     ...overrides,
   };
 }

@@ -53,6 +53,23 @@ Poza zakresem: teren (faza 4), broń (faza 5), drugi samolot.
   (choroba symulatorowa) — kamera podąża za samolotem, celownik za myszą
 - Procedura debugowania z `fizyka-lotu.md` rozdz. 12 obowiązuje od tej fazy
 
-## Wynik (uzupełnić po zakończeniu)
+## Wynik (2026-06-11)
 
-—
+Wszystkie kryteria spełnione. Model przestrojony w trakcie fazy na **Spitfire Mk IA
+w konfiguracji BoB (+12 lb boost, 1310 KM)** po sesji testowej użytkownika („za mało
+dynamiczny") — parametry ze źródeł: N.3171, RAE 06.1940, Collar, Morgan & Morris
+(szczegóły: `memory/project_phase3_decisions.md`, tabela celów: fizyka-lotu.md rozdz. 10).
+
+Metryki (93 testy zielone): V_max SL 503.5 km/h (cel 505), V_max 5500 m 557 (cel 570 ±8%),
+stall 117.0 (cel 117), wznoszenie 17.6 m/s (cel 17 ±15%), **zakręt 360° 16.6 s** (cel 16 ±8%,
+zgodny z bilansem mocy 16.0, dryf wysokości −27 m), **roll @350 68.0°/s** (cel 70 ±10%).
+
+Powstało: `envelope.ts`, `stall.ts` (maszyna stanów + seeded wing drop),
+`instructor/instructor.ts` (bank-and-pull), `pilot-step.ts` (wspólny pipeline
+pilot→koperta→stall→fizyka dla klienta/serwera/botów), klient: pointer lock + celownik
++ kamera pościgowa + HUD + klawiatura przez kopertę, panel Tweakpane z eksportem presetu,
+rejestrator 60 Hz×5 min + `/telemetry.html` (uPlot). Sesja testowa: „jest ok";
+finalny preset = `spitfire-mk1.json` w commicie fazy.
+
+Poprawki modelu odkryte testami: limit autorytetu tłumika ślizgu (`sideslipMaxAccelG`),
+feed-forward koordynacji yaw w zakręcie (−g·right.y/V) — opisane w fizyka-lotu.md 6.3.

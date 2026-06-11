@@ -1,14 +1,9 @@
 /**
- * TYMCZASOWE sterowanie fazy 2 (docs/phases/faza-02.md): strzałki zadają
- * surowe prędkości kątowe pitch/roll, Z/X reguluje gaz. Celowo bez koperty
- * sterowności — pełne sterowanie (instruktor + koperta) to faza 3.
- * Konwencja symulatorowa: strzałka W DÓŁ = nos w górę (drążek do siebie).
- *
- * Stałe rate'ów to scaffolding debugowy tej fazy, nie strojenie samolotu —
- * docelowe wartości przyjdą z krzywych w JSON (faza 3).
+ * Klawiatura jako pełnoprawny fallback sterowania (faza 3): WSAD/QE + strzałki
+ * zadają wychylenia −1..1, które main.ts zamienia na żądania PRZEZ kopertę
+ * (n z nMax/nMin, roll z krzywej IAS). Konwencja symulatorowa (decyzja
+ * użytkownika z fazy 2): S / strzałka w dół = nos w górę (drążek do siebie).
  */
-const PITCH_RATE_RAD_S = (40 * Math.PI) / 180;
-const ROLL_RATE_RAD_S = (100 * Math.PI) / 180;
 const THROTTLE_PER_S = 0.5;
 
 const CAPTURED_CODES = new Set([
@@ -16,11 +11,17 @@ const CAPTURED_CODES = new Set([
   'ArrowDown',
   'ArrowLeft',
   'ArrowRight',
+  'KeyW',
+  'KeyS',
+  'KeyA',
+  'KeyD',
+  'KeyQ',
+  'KeyE',
   'KeyZ',
   'KeyX',
 ]);
 
-export class TempInput {
+export class KeyboardInput {
   private readonly held = new Set<string>();
   /** Przepustnica 0..1 — integrowana z Z/X w update(). */
   throttle = 0.8;
@@ -28,7 +29,7 @@ export class TempInput {
   constructor(target: Window) {
     target.addEventListener('keydown', (event) => {
       if (CAPTURED_CODES.has(event.code)) {
-        event.preventDefault(); // strzałki scrollują stronę
+        event.preventDefault(); // strzałki/spacja scrollują stronę
         this.held.add(event.code);
       }
     });
@@ -43,20 +44,35 @@ export class TempInput {
 
   /** Integracja przepustnicy; wołać raz na tick fizyki. */
   update(dtS: number): void {
-    const delta =
-      (this.held.has('KeyZ') ? 1 : 0) - (this.held.has('KeyX') ? 1 : 0);
+    const delta = (this.held.has('KeyZ') ? 1 : 0) - (this.held.has('KeyX') ? 1 : 0);
     this.throttle = Math.min(1, Math.max(0, this.throttle + delta * THROTTLE_PER_S * dtS));
   }
 
-  /** [rad/s], >0 = nos w górę (strzałka w dół — konwencja symulatorowa). */
-  get pitchRate(): number {
-    const sign = (this.held.has('ArrowDown') ? 1 : 0) - (this.held.has('ArrowUp') ? 1 : 0);
-    return sign * PITCH_RATE_RAD_S;
+  private axis(positive: readonly string[], negative: readonly string[]): number {
+    const pos = positive.some((code) => this.held.has(code)) ? 1 : 0;
+    const neg = negative.some((code) => this.held.has(code)) ? 1 : 0;
+    return pos - neg;
   }
 
-  /** [rad/s], >0 = przechylenie w prawo. */
-  get rollRate(): number {
-    const sign = (this.held.has('ArrowRight') ? 1 : 0) - (this.held.has('ArrowLeft') ? 1 : 0);
-    return sign * ROLL_RATE_RAD_S;
+  /** −1..1, +1 = nos w górę (S / strzałka w dół — konwencja symulatorowa). */
+  get pitchDeflection(): number {
+    return this.axis(['KeyS', 'ArrowDown'], ['KeyW', 'ArrowUp']);
+  }
+
+  /** −1..1, +1 = przechylenie w prawo. */
+  get rollDeflection(): number {
+    return this.axis(['KeyD', 'ArrowRight'], ['KeyA', 'ArrowLeft']);
+  }
+
+  /** −1..1, +1 = nos w prawo (E). */
+  get yawDeflection(): number {
+    return this.axis(['KeyE'], ['KeyQ']);
+  }
+
+  /** Czy gracz steruje rotacją z klawiatury (wtedy omijamy instruktora). */
+  get hasRotationInput(): boolean {
+    return (
+      this.pitchDeflection !== 0 || this.rollDeflection !== 0 || this.yawDeflection !== 0
+    );
   }
 }

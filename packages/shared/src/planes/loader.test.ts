@@ -16,6 +16,32 @@ function validRaw(): Record<string, unknown> {
     fullThrottleHeightM: 5000,
     propEfficiency: 0.8,
     staticThrustN: 13000,
+    nMaxG: 8,
+    nMinG: -4,
+    rollRateCurve: [
+      [150, 30],
+      [300, 70],
+      [450, 85],
+    ],
+    alignTauS: 0.4,
+    sideslipDampingS: 0.5,
+    sideslipMaxAccelG: 0.3,
+    stall: {
+      buffetOnsetRatio: 0.9,
+      noseDropRateDegS: 12,
+      aileronEffectiveness: 0.3,
+      wingDropDelayS: 1.0,
+      wingDropRateDegS: 40,
+    },
+    instructor: {
+      aggressivenessRoll: 5.0,
+      aggressivenessPitch: 2.5,
+      bankThresholdDeg: 20,
+      pushoverConeDeg: 20,
+      smoothingTauS: 0.12,
+      yawGain: 0.5,
+      maxYawRateDegS: 8,
+    },
   };
 }
 
@@ -28,7 +54,7 @@ describe('loader konfiguracji samolotu', () => {
   });
 
   it('SPITFIRE_MK1 ładuje się z JSON (walidacja przy imporcie)', () => {
-    expect(SPITFIRE_MK1.name).toBe('Spitfire Mk I');
+    expect(SPITFIRE_MK1.name).toBe('Spitfire Mk IA (BoB, +12 lb boost)');
     expect(SPITFIRE_MK1.wingAreaM2).toBeGreaterThan(0);
   });
 
@@ -66,6 +92,27 @@ describe('loader konfiguracji samolotu', () => {
   it('nie-obiekt → PlaneConfigError', () => {
     expect(() => loadPlaneConfig(null)).toThrowError(PlaneConfigError);
     expect(() => loadPlaneConfig([1, 2])).toThrowError(PlaneConfigError);
+  });
+
+  it('rollRateCurve z malejącą IAS → PlaneConfigError (monotoniczność)', () => {
+    const raw = validRaw();
+    raw['rollRateCurve'] = [
+      [300, 70],
+      [150, 30],
+    ];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/monotonicznie/);
+  });
+
+  it('literówka w sekcji stall → PlaneConfigError z pełną ścieżką', () => {
+    const raw = validRaw();
+    (raw['stall'] as Record<string, unknown>)['noseDropRateDegSec'] = 12;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/stall\.noseDropRateDegSec/);
+  });
+
+  it('nMinG ≥ 0 → PlaneConfigError (limit ujemny musi być ujemny)', () => {
+    const raw = validRaw();
+    raw['nMinG'] = 0;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/nMinG/);
   });
 
   it('K = 1/(π·e·AR)', () => {

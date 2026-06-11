@@ -9,9 +9,12 @@
     "build": "vite build"
   },
   "dependencies": {
-    "three": "^0.184.0"
+    "three": "^0.184.0",
+    "tweakpane": "^4.0.5",
+    "uplot": "^1.6.32"
   },
   "devDependencies": {
+    "@tweakpane/core": "^2.0.5",
     "@types/three": "^0.184.1",
     "vite": "^8.0.16"
   }

@@ -1,14 +1,42 @@
 {
-  "name": "Spitfire Mk I",
-  "massKg": 2700,
+  "name": "Spitfire Mk IA (BoB, +12 lb boost)",
+  "massKg": 2744,
   "wingAreaM2": 22.5,
-  "aspectRatio": 5.6,
-  "oswaldE": 0.8,
-  "cd0": 0.021,
-  "clMax": 1.65,
+  "aspectRatio": 5.61,
+  "oswaldE": 0.87,
+  "cd0": 0.02,
+  "clMax": 1.85,
   "clAlphaPerRad": 5.0,
-  "enginePowerW": 768000,
-  "fullThrottleHeightM": 5500,
+  "enginePowerW": 977000,
+  "fullThrottleHeightM": 3400,
   "propEfficiency": 0.8,
-  "staticThrustN": 6500
+  "staticThrustN": 7700,
+  "nMaxG": 8,
+  "nMinG": -4,
+  "rollRateCurve": [
+    [120, 32],
+    [240, 80],
+    [320, 75],
+    [480, 40],
+    [640, 14]
+  ],
+  "alignTauS": 0.4,
+  "sideslipDampingS": 0.5,
+  "sideslipMaxAccelG": 0.3,
+  "stall": {
+    "buffetOnsetRatio": 0.9,
+    "noseDropRateDegS": 12,
+    "aileronEffectiveness": 0.3,
+    "wingDropDelayS": 1.0,
+    "wingDropRateDegS": 40
+  },
+  "instructor": {
+    "aggressivenessRoll": 7.0,
+    "aggressivenessPitch": 5.0,
+    "bankThresholdDeg": 20,
+    "pushoverConeDeg": 20,
+    "smoothingTauS": 0.08,
+    "yawGain": 0.5,
+    "maxYawRateDegS": 10
+  }
 }

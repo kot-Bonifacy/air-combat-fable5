@@ -1,12 +1,15 @@
 import { Vector3 } from 'three';
 import { dragForce } from '../aero/drag';
-import { liftForce } from '../aero/lift';
+import { liftDirection, liftForce } from '../aero/lift';
 import { enginePowerW, thrustForce } from '../aero/thrust';
-import { FIXED_DT_S, GRAVITY_MS2, PHYSICS_HZ } from '../constants';
+import { FIXED_DT_S, GRAVITY_MS2, MS_TO_KMH, PHYSICS_HZ } from '../constants';
 import { PhysicsError } from '../errors';
-import type { PlaneConfig } from '../planes/loader';
+import { createPilotDemands } from '../instructor/instructor';
+import { inducedDragFactor, type PlaneConfig } from '../planes/loader';
 import { airDensityKgM3, dynamicPressurePa } from '../physics/atmosphere';
+import { nAvailG } from '../physics/envelope';
 import { validatePlaneState } from '../physics/nan-guard';
+import { createSimPlane, pilotStep } from '../physics/pilot-step';
 import { nDemandForPitchRate, stepPlane } from '../physics/plane-step';
 import { createPlaneState, type PlaneState } from '../physics/state';
 
@@ -167,6 +170,153 @@ export interface DiveEnergyResult {
   maxTickEnergyGainJ: number;
   /** Zmiana energii całkowitej na końcu [J] (powinna być ujemna). */
   totalEnergyChangeJ: number;
+}
+
+/**
+ * Roll rate w ustalonym przy zadanej IAS: pełna lotka przez PEŁNY pipeline
+ * pilota (koperta + maszyna przeciągnięcia), throttle dobrany raz na start
+ * z bilansu T=D. Zwraca średni roll rate [°/s] z okna pomiarowego.
+ */
+export function rollRateTest(plane: PlaneConfig, iasKmh: number, altitudeM = 100): number {
+  const speedMs = iasKmh / MS_TO_KMH; // nisko: IAS ≈ TAS (rozjazd <1% na 100 m)
+  const sim = createSimPlane(7);
+  const { state } = sim;
+  state.position.set(0, altitudeM, 0);
+  state.velocity.set(0, 0, speedMs);
+  state.iasMs = speedMs;
+
+  // throttle z bilansu T = D w locie poziomym (n=1) — trzyma IAS w oknie pomiaru
+  const rho = airDensityKgM3(altitudeM);
+  const qPa = dynamicPressurePa(rho, speedMs);
+  const qS = qPa * plane.wingAreaM2;
+  const cl = (plane.massKg * GRAVITY_MS2) / qS;
+  const dragN = qS * (plane.cd0 + inducedDragFactor(plane) * cl * cl);
+  const availablePowerW = plane.propEfficiency * enginePowerW(plane, altitudeM);
+  state.throttle = Math.min(1, (dragN * speedMs) / availablePowerW);
+
+  const demands = createPilotDemands();
+  const settleTicks = 1 * PHYSICS_HZ;
+  const measureTicks = 2 * PHYSICS_HZ;
+  let rolledRad = 0;
+  for (let i = 0; i < settleTicks + measureTicks; i++) {
+    demands.nDemandG = nDemandForPitchRate(state, 0); // bez ciągnięcia — czysta beczka
+    demands.rollRateRadS = 100; // żądanie absurdalne — nasycenie robi koperta
+    pilotStep(sim, plane, demands, FIXED_DT_S);
+    validatePlaneState(state, 'rollRateTest');
+    if (i >= settleTicks) rolledRad += state.angularRates.roll * FIXED_DT_S;
+  }
+  return ((rolledRad / (measureTicks * FIXED_DT_S)) * 180) / Math.PI;
+}
+
+export interface SustainedTurnResult {
+  /** Czas pełnego zakrętu 360° zmierzony symulacją [s]. */
+  turnTimeS: number;
+  /** Czas 360° z bilansu mocy (T = D przy n_sust) [s]. */
+  analyticTurnTimeS: number;
+  /** Przechylenie w zakręcie ustalonym [°]. */
+  bankDeg: number;
+  /** TAS optymalna [m/s]. */
+  tasMs: number;
+  /** Zmiana wysokości w mierzonym okrążeniu [m] (sanity "z utrzymaniem wysokości"). */
+  altitudeDriftM: number;
+}
+
+/**
+ * Zakręt ustalony (fizyka-lotu.md rozdz. 11.5): analitycznie — przeszukanie V
+ * po bilansie T(V) = D(V, n_sust), gdzie nadwyżka ciągu nad oporem pasożytniczym
+ * idzie w opór indukowany zakrętu; ω = g·√(n²−1)/V. Potem symulacja w czasie:
+ * regulator trzymania przechylenia (P na kącie — bez oscylacji, bo roll jest
+ * kinematyczny) + n = 1/cosφ z tłumieniem prędkości pionowej (rate feedback,
+ * nie pozycyjny — pozycyjny fugoiduje, memory fazy 2).
+ */
+export function sustainedTurnTest(plane: PlaneConfig, altitudeM = 500): SustainedTurnResult {
+  const weightN = plane.massKg * GRAVITY_MS2;
+  const kInduced = inducedDragFactor(plane);
+  const rho = airDensityKgM3(altitudeM);
+
+  // --- część analityczna ---
+  let best = { tasMs: 0, n: 1, omega: 0 };
+  for (let tasMs = 40; tasMs <= 160; tasMs += 0.5) {
+    const qPa = dynamicPressurePa(rho, tasMs);
+    const qS = qPa * plane.wingAreaM2;
+    const state = createPlaneState();
+    state.position.set(0, altitudeM, 0);
+    state.velocity.set(0, 0, tasMs);
+    state.throttle = 1;
+    const thrustN = thrustForce(state, plane).force.length();
+    const excessN = thrustN - qS * plane.cd0;
+    if (excessN <= 0) continue;
+    const nSq = (excessN * qS) / (kInduced * weightN * weightN);
+    const n = Math.min(Math.sqrt(nSq), nAvailG(qPa, plane), plane.nMaxG);
+    if (n <= 1.02) continue;
+    const omega = (GRAVITY_MS2 * Math.sqrt(n * n - 1)) / tasMs;
+    if (omega > best.omega) best = { tasMs, n, omega };
+  }
+  if (best.omega === 0) {
+    throw new PhysicsError('sustainedTurnTest: brak punktu zakrętu ustalonego z n > 1');
+  }
+  const analyticTurnTimeS = (2 * Math.PI) / best.omega;
+  const targetBankRad = Math.acos(1 / best.n);
+
+  // --- symulacja w czasie ---
+  const sim = createSimPlane(11);
+  const { state } = sim;
+  state.position.set(0, altitudeM, 0);
+  state.velocity.set(0, 0, best.tasMs);
+  state.iasMs = best.tasMs;
+  state.throttle = 1;
+
+  const demands = createPilotDemands();
+  const liftDir = new Vector3();
+  const BANK_GAIN_PER_S = 2;
+
+  const settleS = 8;
+  let headingPrevRad: number | undefined;
+  let accumulatedRad = 0;
+  let measureStartTick = -1;
+  let measureStartAltM = 0;
+
+  const maxTicks = 120 * PHYSICS_HZ;
+  for (let i = 0; i < maxTicks; i++) {
+    // przechylenie mierzone w układzie TORU (liftDir.y), nie z osi kadłuba —
+    // nos siedzi α nad torem i pomiar z kadłuba zawyża pion siły nośnej
+    // (objaw: zoom climb → utrata V → przeciągnięcie w "ustalonym" zakręcie)
+    if (!liftDirection(state, liftDir)) {
+      throw new PhysicsError('sustainedTurnTest: zdegenerowany kierunek nośnej');
+    }
+    const bankRad = Math.acos(Math.min(1, Math.max(-1, liftDir.y)));
+    demands.rollRateRadS = BANK_GAIN_PER_S * (targetBankRad - bankRad);
+    // n = 1/liftDir.y trzyma poziom przy bieżącym przechyleniu; cap na n*
+    // analitycznym — sprzężenie od vy kusi, ale na tylnej stronie krzywej mocy
+    // odpowiada odwrotnie (mniej n → mniej oporu → nadmiar ciągu wznosi bardziej)
+    demands.nDemandG = Math.min(best.n, 1 / Math.max(liftDir.y, 0.2));
+    pilotStep(sim, plane, demands, FIXED_DT_S);
+    validatePlaneState(state, 'sustainedTurnTest');
+
+    const headingRad = Math.atan2(state.velocity.x, state.velocity.z);
+    if (headingPrevRad !== undefined && i >= settleS * PHYSICS_HZ) {
+      if (measureStartTick < 0) {
+        measureStartTick = i;
+        measureStartAltM = state.position.y;
+        accumulatedRad = 0;
+      }
+      let delta = headingRad - headingPrevRad;
+      if (delta > Math.PI) delta -= 2 * Math.PI;
+      if (delta < -Math.PI) delta += 2 * Math.PI;
+      accumulatedRad += delta;
+      if (Math.abs(accumulatedRad) >= 2 * Math.PI) {
+        return {
+          turnTimeS: (i - measureStartTick) * FIXED_DT_S,
+          analyticTurnTimeS,
+          bankDeg: (targetBankRad * 180) / Math.PI,
+          tasMs: best.tasMs,
+          altitudeDriftM: state.position.y - measureStartAltM,
+        };
+      }
+    }
+    headingPrevRad = headingRad;
+  }
+  throw new PhysicsError('sustainedTurnTest: brak pełnego okrążenia w 120 s symulacji');
 }
 
 /**

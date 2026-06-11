@@ -104,6 +104,14 @@ Każda siła ma własną funkcję `(state, plane) => Vector3` i własną strzał
 - Mały zadawany rate (klawisze/rudder) + **automatyczna koordynacja**: składowa boczna
   prędkości w body frame wygaszana ze stałą czasową (`sideslipDamping`). Ślizg istnieje
   chwilowo (strzelanie z wyprzedzeniem!), ale samolot naturalnie „idzie za nosem".
+- **Limit autorytetu** (`sideslipMaxAccelG`, lekcja z fazy 3): korekta na tick obcięta do
+  realnego przyspieszenia od siły bocznej kadłuba. Bez limitu tłumik działa jak nieskończony
+  ster — w przechyleniu „zawraca" grawitacyjne opadanie toru w górę (artefakt zoom climbu).
+  |v| nie jest renormalizowane: ubytek energii = opór ślizgu.
+- **Feed-forward koordynacji zakrętu** (w pipeline pilotStep): w przechyleniu grawitacja
+  zagina tor bokiem względem płaszczyzny symetrii z przyspieszeniem g·sinφ; nos dostaje
+  yaw rate = −g·right.y/V, inaczej w zakręcie ustalonym powstaje trwały ślizg, którego
+  tłumik (z limitem!) nie nadgoni.
 
 ### 6.4 Spójność nos↔tor lotu
 - Nos podąża za wektorem prędkości plus `α_implied` (weathervaning ze stałą czasową
@@ -142,24 +150,26 @@ instruktor zamienia to na `n_demand`, `rollRate_demand`, `yaw_demand`:
 
 ## 9. Parametry samolotu — schema JSON (`shared/src/planes/*.json`)
 
-| Pole | Znaczenie | Spitfire Mk I (start) |
+| Pole | Znaczenie | Spitfire Mk IA, +12 lb (po kalibracji fazy 3) |
 |---|---|---|
-| `massKg` | masa | 2700 |
+| `massKg` | masa | 2744 (6050 lb, próby N.3171) |
 | `wingAreaM2` | powierzchnia S | 22.5 |
-| `aspectRatio` | AR (do K) | 5.6 |
-| `oswaldE` | e (do K) | 0.8 |
-| `cd0` | opór pasożytniczy | 0.021 |
-| `clMax` | maks. wsp. nośnej | 1.45 |
+| `aspectRatio` | AR (do K) | 5.61 |
+| `oswaldE` | e (do K) | 0.87 (k≈1.15, Ackroyd/Salisbury) |
+| `cd0` | opór pasożytniczy | 0.020 (Collar/RAE 1940) |
+| `clMax` | maks. wsp. nośnej | 1.85 (gameplay: stall 117 km/h przy 2744 kg) |
 | `clAlphaPerRad` | nachylenie Cl(α) | 5.0 |
-| `enginePowerW` | P0 | 768000 (1030 KM) |
-| `fullThrottleHeightM` | h pełnej mocy sprężarki | 5000 |
-| `propEfficiency` | η | 0.8 |
-| `staticThrustN` | clamp ciągu | 13000 |
+| `enginePowerW` | P0 | 977000 (1310 KM, Merlin III @ +12 lb) |
+| `fullThrottleHeightM` | h pełnej mocy sprężarki | 3400 (9000 ft + ram) |
+| `propEfficiency` | η | 0.8 (Collar) |
+| `staticThrustN` | clamp ciągu (kalibruje wznoszenie) | 7700 |
 | `nMaxG` / `nMinG` | limity przeciążeń | 8 / −4 |
-| `rollRateCurve` | punkty [IAS km/h, °/s] | [[150,30],[300,70],[450,85],[600,45]] |
+| `rollRateCurve` | punkty [IAS km/h, °/s] (lotki płócienne: szczyt nisko, zapaść przy dużej IAS) | [[120,32],[240,80],[320,75],[480,40],[640,14]] |
 | `alignTauS` | stała czasowa nosa | 0.4 |
 | `sideslipDampingS` | wygaszanie ślizgu | 0.5 |
-| `instructor.*` | parametry mouse-aim | aggressiveness itd. |
+| `sideslipMaxAccelG` | limit siły bocznej kadłuba | 0.3 |
+| `stall.*` | buffet/nose drop/lotki/wing drop | rozdz. 6.5 |
+| `instructor.*` | parametry mouse-aim (aggressivenessPitch w G/rad!) | rozdz. 7 |
 
 Wartości startowe = punkt wyjścia do strojenia, nie dogmat. **Żadna z tych liczb nie może
 pojawić się w kodzie.**
@@ -168,15 +178,19 @@ pojawić się w kodzie.**
 
 Wartości przybliżone, wystarczające do gry; tolerancja ±8% o ile nie podano inaczej.
 
-| Metryka | Spitfire Mk I | Bf 109 E-3 (faza 14) |
+Spitfire w konfiguracji Bitwy o Anglię: 100 oktanów, +12 lb boost (decyzja z 2026-06-11 —
+„dynamika myśliwca"; źródła: próby N.3171 A&AEE 1940, RAE 06.1940, Collar 1940,
+Morgan & Morris BA 1640). Kolumna Bf 109 E-3 do rewizji źródłowej w fazie 14.
+
+| Metryka | Spitfire Mk IA (+12 lb) | Bf 109 E-3 (faza 14) |
 |---|---|---|
-| V_max na poziomie morza (TAS) | ~460 km/h | ~465 km/h |
-| V_max na 5–6 km (TAS) | ~570 km/h | ~555 km/h |
-| V przeciągnięcia (IAS, czysty) | ~120 km/h | ~125 km/h |
-| Czas pełnego zakrętu 360° (niska wys., pełna moc) | ~19 s | ~22 s |
+| V_max na poziomie morza (TAS) | ~505 km/h (314 mph, RAE) | ~465 km/h |
+| V_max na 5–6 km (TAS) | ~570 km/h (354 mph @ 18.9k ft) | ~555 km/h |
+| V przeciągnięcia (IAS, czysty) | ~117 km/h (~73 mph @ 6050 lb) | ~125 km/h |
+| Czas pełnego zakrętu 360° (niska wys., pełna moc) | ~16 s (M&M: 17.2 s @ 12k ft) | ~22 s |
 | Roll rate @ 350 km/h | ~70°/s | ~85°/s |
-| Wznoszenie początkowe | ~12,5 m/s | ~15 m/s |
-| Pułap praktyczny (wznoszenie < 2,5 m/s) | ~9,5 km | ~10 km |
+| Wznoszenie początkowe | ~17 m/s (+6¼ lb dawało 2820 ft/min) | ~15 m/s |
+| Pułap praktyczny (wznoszenie < 2,5 m/s) | ~10,5 km (34 700 ft) | ~10 km |
 
 ## 11. Narzędzia (obowiązkowe; bez nich fazy 1–3 nie są „done")
 

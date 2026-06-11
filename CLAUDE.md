@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0–2 ; aktualny fokus: Faza 3 — Model lotu cz.2 (koperta, instruktor, strojenie czucia)
+Fazy ukończone: 0–3 ; aktualny fokus: Faza 4 — Świat minimalny: ocean + wyspa + kolizje
 
 ## Stack (skrót)
 
