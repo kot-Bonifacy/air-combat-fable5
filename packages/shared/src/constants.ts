@@ -15,3 +15,21 @@ export const GRAVITY_MS2 = 9.81;
 
 /** Stały krok fizyki [s] — pochodna PHYSICS_HZ. */
 export const FIXED_DT_S = 1 / PHYSICS_HZ;
+
+/** Gęstość powietrza na poziomie morza wg ISA [kg/m³]. */
+export const SEA_LEVEL_AIR_DENSITY_KGM3 = 1.225;
+
+/** Współczynnik liniowy modelu gęstości ISA w troposferze [1/m] (fizyka-lotu.md rozdz. 4). */
+export const ISA_DENSITY_LAPSE_PER_M = 2.2558e-5;
+
+/** Wykładnik modelu gęstości ISA w troposferze. */
+export const ISA_DENSITY_EXPONENT = 4.2559;
+
+/**
+ * Dolny próg prędkości w mianowniku T = η·P/V [m/s].
+ * Razem z clampem ciągu statycznego usuwa osobliwość przy V→0 (fizyka-lotu.md rozdz. 5.3).
+ */
+export const THRUST_V_EPS_MS = 1;
+
+/** Konwersja m/s → km/h (HUD i cele osiągów podawane w km/h). */
+export const MS_TO_KMH = 3.6;

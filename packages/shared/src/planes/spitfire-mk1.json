@@ -1,0 +1,14 @@
+{
+  "name": "Spitfire Mk I",
+  "massKg": 2700,
+  "wingAreaM2": 22.5,
+  "aspectRatio": 5.6,
+  "oswaldE": 0.8,
+  "cd0": 0.021,
+  "clMax": 1.65,
+  "clAlphaPerRad": 5.0,
+  "enginePowerW": 768000,
+  "fullThrottleHeightM": 5500,
+  "propEfficiency": 0.8,
+  "staticThrustN": 6500
+}

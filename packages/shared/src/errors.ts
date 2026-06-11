@@ -2,3 +2,8 @@
 export class PhysicsError extends Error {
   override name = 'PhysicsError';
 }
+
+/** Błąd walidacji konfiguracji samolotu (shared/src/planes/*.json). */
+export class PlaneConfigError extends Error {
+  override name = 'PlaneConfigError';
+}

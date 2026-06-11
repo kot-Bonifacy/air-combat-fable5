@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0–1 ; aktualny fokus: Faza 2 — Model lotu cz.1 (siły)
+Fazy ukończone: 0–2 ; aktualny fokus: Faza 3 — Model lotu cz.2 (koperta, instruktor, strojenie czucia)
 
 ## Stack (skrót)
 

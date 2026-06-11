@@ -52,4 +52,26 @@ Poza zakresem: koperta sterowności, instruktor/mysz, przeciągnięcie z efektam
 
 ## Wynik (uzupełnić po zakończeniu)
 
-—
+Ukończona 2026-06-11. Zmierzone osiągi (złote testy, `testing/maneuvers.test.ts`):
+
+- `topSpeedTest(0)` = **454.7 km/h** TAS (cel 460, −1.2%)
+- `topSpeedTest(5500)` = **544.1 km/h** TAS (cel 570, −4.5%)
+- `stallTest()` = **122.9 km/h** IAS (cel 120, +2.4%)
+- `climbTest()` = **12.95 m/s** @ 331 km/h TAS (cel 12.5, +3.6%); zgodność symulacji
+  w czasie z bilansem mocy < 0.1%
+- `diveEnergyTest()`: energia maleje w każdym ticku (max ΔE/tick ≈ −6.7 kJ)
+
+Kalibracja względem wartości startowych z fizyka-lotu.md rozdz. 9 (kolejność wg lekcji
+z opus4-7: V_max → V_stall → wznoszenie):
+
+- `clMax` 1.45 → **1.65** (stall był 131 km/h; przy m=2700 kg potrzeba więcej Cl)
+- `staticThrustN` 13000 → **6500** (wznoszenie było 19.5 m/s — stałe η zawyża moc śmigła
+  przy małych V; niski clamp statyczny pełni rolę spadku η, nie ogranicza V_max)
+- `fullThrottleHeightM` 5000 → **5500** (V_max na 5500 m było 533 km/h, −6.4% — blisko granicy)
+
+Nowe moduły `shared`: `physics/{atmosphere,plane-step}.ts`, `aero/{lift,drag,thrust}.ts`,
+`planes/{loader.ts,spitfire-mk1.json}`, `testing/{maneuvers,fixtures}.ts`, `PlaneConfigError`.
+Klient: `plane-mesh.ts` (stożek+skrzydła), `input.ts` (strzałki/Z/X, konwencja symulatorowa:
+dół = nos w górę — decyzja użytkownika), `orbit-camera.ts` (mysz+kółko), HUD: IAS/TAS/alt/n/α/E/gaz.
+56 testów zielonych. Sterowanie tymczasowe: pitch rate → n przez `nDemandForPitchRate`
+(n = liftDir·ŷ + ω·V/g — odwrócenie wzoru zakrętu ustalonego).

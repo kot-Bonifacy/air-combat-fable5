@@ -1,11 +1,8 @@
 import {
   AmbientLight,
-  BoxGeometry,
   Color,
   DirectionalLight,
   GridHelper,
-  Mesh,
-  MeshStandardMaterial,
   PerspectiveCamera,
   Quaternion,
   Scene,
@@ -15,38 +12,46 @@ import {
 import {
   FixedStepLoop,
   GRAVITY_MS2,
+  MS_TO_KMH,
   PHYSICS_HZ,
+  SPITFIRE_MK1,
   createPlaneState,
-  gravityForce,
-  integrateStep,
+  nDemandForPitchRate,
+  stepPlane,
   sumForces,
   validatePlaneState,
-  type ForceContribution,
+  type PlaneTickResult,
 } from '@air-combat/shared';
 import { ForceArrows } from './force-arrows';
 import { Hud } from './hud';
+import { TempInput } from './input';
 import { connectNetStatus } from './net-status';
+import { OrbitCamera } from './orbit-camera';
+import { createPlaneMesh } from './plane-mesh';
 
-// --- fizyka demo fazy 1: spadający sześcian (masa testowa, nie samolot) ---
+// --- fizyka: Spitfire Mk I pod prawdziwymi siłami (faza 2) ---
 
-const CUBE_MASS_KG = 100;
-const DROP_HEIGHT_M = 80;
-const CUBE_HALF_M = 0.5;
+const SPAWN_ALTITUDE_M = 600;
+const SPAWN_SPEED_MS = 120;
 /** Obniżony tick do wizualnej weryfikacji interpolacji (F4). */
 const SLOW_PHYSICS_HZ = 10;
 
+const plane = SPITFIRE_MK1;
 const state = createPlaneState();
 const prevPosition = new Vector3();
 const prevOrientation = new Quaternion();
-let contributions: readonly ForceContribution[] = [];
+const input = new TempInput(window);
+let lastTick: PlaneTickResult | undefined;
 
-function resetCube(): void {
-  state.position.set(0, DROP_HEIGHT_M, 0);
-  state.velocity.set(0, 0, 0);
+function resetPlane(): void {
+  state.position.set(0, SPAWN_ALTITUDE_M, 0);
+  state.velocity.set(0, 0, SPAWN_SPEED_MS);
   state.orientation.identity();
-  // powolny obrót, żeby interpolacja orientacji była widoczna gołym okiem
-  state.angularRates.pitch = 0.4;
-  state.angularRates.roll = 0.8;
+  state.angularRates.pitch = 0;
+  state.angularRates.roll = 0;
+  state.angularRates.yaw = 0;
+  state.throttle = 0.8;
+  input.throttle = 0.8;
   prevPosition.copy(state.position);
   prevOrientation.copy(state.orientation);
 }
@@ -55,11 +60,16 @@ function physicsStep(dtS: number): void {
   prevPosition.copy(state.position);
   prevOrientation.copy(state.orientation);
 
-  contributions = [gravityForce(CUBE_MASS_KG)];
-  integrateStep(state, sumForces(contributions), CUBE_MASS_KG, dtS);
-  if (import.meta.env.DEV) validatePlaneState(state, 'tick demo');
+  input.update(dtS);
+  state.throttle = input.throttle;
+  state.angularRates.pitch = input.pitchRate;
+  state.angularRates.roll = input.rollRate;
 
-  if (state.position.y < CUBE_HALF_M) resetCube();
+  const nDemand = nDemandForPitchRate(state, input.pitchRate);
+  lastTick = stepPlane(state, plane, nDemand, dtS);
+  if (import.meta.env.DEV) validatePlaneState(state, 'tick klienta');
+
+  if (state.position.y < 2) resetPlane(); // brak terenu w tej fazie — siatka y=0 to "ziemia"
 }
 
 let physicsHz = PHYSICS_HZ;
@@ -77,15 +87,13 @@ app.appendChild(renderer.domElement);
 const scene = new Scene();
 scene.background = new Color(0x10141c);
 
-const camera = new PerspectiveCamera(60, 1, 0.1, 1000);
+const camera = new PerspectiveCamera(60, 1, 0.1, 30000);
+const orbit = new OrbitCamera(camera, renderer.domElement);
 
-const cube = new Mesh(
-  new BoxGeometry(2 * CUBE_HALF_M, 2 * CUBE_HALF_M, 2 * CUBE_HALF_M),
-  new MeshStandardMaterial({ color: 0x4a90d9 }),
-);
-scene.add(cube);
+const planeMesh = createPlaneMesh();
+scene.add(planeMesh);
 
-scene.add(new GridHelper(400, 40, 0x446644, 0x223322));
+scene.add(new GridHelper(20000, 100, 0x446644, 0x223322));
 scene.add(new AmbientLight(0xffffff, 0.4));
 const sun = new DirectionalLight(0xffffff, 1.2);
 sun.position.set(30, 50, 20);
@@ -117,14 +125,13 @@ window.addEventListener('keydown', (event) => {
     physicsHz = physicsHz === PHYSICS_HZ ? SLOW_PHYSICS_HZ : PHYSICS_HZ;
     loop = new FixedStepLoop(1 / physicsHz, physicsStep);
   } else if (event.key === 'r' || event.key === 'R') {
-    resetCube();
+    resetPlane();
   }
 });
 
 // --- pętla renderu: stały krok fizyki + interpolacja stanem prev/curr ---
 
-resetCube();
-const cameraOffset = new Vector3(10, 6, 14);
+resetPlane();
 let lastTimeMs: number | undefined;
 
 renderer.setAnimationLoop((timeMs) => {
@@ -132,23 +139,28 @@ renderer.setAnimationLoop((timeMs) => {
   lastTimeMs = timeMs;
 
   const alpha = loop.advance(frameDtS);
-  cube.position.lerpVectors(prevPosition, state.position, alpha);
-  cube.quaternion.slerpQuaternions(prevOrientation, state.orientation, alpha);
+  planeMesh.position.lerpVectors(prevPosition, state.position, alpha);
+  planeMesh.quaternion.slerpQuaternions(prevOrientation, state.orientation, alpha);
 
-  camera.position.copy(cube.position).add(cameraOffset);
-  camera.lookAt(cube.position);
+  orbit.update(planeMesh.position);
+  if (lastTick) {
+    arrows.update(planeMesh.position, [
+      ...lastTick.contributions,
+      { name: 'wypadkowa', force: sumForces(lastTick.contributions) },
+    ]);
+  }
 
-  arrows.update(cube.position, contributions);
-
-  const speed = state.velocity.length();
-  const energyKj =
-    (0.5 * CUBE_MASS_KG * speed * speed + CUBE_MASS_KG * GRAVITY_MS2 * state.position.y) / 1000;
+  const tas = state.velocity.length();
+  const energyMj =
+    (0.5 * plane.massKg * tas * tas + plane.massKg * GRAVITY_MS2 * state.position.y) / 1e6;
+  const alphaDeg = lastTick ? (lastTick.lift.alphaImpliedRad * 180) / Math.PI : 0;
   hud.update([
-    `poz   x ${state.position.x.toFixed(1)}  y ${state.position.y.toFixed(1)}  z ${state.position.z.toFixed(1)} m`,
-    `V     ${speed.toFixed(1)} m/s`,
-    `E     ${energyKj.toFixed(1)} kJ (kinetyczna + potencjalna)`,
-    `tick  ${physicsHz} Hz${physicsHz !== PHYSICS_HZ ? '  ← SPOWOLNIONY (test interpolacji)' : ''}`,
+    `IAS   ${(state.iasMs * MS_TO_KMH).toFixed(0)} km/h   TAS ${(tas * MS_TO_KMH).toFixed(0)} km/h`,
+    `alt   ${state.position.y.toFixed(0)} m   gaz ${(state.throttle * 100).toFixed(0)}%`,
+    `n     ${state.loadFactor.toFixed(2)} G   α ${alphaDeg.toFixed(1)}°${state.stalled ? '   *** PRZECIĄGNIĘCIE ***' : ''}`,
+    `E     ${energyMj.toFixed(1)} MJ   tick ${physicsHz} Hz${physicsHz !== PHYSICS_HZ ? ' ← SPOWOLNIONY' : ''}`,
     '',
+    `strzałki: pitch/roll (dół = nos w górę)   Z/X: gaz   mysz: kamera`,
     `[F3] strzałki sił: ${arrowsVisible ? 'ON' : 'OFF'}   [F4] tick 60↔10 Hz   [R] reset`,
   ]);
 
