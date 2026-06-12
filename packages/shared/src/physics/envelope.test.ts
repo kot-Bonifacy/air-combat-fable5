@@ -116,6 +116,16 @@ describe('koperta — weathervaning (6.4)', () => {
     expect(rates.yaw).toBeCloseTo(0, 9);
   });
 
+  it('błąd ~180° (tailslide) → tempo obcięte do weathervaneMaxRateDegS', () => {
+    const state = createPlaneState();
+    state.velocity.set(0, 0, -100); // tor do tyłu, nos zostaje na +Z
+    state.orientation.setFromAxisAngle(X_AXIS, -0.01); // minimalny pitch łamie symetrię 180°
+    weathervaneRates(state, 0, plane, rates);
+    const totalRate = Math.hypot(rates.pitch, rates.yaw);
+    expect(totalRate).toBeCloseTo(plane.weathervaneMaxRateDegS * DEG, 6);
+    expect(totalRate).toBeLessThan(Math.PI / plane.alignTauS); // bez limitu byłoby kąt/τ
+  });
+
   it('lot pionowy (up ∥ v̂) — zdegenerowany, zwraca zera bez NaN', () => {
     const state = createPlaneState();
     state.velocity.set(0, 100, 0);

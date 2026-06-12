@@ -108,6 +108,23 @@ describe('maszyna stanów przeciągnięcia (6.5)', () => {
     expect(effects.rollRateOffsetRadS).toBe(0);
   });
 
+  it('przeciągnięcie na ujemnym Cl (pchanie): nos wymuszany KU torowi (offset > 0)', () => {
+    const { machine, effects } = machineAt();
+    machine.update(-1.1, plane, FIXED_DT_S, effects);
+    expect(effects.phase).toBe('stalled');
+    expect(effects.buffetIntensity).toBe(1);
+    expect(effects.aileronFactor).toBe(plane.stall.aileronEffectiveness);
+    expect(effects.pitchRateOffsetRadS).toBeGreaterThan(0);
+  });
+
+  it('buffet działa też na ujemnym Cl (progi na |clRatio|)', () => {
+    const { machine, effects } = machineAt();
+    machine.update(-(plane.stall.buffetOnsetRatio + 0.001), plane, FIXED_DT_S, effects);
+    expect(effects.phase).toBe('buffet');
+    expect(effects.buffetIntensity).toBeGreaterThan(0);
+    expect(effects.pitchRateOffsetRadS).toBe(0);
+  });
+
   it('q→0 (zawiśnięcie na śmigle): clRatio=∞ → stalled bez NaN', () => {
     const { machine, effects } = machineAt();
     machine.update(Infinity, plane, FIXED_DT_S, effects);

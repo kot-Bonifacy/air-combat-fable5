@@ -89,8 +89,13 @@ export function weathervaneRates(
   const angleRad = Math.atan2(scratchAxis.length(), scratchFwd.dot(scratchDesiredFwd));
   if (angleRad < 1e-9) return target;
 
-  // ω_world = oś · kąt/τ → body; mapowanie body→rates odwrotne do integrateStep
-  scratchAxis.normalize().multiplyScalar(angleRad / plane.alignTauS);
+  // ω_world = oś · kąt/τ, obcięte limitem tempa (tailslide: błąd ~180° bez
+  // limitu dawałby snap ~450°/s); mapowanie body→rates odwrotne do integrateStep
+  const rateRadS = Math.min(
+    angleRad / plane.alignTauS,
+    plane.weathervaneMaxRateDegS * DEG_TO_RAD,
+  );
+  scratchAxis.normalize().multiplyScalar(rateRadS);
   scratchInvQ.copy(state.orientation).invert();
   scratchAxis.applyQuaternion(scratchInvQ);
   target.pitch = -scratchAxis.x;

@@ -26,6 +26,7 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
       [400, 80],
     ],
     alignTauS: 0.4,
+    weathervaneMaxRateDegS: 120,
     sideslipDampingS: 0.5,
     sideslipMaxAccelG: 0.3,
     stall: {

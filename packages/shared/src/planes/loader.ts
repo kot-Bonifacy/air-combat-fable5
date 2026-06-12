@@ -31,6 +31,11 @@ export interface PlaneConfig {
   rollRateCurve: readonly (readonly [iasKmh: number, rollRateDegS: number])[];
   /** Stała czasowa weathervaningu nosa do toru lotu [s] (rozdz. 6.4). */
   alignTauS: number;
+  /**
+   * Limit tempa weathervaningu [°/s] — przy dużym błędzie nos↔tor (tailslide,
+   * błąd ~180°) kąt/τ dawałby setki °/s; limit robi z tego płynny przewrót.
+   */
+  weathervaneMaxRateDegS: number;
   /** Stała czasowa wygaszania ślizgu bocznego [s] (rozdz. 6.3). */
   sideslipDampingS: number;
   /** Limit przyspieszenia bocznego od siły kadłuba gaszącej ślizg [G]. */
@@ -96,6 +101,7 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   nMaxG: [1, 20],
   nMinG: [-10, 0],
   alignTauS: [0.05, 5],
+  weathervaneMaxRateDegS: [10, 720],
   sideslipDampingS: [0.05, 5],
   sideslipMaxAccelG: [0.05, 2],
 };

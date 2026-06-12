@@ -117,6 +117,7 @@ function physicsStep(dtS: number): void {
       mouseAim.alignTo(getForward(state.orientation, scratchFwd));
       keyboardActive = false;
     }
+    mouseAim.renormalize(getForward(state.orientation, scratchFwd));
     mouseAim.targetDir(scratchTargetDir);
     instructor.update(state, plane, scratchTargetDir, dtS, demands);
   }

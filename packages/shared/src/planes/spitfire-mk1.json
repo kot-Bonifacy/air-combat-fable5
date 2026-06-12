@@ -21,6 +21,7 @@
     [640, 14]
   ],
   "alignTauS": 0.4,
+  "weathervaneMaxRateDegS": 120,
   "sideslipDampingS": 0.5,
   "sideslipMaxAccelG": 0.3,
   "stall": {

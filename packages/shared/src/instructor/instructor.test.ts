@@ -115,6 +115,50 @@ describe('instruktor — zamknięta pętla z fizyką (bank-and-pull)', () => {
     expect(convergedAtS).toBeLessThan(15);
   });
 
+  it('cel prowadzony przez pion (gracz ciągnie mysz) → pełna pętla bez utraty śledzenia', () => {
+    const sim = levelSim(140);
+    sim.state.position.y = 1000;
+    sim.state.throttle = 1;
+    const instructor = new Instructor();
+    const demands = createPilotDemands();
+    const target = new Vector3();
+    const fwd = new Vector3();
+
+    // skrypt "gracza": cel w płaszczyźnie Y-Z, prowadzony 40°/s w górę,
+    // ale tylko gdy nos nadąża (błąd < 60°) — jak ręka na myszy
+    const DRAG_RATE_RAD_S = 40 * DEG;
+    const CATCH_UP_CONE_RAD = 60 * DEG;
+    let targetPitchRad = 0;
+    let prevNosePitchRad: number | undefined;
+    let accumulatedRad = 0;
+
+    const maxTicks = 45 * PHYSICS_HZ;
+    for (let i = 0; i < maxTicks && accumulatedRad < 2 * Math.PI; i++) {
+      target.set(0, Math.sin(targetPitchRad), Math.cos(targetPitchRad));
+      getForward(sim.state.orientation, fwd);
+      if (fwd.angleTo(target) < CATCH_UP_CONE_RAD && targetPitchRad < 2 * Math.PI) {
+        targetPitchRad += DRAG_RATE_RAD_S * FIXED_DT_S;
+      }
+      instructor.update(sim.state, plane, target, FIXED_DT_S, demands);
+      pilotStep(sim, plane, demands, FIXED_DT_S);
+      validatePlaneState(sim.state, 'instruktor pętla przez pion');
+
+      // kąt nosa w płaszczyźnie pętli (Y-Z), odwijany do sumy obrotu
+      const nosePitchRad = Math.atan2(fwd.y, fwd.z);
+      if (prevNosePitchRad !== undefined) {
+        let delta = nosePitchRad - prevNosePitchRad;
+        if (delta > Math.PI) delta -= 2 * Math.PI;
+        if (delta < -Math.PI) delta += 2 * Math.PI;
+        accumulatedRad += delta;
+      }
+      prevNosePitchRad = nosePitchRad;
+      // pętla ma zostać w swojej płaszczyźnie — bez beczki / wing dropu
+      expect(Math.abs(fwd.x)).toBeLessThan(0.35);
+    }
+
+    expect(accumulatedRad).toBeGreaterThanOrEqual(2 * Math.PI * 0.98);
+  });
+
   it('cel utrzymany przed nosem przez 10 s — lot stabilny, bez NaN i przeciągnięcia', () => {
     const sim = levelSim(120);
     const instructor = new Instructor();

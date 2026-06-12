@@ -70,9 +70,11 @@ export function pilotStep(
 
   // (2) przeciągnięcie — próg na ŻĄDANIU obciętym tylko strukturalnie:
   // koperta n_avail z definicji nie pozwala przekroczyć clMax, a maszyna
-  // ma wykrywać właśnie "chcę więcej, niż fizyka daje"
+  // ma wykrywać właśnie "chcę więcej, niż fizyka daje"; ratio ZE ZNAKIEM —
+  // znak żądanego Cl steruje kierunkiem nose dropu w maszynie
   const nStructG = Math.min(plane.nMaxG, Math.max(plane.nMinG, demands.nDemandG));
-  const clRatio = nAvail > 0 ? Math.abs(nStructG) / nAvail : nStructG === 0 ? 0 : Infinity;
+  const clRatio =
+    nAvail > 0 ? nStructG / nAvail : nStructG === 0 ? 0 : Infinity * Math.sign(nStructG);
   sim.stallMachine.update(clRatio, plane, dtS, sim.stallEffects);
   const stall = sim.stallEffects;
 

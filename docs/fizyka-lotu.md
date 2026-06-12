@@ -117,13 +117,19 @@ Każda siła ma własną funkcję `(state, plane) => Vector3` i własną strzał
 - Nos podąża za wektorem prędkości plus `α_implied` (weathervaning ze stałą czasową
   `alignTau` ~0.3–0.6 s). Dzięki temu atak/tor nigdy się nie rozjeżdżają o nierealne kąty,
   a stała czasowa daje wrażenie bezwładności bez całkowania momentów.
+- Tempo korekty obcięte do `weathervaneMaxRateDegS` (~120°/s): przy odwróceniu wektora
+  prędkości (tailslide po świecy) błąd ~180° dawałby z samego kąt/τ snap ~450°/s —
+  z limitem przewrót nosa jest płynny.
 
 ### 6.5 Przeciągnięcie
 - Próg: `n_demand > n_avail` (równoważnie `α_implied > α_stall`).
 - Skutki, narastająco: (1) buffet — drganie kamery + ostrzeżenie HUD ~10% przed progiem,
-  (2) Cl obcięty → tor opada mimo ciągnięcia, (3) nos opada (wymuszony pitch-down rate),
-  (4) sterowność lotek spada do ~30%, (5) wing drop: losowo-deterministyczny (seeded) powolny
-  przewrót, jeśli gracz trzyma przeciągnięcie > 1 s.
+  (2) Cl obcięty → tor opada mimo ciągnięcia, (3) nos wymuszany ku mniejszemu |α|
+  (przeciągnięcie na dodatnim Cl → pitch-down; na ujemnym Cl, czyli przy pchaniu —
+  nos ku torowi, w górę), (4) sterowność lotek spada do ~30%, (5) wing drop:
+  losowo-deterministyczny (seeded) powolny przewrót, jeśli gracz trzyma przeciągnięcie > 1 s.
+- Progi (buffet/stall) działają na |Cl wymaganym| — przeciągnięcie ujemne (pchanie)
+  wykrywane symetrycznie (uproszczenie simcade: symetryczny zakres Cl).
 - Wyjście: oddać drążek, nabrać prędkości — klasyczna procedura działa.
 - Pełny korkociąg: backlog (faza 17 ma uproszczony po utracie skrzydła).
 
@@ -166,6 +172,7 @@ instruktor zamienia to na `n_demand`, `rollRate_demand`, `yaw_demand`:
 | `nMaxG` / `nMinG` | limity przeciążeń | 8 / −4 |
 | `rollRateCurve` | punkty [IAS km/h, °/s] (lotki płócienne: szczyt nisko, zapaść przy dużej IAS) | [[120,32],[240,80],[320,75],[480,40],[640,14]] |
 | `alignTauS` | stała czasowa nosa | 0.4 |
+| `weathervaneMaxRateDegS` | limit tempa weathervaningu (tailslide) | 120 |
 | `sideslipDampingS` | wygaszanie ślizgu | 0.5 |
 | `sideslipMaxAccelG` | limit siły bocznej kadłuba | 0.3 |
 | `stall.*` | buffet/nose drop/lotki/wing drop | rozdz. 6.5 |

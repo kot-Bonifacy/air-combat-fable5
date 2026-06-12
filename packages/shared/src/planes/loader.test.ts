@@ -24,6 +24,7 @@ function validRaw(): Record<string, unknown> {
       [450, 85],
     ],
     alignTauS: 0.4,
+    weathervaneMaxRateDegS: 120,
     sideslipDampingS: 0.5,
     sideslipMaxAccelG: 0.3,
     stall: {

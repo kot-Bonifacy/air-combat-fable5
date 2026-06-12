@@ -4,11 +4,19 @@ import { PerspectiveCamera, Vector3 } from 'three';
  * Mysz → punkt celu na sferze wokół samolotu (pointer lock + akumulacja delty).
  * Celownik NIE jest sprzężony 1:1 z kamerą (pułapka z faza-03.md: choroba
  * symulatorowa) — kamera podąża za samolotem, celownik za myszą.
+ *
+ * Pitch NIE jest ograniczony do ±90°: ciągnięcie myszy w górę prowadzi cel
+ * przez pion na drugą stronę (pętla/immelmann samą myszą). Parametryzacja
+ * yaw/pitch z cos(pitch) < 0 = cel "za plecami przez górę/dół"; po domknięciu
+ * manewru renormalize() wraca do normalnej połówki (patrz komentarz metody).
  */
 const SENSITIVITY_RAD_PER_PX = 0.0022;
-const MAX_PITCH_RAD = (85 * Math.PI) / 180;
 /** Promień sfery celownika [m] — tylko do projekcji znacznika na ekran. */
 const RETICLE_DISTANCE_M = 1500;
+/** Renormalizacja tylko blisko horyzontu — |elewacja celu| < 45°. */
+const RENORM_MAX_ELEVATION_SIN = Math.sin((45 * Math.PI) / 180);
+/** Renormalizacja dopiero, gdy nos dogonił cel (manewr domknięty). */
+const RENORM_MAX_NOSE_ANGLE_RAD = (20 * Math.PI) / 180;
 
 const scratchWorld = new Vector3();
 
@@ -27,11 +35,27 @@ export class MouseAim {
     document.addEventListener('mousemove', (event) => {
       if (!this.locked) return;
       this.yawRad -= event.movementX * SENSITIVITY_RAD_PER_PX;
-      this.pitchRad = Math.min(
-        MAX_PITCH_RAD,
-        Math.max(-MAX_PITCH_RAD, this.pitchRad - event.movementY * SENSITIVITY_RAD_PER_PX),
-      );
+      this.pitchRad -= event.movementY * SENSITIVITY_RAD_PER_PX;
+      // wrap do (−π, π] — wielokrotne pętle nie akumulują kąta
+      if (this.pitchRad > Math.PI) this.pitchRad -= 2 * Math.PI;
+      else if (this.pitchRad <= -Math.PI) this.pitchRad += 2 * Math.PI;
     });
+  }
+
+  /**
+   * Powrót do normalnej parametryzacji po manewrze przez pion: gdy cel jest
+   * w "odwróconej" połówce (cos(pitch) < 0), ale samolot już go dogonił blisko
+   * horyzontu — przepisz {yaw, pitch} na równoważne z pitch ∈ (−90°, 90°).
+   * Kierunek celu się NIE zmienia; zmienia się znaczenie przyszłych ruchów
+   * myszy (bez tego po pętli oś pozioma działa lustrzanie). Wołać co tick.
+   */
+  renormalize(noseDirWorld: Vector3): void {
+    if (Math.cos(this.pitchRad) >= 0) return;
+    this.targetDir(scratchWorld);
+    if (Math.abs(scratchWorld.y) > RENORM_MAX_ELEVATION_SIN) return;
+    if (scratchWorld.angleTo(noseDirWorld) > RENORM_MAX_NOSE_ANGLE_RAD) return;
+    this.pitchRad = Math.asin(Math.min(1, Math.max(-1, scratchWorld.y)));
+    this.yawRad = Math.atan2(scratchWorld.x, scratchWorld.z);
   }
 
   /** Kierunek celu w świecie (jednostkowy). */
