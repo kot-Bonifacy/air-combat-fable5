@@ -12,11 +12,12 @@ import {
   ARENA_WARNING_DISTANCE_M,
   FixedStepLoop,
   GRAVITY_MS2,
-  Instructor,
   MS_TO_KMH,
   PHYSICS_HZ,
+  PilotControl,
   RESPAWN_DELAY_S,
   SPITFIRE_MK1,
+  createControlDeflections,
   createPilotDemands,
   createSimPlane,
   createTerrain,
@@ -24,8 +25,6 @@ import {
   getForward,
   getRight,
   getUp,
-  maxRollRateRadS,
-  nDemandForPitchRate,
   pilotStep,
   sumForces,
   surfaceHeightM,
@@ -58,7 +57,8 @@ const DEG_TO_RAD = Math.PI / 180;
 const plane = SPITFIRE_MK1;
 const sim = createSimPlane(0xc0ffee);
 const state = sim.state;
-const instructor = new Instructor();
+const control = new PilotControl();
+const deflections = createControlDeflections();
 const demands = createPilotDemands();
 const prevPosition = new Vector3();
 const prevOrientation = new Quaternion();
@@ -74,9 +74,7 @@ renderer.setPixelRatio(window.devicePixelRatio);
 app.appendChild(renderer.domElement);
 
 const keyboard = new KeyboardInput(window);
-const mouseAim = new MouseAim(renderer.domElement);
-/** Czy ostatnio sterowała klawiatura (po puszczeniu mysz przejmuje od nosa). */
-let keyboardActive = false;
+const mouseAim = new MouseAim(renderer.domElement, control.mouseAim);
 /** Poza areną stery przejmuje autopilot zawracający (histereza ARENA_RELEASE_DISTANCE_M). */
 let autopilotActive = false;
 
@@ -98,8 +96,7 @@ function resetPlane(): void {
   state.lifeTimerS = 0;
   keyboard.throttle = 0.8;
   autopilotActive = false;
-  instructor.reset();
-  mouseAim.alignTo(scratchTargetDir.set(0, 0, 1));
+  control.reset(state);
   prevPosition.copy(state.position);
   prevOrientation.copy(state.orientation);
   planeMesh.visible = true;
@@ -126,32 +123,12 @@ function physicsStep(dtS: number): void {
 
   if (autopilotActive) {
     scratchTargetDir.set(-state.position.x, 0, -state.position.z).normalize();
-    instructor.update(state, plane, scratchTargetDir, dtS, demands);
-    // cel myszy trzymany na nosie → po oddaniu sterów brak szarpnięcia
-    mouseAim.alignTo(getForward(state.orientation, scratchFwd));
-    keyboardActive = false;
-  } else if (keyboard.hasRotationInput) {
-    // klawiatura omija instruktora: wychylenia → żądania, nasycenie robi koperta
-    keyboardActive = true;
-    instructor.reset();
-    const baseN = nDemandForPitchRate(state, 0);
-    const pitchD = keyboard.pitchDeflection;
-    demands.nDemandG =
-      pitchD >= 0
-        ? baseN + pitchD * (plane.nMaxG - baseN)
-        : baseN + pitchD * (baseN - plane.nMinG);
-    demands.rollRateRadS = keyboard.rollDeflection * maxRollRateRadS(state.iasMs, plane);
-    demands.yawRateRadS =
-      keyboard.yawDeflection * plane.instructor.maxYawRateDegS * DEG_TO_RAD;
+    control.updateWithTarget(state, plane, scratchTargetDir, dtS, demands);
   } else {
-    if (keyboardActive) {
-      // przejęcie przez mysz bez szarpnięcia: cel = aktualny kierunek nosa
-      mouseAim.alignTo(getForward(state.orientation, scratchFwd));
-      keyboardActive = false;
-    }
-    mouseAim.renormalize(getForward(state.orientation, scratchFwd));
-    mouseAim.targetDir(scratchTargetDir);
-    instructor.update(state, plane, scratchTargetDir, dtS, demands);
+    deflections.pitchUp = keyboard.pitchDeflection;
+    deflections.rollRight = keyboard.rollDeflection;
+    deflections.yawRight = keyboard.yawDeflection;
+    control.update(state, plane, deflections, dtS, demands);
   }
 
   lastTick = pilotStep(sim, plane, demands, dtS);
@@ -285,7 +262,7 @@ renderer.setAnimationLoop((timeMs) => {
     mouseAim.locked && state.life === 'alive' && !autopilotActive
       ? mouseAim.reticleScreenPos(planeMesh.position, camera, w, h)
       : null;
-  if (reticlePos && !keyboardActive) {
+  if (reticlePos && control.mode !== 'klawiatura') {
     reticleEl.style.display = 'block';
     reticleEl.style.left = `${reticlePos.x.toFixed(0)}px`;
     reticleEl.style.top = `${reticlePos.y.toFixed(0)}px`;
@@ -339,13 +316,13 @@ renderer.setAnimationLoop((timeMs) => {
     buffetIntensity: buffet,
     bankRad: Math.atan2(-scratchRight.y, scratchUp.y),
     pitchRad: Math.asin(Math.min(1, Math.max(-1, scratchFwd.y))),
-    controlMode: keyboardActive ? 'klawiatura' : 'mysz',
+    controlMode: control.mode,
     extraLines: [
       '',
       `fps   ${String(fpsValue).padStart(3)}`,
       mouseAim.locked
-        ? 'mysz: celuj   WSAD/QE: stery   Z/X: gaz   [Esc] zwolnij mysz'
-        : 'KLIKNIJ, by sterować myszą (pointer lock)   WSAD/QE: stery   Z/X: gaz',
+        ? 'mysz: celuj   WSAD/QE: stery   LShift/LCtrl: gaz   [Esc] zwolnij mysz'
+        : 'KLIKNIJ, by sterować myszą (pointer lock)   WSAD/QE: stery   LShift/LCtrl: gaz',
       `[C] kamera: ${cameraMode}   [F3] siły: ${arrowsVisible ? 'ON' : 'OFF'}   [F4] tick ${physicsHz} Hz${physicsHz !== PHYSICS_HZ ? ' ← SPOWOLNIONY' : ''}   [R] reset`,
     ],
   });

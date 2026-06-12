@@ -17,13 +17,13 @@ const CAPTURED_CODES = new Set([
   'KeyD',
   'KeyQ',
   'KeyE',
-  'KeyZ',
-  'KeyX',
+  'ShiftLeft',
+  'ControlLeft',
 ]);
 
 export class KeyboardInput {
   private readonly held = new Set<string>();
-  /** Przepustnica 0..1 — integrowana z Z/X w update(). */
+  /** Przepustnica 0..1 — integrowana z LShift/LCtrl w update(). */
   throttle = 0.8;
 
   constructor(target: Window) {
@@ -44,7 +44,7 @@ export class KeyboardInput {
 
   /** Integracja przepustnicy; wołać raz na tick fizyki. */
   update(dtS: number): void {
-    const delta = (this.held.has('KeyZ') ? 1 : 0) - (this.held.has('KeyX') ? 1 : 0);
+    const delta = (this.held.has('ShiftLeft') ? 1 : 0) - (this.held.has('ControlLeft') ? 1 : 0);
     this.throttle = Math.min(1, Math.max(0, this.throttle + delta * THROTTLE_PER_S * dtS));
   }
 
@@ -67,12 +67,5 @@ export class KeyboardInput {
   /** −1..1, +1 = nos w prawo (E). */
   get yawDeflection(): number {
     return this.axis(['KeyE'], ['KeyQ']);
-  }
-
-  /** Czy gracz steruje rotacją z klawiatury (wtedy omijamy instruktora). */
-  get hasRotationInput(): boolean {
-    return (
-      this.pitchDeflection !== 0 || this.rollDeflection !== 0 || this.yawDeflection !== 0
-    );
   }
 }
