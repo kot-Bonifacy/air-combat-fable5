@@ -1,5 +1,6 @@
 # MEMORY.md — indeks pamięci projektu
 
+- [Faza 4 — decyzje](project_phase4_decisions.md) — siatka heightmapy 48 m (FP-dokładna, mesh↔kolizja `===`), simplex-noise z npm + mulberry32, lifecycle sygnalizuje a nie teleportuje, autopilot granicy = instruktor z celem na środek + histereza, clamp kamery do powierzchni
 - [Faza 3 — decyzje](project_phase3_decisions.md) — instruktor: pull w G/rad + bramka bank-and-pull, sideslipMaxAccelG (zoom-climb artefakt), feed-forward koordynacji yaw, sustained turn: bank z liftDir.y i zakaz sprzężenia od vy, model Mk IA +12 lb ze źródłami, Tweakpane wymaga @tweakpane/core
 - [Faza 2 — decyzje](project_phase2_decisions.md) — pitch→n bez regulatora wysokości, staticThrustN jako proxy spadku η śmigła, clMax gameplayowy 1.65, harness: punkt stały zamiast regulatorów P, pułapka 0/0→NaN w Cl
 - [Faza 1 — decyzje](project_phase1_decisions.md) — mapowanie rate'ów na ω_body (−pitch,−yaw,+roll), tolerancje złotych testów vs błąd Eulera, scratch-wektory, F3 preventDefault

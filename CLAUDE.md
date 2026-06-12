@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0–3 ; aktualny fokus: Faza 4 — Świat minimalny: ocean + wyspa + kolizje
+Fazy ukończone: 0–4 ; aktualny fokus: Faza 5 — Uzbrojenie, balistyka, HP
 
 ## Stack (skrót)
 

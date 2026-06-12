@@ -10,6 +10,7 @@ export function dumpPlaneState(state: PlaneState): string {
     `orientation=(${v(state.orientation.x)}, ${v(state.orientation.y)}, ${v(state.orientation.z)}, ${v(state.orientation.w)})`,
     `angularRates=(pitch ${v(state.angularRates.pitch)}, roll ${v(state.angularRates.roll)}, yaw ${v(state.angularRates.yaw)})`,
     `throttle=${v(state.throttle)} iasMs=${v(state.iasMs)} loadFactor=${v(state.loadFactor)} stalled=${String(state.stalled)}`,
+    `life=${state.life} lifeTimerS=${v(state.lifeTimerS)}`,
   ].join('\n');
 }
 
@@ -35,6 +36,7 @@ export function validatePlaneState(state: PlaneState, context = ''): void {
     throttle: state.throttle,
     iasMs: state.iasMs,
     loadFactor: state.loadFactor,
+    lifeTimerS: state.lifeTimerS,
   };
   const broken = Object.entries(fields)
     .filter(([, value]) => !Number.isFinite(value))

@@ -30,12 +30,13 @@ Poza zakresem: LOD, tekstury, chmury, drzewa, budynki, woda z falami. ZAPISANE w
 
 ## Kryteria ukończenia
 
-- [ ] Stabilne 60 fps przy locie nad wyspą (zintegrowana grafika, 1080p)
-- [ ] Lot w wodę i w górę → wybuch, respawn po 3 s, stan fizyki czysty (testy z fazy 2-3 zielone)
-- [ ] `terrainHeight()` w `shared` przechodzi test zgodności: 100 losowych punktów
+- [x] Stabilne 60 fps przy locie nad wyspą (zintegrowana grafika, 1080p) — headless Chrome:
+  160 fps; do potwierdzenia przez użytkownika na docelowym sprzęcie
+- [x] Lot w wodę i w górę → wybuch, respawn po 3 s, stan fizyki czysty (testy z fazy 2-3 zielone)
+- [x] `terrainHeight()` w `shared` przechodzi test zgodności: 100 losowych punktów
   identycznych z wartościami użytymi do mesha
-- [ ] Wylot za granicę → ostrzeżenie, potem zawrócenie
-- [ ] typecheck + test + lint zielone; commit `faza-4`; memory zapisane
+- [x] Wylot za granicę → ostrzeżenie, potem zawrócenie
+- [x] typecheck + test + lint zielone; commit `faza-4`; memory zapisane
 
 ## Pułapki / lekcje z opus4-7
 
@@ -48,4 +49,20 @@ Poza zakresem: LOD, tekstury, chmury, drzewa, budynki, woda z falami. ZAPISANE w
 
 ## Wynik (uzupełnić po zakończeniu)
 
-—
+Zrealizowane w jednej sesji (2026-06-12), w timeboxie:
+
+- `shared/src/world/terrain.ts`: heightmapa 251×251 węzłów co 48 m (region 12×12 km),
+  FBM simplex (`simplex-noise` z npm, seedowany `createRng`) × radialna maska wyspy.
+  Rozstaw 48 m jest FP-dokładny → `heightAt()` w węźle zwraca `===` wartość mesha (test 100 punktów).
+  Wyspa: ~5.5 km średnicy ekwiwalentnej, szczyt 1142 m (śnieg), dno −60 m poza regionem.
+- `shared/src/world/arena.ts` (strefy inside/warning/outside) i `lifecycle.ts`
+  (alive→dead→respawning; maszyna sygnalizuje, autorytet respawnuje). `PlaneState` + `life`/`lifeTimerS`.
+- Klient: `world.ts` (mesh wyspy z vertex colors plaża/trawa/skała/śnieg + flat shading,
+  ocean, kopuła nieba w shaderze, mgła 2.5–15 km), `explosion.ts` (particle burst),
+  alert HUD (`#arena-alert`), licznik fps, autopilot zawracający (instruktor z celem
+  na środek areny, histereza 500 m), clamp kamery do powierzchni+3 m.
+- Spawn przeniesiony na (0, 800, −7000) — nos na wyspę; reset [R] bez zmian.
+- Weryfikacja headless Chrome (Playwright): kraksa o zbocze → wybuch → respawn po 3 s;
+  ostrzeżenie 952 m przed granicą → autopilot za granicą → zwrot sterów po powrocie; 160 fps.
+- Decyzje użytkownika: wyspa górzysta ze śnieżnym szczytem; `simplex-noise` z npm;
+  respawn w stałym punkcie. Szczegóły i pułapki: `memory/project_phase4_decisions.md`.

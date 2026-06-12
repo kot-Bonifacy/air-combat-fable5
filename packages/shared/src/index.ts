@@ -16,3 +16,6 @@ export * from './aero/lift';
 export * from './aero/drag';
 export * from './aero/thrust';
 export * from './planes/loader';
+export * from './world/terrain';
+export * from './world/arena';
+export * from './world/lifecycle';

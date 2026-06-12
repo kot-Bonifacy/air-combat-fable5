@@ -11,6 +11,9 @@ export interface AngularRates {
   yaw: number;
 }
 
+/** Cykl życia (faza 4): respawning = czeka, aż autorytet ustawi spawn i 'alive'. */
+export type LifePhase = 'alive' | 'dead' | 'respawning';
+
 /** Stan symulowanego obiektu (w fazie 1: sześcian testowy; od fazy 2: samolot). */
 export interface PlaneState {
   /** Pozycja w układzie świata [m]. */
@@ -27,6 +30,9 @@ export interface PlaneState {
   /** Bieżące przeciążenie [G] (pochodne, liczone od fazy 2). */
   loadFactor: number;
   stalled: boolean;
+  life: LifePhase;
+  /** Czas w stanie 'dead' [s] — odlicza do respawnu. */
+  lifeTimerS: number;
 }
 
 export function createPlaneState(): PlaneState {
@@ -39,6 +45,8 @@ export function createPlaneState(): PlaneState {
     iasMs: 0,
     loadFactor: 1,
     stalled: false,
+    life: 'alive',
+    lifeTimerS: 0,
   };
 }
 
@@ -54,5 +62,7 @@ export function copyPlaneState(src: PlaneState, dst: PlaneState): PlaneState {
   dst.iasMs = src.iasMs;
   dst.loadFactor = src.loadFactor;
   dst.stalled = src.stalled;
+  dst.life = src.life;
+  dst.lifeTimerS = src.lifeTimerS;
   return dst;
 }
