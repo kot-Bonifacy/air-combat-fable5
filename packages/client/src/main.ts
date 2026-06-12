@@ -171,7 +171,9 @@ let loop = new FixedStepLoop(1 / physicsHz, physicsStep);
 
 const scene = new Scene();
 
-const camera = new PerspectiveCamera(60, 1, 0.1, 30000);
+// near 0.5 (nie 0.1): rozdzielczość depth buffera — przy 0.1 linia brzegowa
+// migotała (z-fighting teren↔ocean); kamera pościgowa nigdy nie jest bliżej
+const camera = new PerspectiveCamera(60, 1, 0.5, 30000);
 const chaseCamera = new ChaseCamera(camera);
 const orbit = new OrbitCamera(camera, renderer.domElement);
 let cameraMode: 'pościgowa' | 'orbitalna' = 'pościgowa';

@@ -144,7 +144,14 @@ export function createWorld(scene: Scene, terrain: Terrain): World {
 
   const ocean = new Mesh(
     new PlaneGeometry(OCEAN_SIZE_M, OCEAN_SIZE_M),
-    new MeshLambertMaterial({ color: OCEAN_COLOR }),
+    // polygonOffset: przy brzegu teren leży tuż pod wodą i depth buffer migotał
+    // (z-fighting) — ocean odsunięty w głębi przegrywa tam spójnie z terenem
+    new MeshLambertMaterial({
+      color: OCEAN_COLOR,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
+    }),
   );
   ocean.rotation.x = -Math.PI / 2;
   scene.add(ocean);
