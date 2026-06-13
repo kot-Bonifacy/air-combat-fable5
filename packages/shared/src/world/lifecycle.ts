@@ -15,6 +15,32 @@ export function surfaceHeightM(terrain: Terrain, xM: number, zM: number): number
 }
 
 /**
+ * Najwyższa powierzchnia pod punktem i przed nim wzdłuż kierunku (dirX,dirZ)
+ * na zadanych dystansach [m]. Używane przez unikanie ziemi botów (faza 6): pilot
+ * omija GRAŃ z przodu, nie tylko ziemię pod sobą. `dir` nie musi być jednostkowy
+ * (normalizowany tu); zerowy → tylko punkt pod spodem.
+ */
+export function lookaheadSurfaceM(
+  terrain: Terrain,
+  xM: number,
+  zM: number,
+  dirX: number,
+  dirZ: number,
+  distancesM: readonly number[],
+): number {
+  let maxH = surfaceHeightM(terrain, xM, zM);
+  const len = Math.hypot(dirX, dirZ);
+  if (len < 1e-6) return maxH;
+  const ux = dirX / len;
+  const uz = dirZ / len;
+  for (const d of distancesM) {
+    const h = surfaceHeightM(terrain, xM + ux * d, zM + uz * d);
+    if (h > maxH) maxH = h;
+  }
+  return maxH;
+}
+
+/**
  * Jeden tick cyklu życia. Wołać po fizyce (alive: detekcja kolizji)
  * lub zamiast niej (dead/respawning: fizyka stoi, liczy się timer).
  */

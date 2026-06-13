@@ -25,3 +25,8 @@ export * from './combat/ballistics';
 export * from './combat/hit';
 export * from './combat/health';
 export * from './combat/fire';
+export * from './ai/geometry';
+export * from './ai/lead';
+export * from './ai/difficulty';
+export * from './ai/fsm';
+export * from './ai/bot';

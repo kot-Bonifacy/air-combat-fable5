@@ -1,10 +1,13 @@
 import {
   AmbientLight,
   DirectionalLight,
+  Mesh,
+  MeshBasicMaterial,
   PerspectiveCamera,
   PMREMGenerator,
   Quaternion,
   Scene,
+  SphereGeometry,
   Vector3,
   WebGLRenderer,
 } from 'three';
@@ -12,17 +15,22 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import {
   ARENA_RELEASE_DISTANCE_M,
   ARENA_WARNING_DISTANCE_M,
+  BOT_CONFIG,
   BULLET_POOL_CAPACITY,
+  Bot,
   BulletPool,
   FixedStepLoop,
   GRAVITY_MS2,
+  MATCH_SCORE_TO_WIN,
   MS_TO_KMH,
   PHYSICS_HZ,
   PilotControl,
   RESPAWN_DELAY_S,
   SPITFIRE_MK1,
+  applyDamage,
   createControlDeflections,
   createFireControl,
+  createHealth,
   createPilotDemands,
   createRng,
   createSimPlane,
@@ -31,16 +39,22 @@ import {
   getForward,
   getRight,
   getUp,
+  lookaheadSurfaceM,
   pilotStep,
+  resetHealth,
+  segmentSphereHit,
   sumForces,
   surfaceHeightM,
   totalAmmo,
   updateFire,
   updateLifecycle,
   validatePlaneState,
+  type DifficultyLevel,
   type PilotTickResult,
 } from '@air-combat/shared';
 import { BulletTracers } from './bullet-tracers';
+import { EnemyMarker } from './enemy-marker';
+import { GameMenu, type GameModeChoice } from './menu';
 import { ChaseCamera } from './chase-camera';
 import { Explosions } from './explosion';
 import { FlightRecorder } from './flight-recorder';
@@ -101,6 +115,33 @@ interface KillFeedLine {
 }
 const killFeed: KillFeedLine[] = [];
 
+// --- tryb gry / mecz (faza 6) ---
+type GameMode = 'menu' | 'dogfight' | 'training';
+const ENEMY_ID = 1;
+/** Pozycje startowe pojedynku: gracz na −Z, bot na +Z, ~2.6 km od siebie. */
+const DOGFIGHT_PLAYER_Z = -1300;
+const DOGFIGHT_ENEMY_Z = 1300;
+/** Dystanse próbkowania terenu przed botem (omijanie grani). */
+const GROUND_LOOKAHEAD_M = [300, 600, 1000, 1500];
+
+let gameMode: GameMode = 'menu';
+let matchOver = false;
+let playerKills = 0;
+let enemyKills = 0;
+let difficulty: DifficultyLevel = 'normalny';
+
+const playerHealth = createHealth(plane.hpPool);
+
+const enemySim = createSimPlane(0xb0b1e);
+const enemyState = enemySim.state;
+const enemyHealth = createHealth(plane.hpPool);
+const enemyFire = createFireControl(plane.armament);
+const enemyDemands = createPilotDemands();
+const enemyCombatRng = createRng(COMBAT_SEED ^ 0x9e37);
+const enemyPrevPos = new Vector3();
+const enemyPrevOrient = new Quaternion();
+let enemyBot = new Bot(BOT_CONFIG.tuning, BOT_CONFIG.levels[difficulty], 0xb0b1e);
+
 function triggerHeld(): boolean {
   return (mouseAim.locked && triggerMouse) || triggerKey;
 }
@@ -156,7 +197,8 @@ const scratchUp = new Vector3();
 const scratchRight = new Vector3();
 
 function resetPlane(): void {
-  state.position.set(0, SPAWN_ALTITUDE_M, SPAWN_Z_M);
+  const spawnZ = gameMode === 'dogfight' ? DOGFIGHT_PLAYER_Z : SPAWN_Z_M;
+  state.position.set(0, SPAWN_ALTITUDE_M, spawnZ);
   state.velocity.set(0, 0, SPAWN_SPEED_MS);
   state.orientation.identity();
   state.angularRates.pitch = 0;
@@ -170,11 +212,36 @@ function resetPlane(): void {
   autopilotActive = false;
   fireControl.ammoRemaining = AMMO_MAX;
   fireControl.cooldownS = 0;
+  resetHealth(playerHealth);
   control.reset(state);
   prevPosition.copy(state.position);
   prevOrientation.copy(state.orientation);
   planeMesh.visible = true;
   chaseCamera.reset();
+}
+
+const scratchEnemyDir = new Vector3();
+
+/** (Re)spawn bota-przeciwnika dla pojedynku: nosem ku graczowi, pełne HP/amunicja. */
+function resetEnemy(): void {
+  enemyState.position.set(0, SPAWN_ALTITUDE_M + 100, DOGFIGHT_ENEMY_Z);
+  scratchEnemyDir.set(0, 0, -1); // ku graczowi (−Z)
+  enemyState.velocity.copy(scratchEnemyDir).multiplyScalar(SPAWN_SPEED_MS);
+  enemyState.orientation.setFromUnitVectors(scratchFwd.set(0, 0, 1), scratchEnemyDir);
+  enemyState.angularRates.pitch = 0;
+  enemyState.angularRates.roll = 0;
+  enemyState.angularRates.yaw = 0;
+  enemyState.throttle = 0.9;
+  enemyState.iasMs = SPAWN_SPEED_MS;
+  enemyState.life = 'alive';
+  enemyState.lifeTimerS = 0;
+  enemyFire.ammoRemaining = AMMO_MAX;
+  enemyFire.cooldownS = 0;
+  resetHealth(enemyHealth);
+  enemyBot.reset(enemyState);
+  enemyPrevPos.copy(enemyState.position);
+  enemyPrevOrient.copy(enemyState.orientation);
+  enemyMesh.visible = true;
 }
 
 function physicsStep(dtS: number): void {
@@ -220,10 +287,118 @@ function physicsStep(dtS: number): void {
     if (updateLifecycle(state, terrain, dtS) === 'respawnReady') resetPlane();
   }
 
-  // pociski i cele żyją niezależnie od stanu gracza
-  targets.update(dtS);
+  // przeciwnik (pojedynek) — bot lata przez ten sam instruktor co gracz
+  if (gameMode === 'dogfight') stepEnemy(dtS);
+
+  // pociski żyją niezależnie od stanu samolotów
   pool.update(plane.armament.bulletDragK, plane.armament.bulletLifetimeS, dtS);
-  targets.resolveBulletHits(pool, onTargetHit);
+
+  if (gameMode === 'training') {
+    targets.update(dtS);
+    targets.resolveBulletHits(pool, onTargetHit);
+  } else if (gameMode === 'dogfight') {
+    resolveDogfightHits();
+  }
+}
+
+/** Jeden tick przeciwnika: decyzja bota → instruktor → fizyka → ogień → cykl życia. */
+function stepEnemy(dtS: number): void {
+  enemyPrevPos.copy(enemyState.position);
+  enemyPrevOrient.copy(enemyState.orientation);
+  if (enemyState.life === 'alive') {
+    const surf = lookaheadSurfaceM(
+      terrain,
+      enemyState.position.x,
+      enemyState.position.z,
+      enemyState.velocity.x,
+      enemyState.velocity.z,
+      GROUND_LOOKAHEAD_M,
+    );
+    const target = state.life === 'alive' ? state : null;
+    const out = enemyBot.update(enemyState, plane, target, { surfaceHeightM: surf }, dtS, enemyDemands);
+    enemyState.throttle = out.throttle;
+    pilotStep(enemySim, plane, enemyDemands, dtS);
+    if (import.meta.env.DEV) validatePlaneState(enemyState, 'tick bota');
+    updateFire(enemyFire, plane.armament, enemyState, ENEMY_ID, enemyCombatRng, pool, out.fire, dtS);
+    if (updateLifecycle(enemyState, terrain, dtS) === 'crashed') {
+      explosions.spawn(enemyState.position);
+      enemyMesh.visible = false;
+    }
+  } else if (updateLifecycle(enemyState, terrain, dtS) === 'respawnReady') {
+    resetEnemy();
+  }
+}
+
+/** Trafienia w pojedynku: pocisk gracza→bot, pocisk bota→gracz (odcinek vs sfera). */
+function resolveDogfightHits(): void {
+  for (const b of pool.bullets) {
+    if (!b.active) continue;
+    if (b.ownerId === OWNER_ID) {
+      if (enemyState.life !== 'alive') continue;
+      if (!segmentSphereHit(b.prevPosition, b.position, enemyState.position, plane.hitRadiusM)) continue;
+      const res = applyDamage(enemyHealth, b.damage);
+      b.active = false;
+      if (res === 'destroyed') onEnemyDestroyed();
+      else if (res === 'absorbed' && !hitMarkerKill) hitMarkerTimerS = HIT_MARKER_S;
+    } else {
+      if (state.life !== 'alive' || autopilotActive) continue;
+      if (!segmentSphereHit(b.prevPosition, b.position, state.position, plane.hitRadiusM)) continue;
+      applyDamage(playerHealth, b.damage);
+      b.active = false;
+      if (!playerHealth.alive) onPlayerDestroyed();
+    }
+  }
+}
+
+function onEnemyDestroyed(): void {
+  playerKills++;
+  hitMarkerTimerS = HIT_MARKER_KILL_S;
+  hitMarkerKill = true;
+  explosions.spawn(enemyState.position);
+  enemyMesh.visible = false;
+  enemyState.life = 'dead';
+  enemyState.lifeTimerS = 0;
+  killFeed.push({ text: `✕ Bot zestrzelony   ${playerKills}:${enemyKills}`, ageS: 0 });
+  if (killFeed.length > 5) killFeed.shift();
+  checkMatchEnd();
+}
+
+function onPlayerDestroyed(): void {
+  enemyKills++;
+  explosions.spawn(state.position);
+  planeMesh.visible = false;
+  state.life = 'dead';
+  state.lifeTimerS = 0;
+  killFeed.push({ text: `✕ Zestrzelony przez bota   ${playerKills}:${enemyKills}`, ageS: 0 });
+  if (killFeed.length > 5) killFeed.shift();
+  checkMatchEnd();
+}
+
+function checkMatchEnd(): void {
+  if (playerKills < MATCH_SCORE_TO_WIN && enemyKills < MATCH_SCORE_TO_WIN) return;
+  matchOver = true;
+  if (document.pointerLockElement) document.exitPointerLock();
+  menu.showResult(playerKills >= MATCH_SCORE_TO_WIN, playerKills, enemyKills);
+}
+
+/** Start trybu z menu: zeruje wynik, ustawia spawny, włącza/wyłącza strzelnicę. */
+function startMatch(choice: GameModeChoice): void {
+  matchOver = false;
+  playerKills = 0;
+  enemyKills = 0;
+  if (choice.mode === 'dogfight') {
+    gameMode = 'dogfight';
+    difficulty = choice.difficulty;
+    enemyBot = new Bot(BOT_CONFIG.tuning, BOT_CONFIG.levels[difficulty], 0xb0b1e);
+    targets.setActive(false);
+    resetPlane();
+    resetEnemy();
+  } else {
+    gameMode = 'training';
+    enemyMesh.visible = false;
+    targets.setActive(true);
+    resetPlane();
+  }
 }
 
 let physicsHz = PHYSICS_HZ;
@@ -244,10 +419,21 @@ const planeModel = createPlaneMesh(wingspanM);
 const planeMesh = planeModel.object;
 scene.add(planeMesh);
 
+// przeciwnik: ten sam model + czerwony beacon (model gracza i bota są identyczne,
+// beacon + marker HUD odróżniają wroga); ukryty poza pojedynkiem
+const enemyModel = createPlaneMesh(wingspanM);
+const enemyMesh = enemyModel.object;
+const enemyBeacon = new Mesh(new SphereGeometry(1.6, 12, 10), new MeshBasicMaterial({ color: 0xff3020 }));
+enemyBeacon.position.set(0, 4, 0);
+enemyMesh.add(enemyBeacon);
+enemyMesh.visible = false;
+scene.add(enemyMesh);
+
 const terrain = createTerrain();
 const world = createWorld(scene, terrain);
 const explosions = new Explosions(scene);
 const targets = new Targets(scene);
+targets.setActive(false); // ukryte w menu; tryb treningu je włączy
 const tracers = new BulletTracers(scene, BULLET_POOL_CAPACITY);
 const muzzleFlash = new MuzzleFlash(scene, plane.armament.muzzles);
 
@@ -276,6 +462,7 @@ const noseMarkerEl = requireEl('nose-marker');
 const alertEl = requireEl('arena-alert');
 const hitMarkerEl = requireEl('hit-marker');
 const killFeedEl = requireEl('kill-feed');
+const enemyMarker = new EnemyMarker(document.body);
 
 function resize(): void {
   const { clientWidth, clientHeight } = app as HTMLElement;
@@ -307,7 +494,9 @@ window.addEventListener('keydown', (event) => {
 
 // --- pętla renderu: stały krok fizyki + interpolacja stanem prev/curr ---
 
-resetPlane();
+resetPlane(); // statyczne tło pod menu (gameMode === 'menu' wstrzymuje fizykę)
+const menu = new GameMenu(startMatch);
+menu.showStart();
 let lastTimeMs: number | undefined;
 
 // licznik fps: średnia z okna 0.5 s (kryterium fazy 4: pomiar wydajności w HUD)
@@ -319,10 +508,19 @@ renderer.setAnimationLoop((timeMs) => {
   const frameDtS = lastTimeMs === undefined ? 0 : (timeMs - lastTimeMs) / 1000;
   lastTimeMs = timeMs;
 
-  const alpha = loop.advance(frameDtS);
+  // fizyka stoi w menu i po zakończonym meczu (alpha=1 → render bieżącego stanu)
+  const playing = gameMode !== 'menu' && !matchOver;
+  const alpha = playing ? loop.advance(frameDtS) : 1;
   planeMesh.position.lerpVectors(prevPosition, state.position, alpha);
   planeMesh.quaternion.slerpQuaternions(prevOrientation, state.orientation, alpha);
   planeModel.update(frameDtS, state.throttle);
+
+  if (gameMode === 'dogfight') {
+    enemyMesh.visible = enemyState.life === 'alive';
+    enemyMesh.position.lerpVectors(enemyPrevPos, enemyState.position, alpha);
+    enemyMesh.quaternion.slerpQuaternions(enemyPrevOrient, enemyState.orientation, alpha);
+    enemyModel.update(frameDtS, enemyState.throttle);
+  }
 
   const buffet = lastTick ? lastTick.stall.buffetIntensity : 0;
   if (cameraMode === 'pościgowa') {
@@ -393,6 +591,14 @@ renderer.setAnimationLoop((timeMs) => {
   // celownik (mysz) + znacznik nosa — celowo NIE sprzężone z kamerą 1:1
   const w = (app as HTMLElement).clientWidth;
   const h = (app as HTMLElement).clientHeight;
+
+  // marker przeciwnika: ramka na ekranie / strzałka przy krawędzi + dystans
+  if (gameMode === 'dogfight' && enemyState.life === 'alive') {
+    enemyMarker.update(enemyMesh.position, planeMesh.position, camera, w, h);
+  } else {
+    enemyMarker.hide();
+  }
+
   const reticlePos =
     mouseAim.locked && state.life === 'alive' && !autopilotActive
       ? mouseAim.reticleScreenPos(planeMesh.position, camera, w, h)
@@ -456,6 +662,14 @@ renderer.setAnimationLoop((timeMs) => {
     ammoMax: AMMO_MAX,
     extraLines: [
       '',
+      ...(gameMode === 'dogfight'
+        ? [
+            `WYNIK Ty ${String(playerKills)} : ${String(enemyKills)} Bot   (do ${String(MATCH_SCORE_TO_WIN)})   [${difficulty}]`,
+            `HP    ${String(Math.max(0, Math.round(playerHealth.hp)))} / ${String(plane.hpPool)}`,
+          ]
+        : gameMode === 'training'
+          ? ['TRENING — strzelnica']
+          : []),
       `fps   ${String(fpsValue).padStart(3)}   pociski ${String(pool.activeCount).padStart(3)}`,
       mouseAim.locked
         ? 'mysz: celuj   LPM/Spacja: OGIEŃ   WSAD/QE: stery   LShift/LCtrl: gaz   [Esc] zwolnij'

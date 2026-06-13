@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0–5 ; aktualny fokus: Faza 6 — Bot AI (FSM przez instruktora)
+Fazy ukończone: 0–6 ; aktualny fokus: Faza 7 — Wczesny deploy: demo single-player na VPS
 
 ## Stack (skrót)
 

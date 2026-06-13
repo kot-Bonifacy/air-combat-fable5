@@ -48,6 +48,42 @@ Poza zakresem: sieć, osobowości botów, manewry nazwane (immelmann jako decyzj
   reakcji to nie kosmetyka, to rdzeń balansu
 - Unikanie ziemi MUSI być nadrzędne nad FSM (osobna warstwa), inaczej evade w dolinie = crash
 
-## Wynik (uzupełnić po zakończeniu)
+## Wynik (2026-06-14)
 
-—
+Zrealizowano kamień milowy — grywalny dogfight offline 1v1. Decyzje użytkownika: w tej fazie
+**tylko 1v1** (1v2/2v2 → backlog), mecz **na punkty do 3 z respawnami**, strzelnica z fazy 5
+zostaje jako tryb **„Trening"**.
+
+**Rdzeń AI w `shared/src/ai/`** (od fazy 12 pobiegnie na serwerze), bot steruje WYŁĄCZNIE przez
+interfejs instruktora — dziedziczy kopertę:
+- `geometry.ts` — aspect / off-boresight / closure + predykaty pozycji ogonowej (+ testy).
+- `lead.ts` — wyprzedzenie jako równanie kwadratowe w układzie strzelca, dokładne dla celu po
+  prostej; brak rozwiązania → LOS (+ testy z rozwiązaniem analitycznym).
+- `fsm.ts` — patrol → engage → evade → extend; CZYSTE przejścia, **każde z testem** (+ predykaty
+  threat/offensive). Override unikania ziemi/areny jest osobną, nadrzędną warstwą (nie stanem).
+- `difficulty.json` + `difficulty.ts` — poziomy łatwy/normalny/trudny przez degradację (czas
+  reakcji, szum celowania, limit G, throttle, dyscyplina ognia) + wspólne progi FSM; walidacja+SI.
+- `bot.ts` — orkiestracja: FSM → sterowanie per stan → degradacja → override'y bezpieczeństwa →
+  instruktor. Limit G realizowany jako clamp kąta komendy nos→cel.
+
+**Klient**: ekran startowy (wybór trybu + trudności) i końcowy (`menu.ts`), markery przeciwnika
+w HUD — strzałka poza ekranem / ramka + dystans (`enemy-marker.ts`), pełne 1v1 w `main.ts`
+(HP gracza, wzajemne obrażenia, wynik, respawny, kill feed). Strzelnica jako tryb treningowy.
+
+### Kryteria
+- [x] Bot patroluje/atakuje/broni się; NIE wbija się w ziemię ani w granicę areny —
+  `ai-sim.test.ts`: 10 min, 4 boty, zero crashy, w granicach areny.
+- [x] Bot trafia manewrujący cel okazjonalnie, nie aimbotuje na „łatwym" — `ai-gunnery.test.ts`:
+  trudny trafia, łatwy istotnie rzadziej.
+- [x] FSM testowany jednostkowo (każde przejście) — `fsm.test.ts`.
+- [x] typecheck + test (203 testy) + lint zielone; build klienta i serwera OK; dev startuje czysto.
+- [~] 1v1 „normalny" winnable/losable, walka > 60 s; 4 boty + gracz @ 60 fps — z konstrukcji
+  (HP 120 / dmg 1.5 → kill = sekundy celnego ognia; mecz do 3 z respawnami; bot ~kilka op.
+  wektorowych + 1 pilotStep). **Finalne „czucie" i balans do playtestu gracza.**
+
+### Pułapki rozwiązane w trakcie
+- Stromy nur w engage + niski roll rate przy dużym IAS (~14°/s) → instruktor wybierał roll 180°
+  (split-S) → rozbicie. Rozwiązanie: ciągły sufit zniżania zależny od AGL (`maxDiveDeg=28`)
+  + próbkowanie terenu z wyprzedzeniem wzdłuż prędkości (`lookaheadSurfaceM`).
+
+Szczegóły: `memory/project_phase6_decisions.md`.

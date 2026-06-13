@@ -42,6 +42,8 @@ export interface PlaneConfig {
   sideslipMaxAccelG: number;
   /** Globalna pula HP płatowca (model bezstrefowy MVP; strefy → faza 17). */
   hpPool: number;
+  /** Promień sfery trafień płatowca [m] (model jednosferowy MVP; strefy → faza 17). */
+  hitRadiusM: number;
   stall: StallConfig;
   instructor: InstructorConfig;
   armament: Armament;
@@ -142,6 +144,7 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   sideslipDampingS: [0.05, 5],
   sideslipMaxAccelG: [0.05, 2],
   hpPool: [1, 100_000],
+  hitRadiusM: [1, 50],
 };
 
 const ARMAMENT_RANGES: Record<ArmamentNumericKey, readonly [min: number, max: number]> = {

@@ -149,6 +149,11 @@ export class Targets {
     this.targets.push(target);
   }
 
+  /** Włącza/wyłącza strzelnicę (tryb treningu vs pojedynek): chowa/pokazuje cele. */
+  setActive(active: boolean): void {
+    for (const t of this.targets) t.mesh.visible = active && t.health.alive;
+  }
+
   update(dtS: number): void {
     for (const t of this.targets) {
       t.tS += dtS;

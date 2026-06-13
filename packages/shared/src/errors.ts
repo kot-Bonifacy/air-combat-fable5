@@ -7,3 +7,8 @@ export class PhysicsError extends Error {
 export class PlaneConfigError extends Error {
   override name = 'PlaneConfigError';
 }
+
+/** Błąd walidacji konfiguracji AI / trudności botów (shared/src/ai/*.json). */
+export class AiConfigError extends Error {
+  override name = 'AiConfigError';
+}

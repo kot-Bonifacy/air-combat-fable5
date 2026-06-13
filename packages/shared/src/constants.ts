@@ -84,3 +84,8 @@ export const TARGET_BALLOON_RADIUS_M = 11;
 export const TARGET_DRONE_RADIUS_M = 7;
 /** Czas od zestrzelenia celu do jego respawnu [s]. */
 export const TARGET_RESPAWN_DELAY_S = 4;
+
+// --- mecz offline (faza 6) ---
+
+/** Liczba zestrzeleń kończąca pojedynek 1v1 (punkty do N, z respawnami). */
+export const MATCH_SCORE_TO_WIN = 3;

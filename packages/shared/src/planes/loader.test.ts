@@ -28,6 +28,7 @@ function validRaw(): Record<string, unknown> {
     sideslipDampingS: 0.5,
     sideslipMaxAccelG: 0.3,
     hpPool: 120,
+    hitRadiusM: 6,
     armament: {
       muzzleVelocityMs: 744,
       convergenceM: 200,

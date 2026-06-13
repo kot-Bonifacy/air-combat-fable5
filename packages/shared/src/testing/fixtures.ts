@@ -30,6 +30,7 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
     sideslipDampingS: 0.5,
     sideslipMaxAccelG: 0.3,
     hpPool: 100,
+    hitRadiusM: 6,
     armament: {
       muzzleVelocityMs: 744,
       convergenceM: 200,

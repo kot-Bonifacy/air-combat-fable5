@@ -1,0 +1,53 @@
+{
+  "tuning": {
+    "detectRangeM": 2500,
+    "disengageRangeM": 3500,
+    "threatConeDeg": 35,
+    "threatBehindDeg": 90,
+    "threatRangeM": 900,
+    "offensiveConeDeg": 22,
+    "offensiveRangeM": 700,
+    "minRangeM": 90,
+    "minFireRangeM": 60,
+    "lowEnergyIasKmh": 200,
+    "recoveredEnergyIasKmh": 330,
+    "cruiseThrottle": 0.85,
+    "evadeBreakDeg": 70,
+    "evadeJinkDeg": 22,
+    "evadeJinkPeriodS": 1.6,
+    "extendDiveDeg": 12,
+    "waypointReachedM": 450,
+    "groundSafetyMarginM": 350,
+    "groundHardFloorM": 140,
+    "groundLookAheadS": 4,
+    "groundClimbDeg": 25,
+    "maxDiveDeg": 28,
+    "arenaTurnMarginM": 1800
+  },
+  "levels": {
+    "latwy": {
+      "reactionTimeS": 0.55,
+      "aimErrorDeg": 3.0,
+      "maxG": 4.0,
+      "throttle": 0.8,
+      "fireRangeM": 350,
+      "fireConeDeg": 3.0
+    },
+    "normalny": {
+      "reactionTimeS": 0.3,
+      "aimErrorDeg": 1.3,
+      "maxG": 6.0,
+      "throttle": 0.92,
+      "fireRangeM": 450,
+      "fireConeDeg": 3.5
+    },
+    "trudny": {
+      "reactionTimeS": 0.15,
+      "aimErrorDeg": 0.5,
+      "maxG": 8.0,
+      "throttle": 1.0,
+      "fireRangeM": 550,
+      "fireConeDeg": 4.0
+    }
+  }
+}
