@@ -33,6 +33,7 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
     armament: {
       muzzleVelocityMs: 744,
       convergenceM: 200,
+      convergenceRiseM: 0.41,
       fireRateRpmPerGun: 1150,
       ammoPerGun: 300,
       dispersionMrad: 3,

@@ -53,6 +53,12 @@ export interface Armament {
   muzzleVelocityMs: number;
   /** Odległość konwergencji luf [m] — punkt, w którym schodzą się strumienie. */
   convergenceM: number;
+  /**
+   * Podniesienie punktu celowania nad oś [m] — kompensacja opadu grawitacyjnego
+   * na dystansie zbieżności (≈ opad pocisku na convergenceM), żeby trafienia
+   * siadały NA linii celownika, nie pod nią. 0 = brak kompensacji.
+   */
+  convergenceRiseM: number;
   /** Kadencja POJEDYNCZEJ lufy [pocisków/min]; salwa = wszystkie lufy naraz. */
   fireRateRpmPerGun: number;
   /** Zapas amunicji na lufę [szt.]. */
@@ -141,6 +147,7 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
 const ARMAMENT_RANGES: Record<ArmamentNumericKey, readonly [min: number, max: number]> = {
   muzzleVelocityMs: [100, 1500],
   convergenceM: [50, 1000],
+  convergenceRiseM: [0, 5],
   fireRateRpmPerGun: [100, 2000],
   ammoPerGun: [10, 5000],
   dispersionMrad: [0, 50],

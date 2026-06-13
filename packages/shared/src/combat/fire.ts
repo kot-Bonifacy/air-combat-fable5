@@ -40,16 +40,18 @@ export function volleyIntervalS(armament: Armament): number {
 }
 
 /**
- * Kierunek lufy w body frame: od wylotu do punktu konwergencji (0,0,convergenceM).
- * Dzięki temu lufy w skrzydłach mają lekki zbieg (toe-in) i strumienie schodzą
- * się na zadanym dystansie.
+ * Kierunek lufy w body frame: od wylotu do punktu harmonizacji
+ * (0, riseM, convergenceM). Toe-in (zbieg ku osi) wynika z członów x/z, a `riseM`
+ * podnosi punkt celowania nad oś o opad grawitacyjny na dystansie zbieżności —
+ * bez tego pociski trafiają PONIŻEJ linii celownika („przystrzelanie" dział).
  */
 export function aimDirectionBody(
   muzzleBody: Vector3,
   convergenceM: number,
+  riseM: number,
   out: Vector3,
 ): Vector3 {
-  return out.set(-muzzleBody.x, -muzzleBody.y, convergenceM - muzzleBody.z).normalize();
+  return out.set(-muzzleBody.x, riseM - muzzleBody.y, convergenceM - muzzleBody.z).normalize();
 }
 
 const scratchRef = new Vector3();
@@ -104,7 +106,7 @@ function fireVolley(
   for (const muzzle of armament.muzzles) {
     if (fc.ammoRemaining <= 0) break;
     scratchMuzzleWorld.set(muzzle[0], muzzle[1], muzzle[2]);
-    aimDirectionBody(scratchMuzzleWorld, armament.convergenceM, scratchDir);
+    aimDirectionBody(scratchMuzzleWorld, armament.convergenceM, armament.convergenceRiseM, scratchDir);
     applyDispersion(scratchDir, dispersionRad, rng);
     // body → world
     scratchDir.applyQuaternion(platform.orientation);

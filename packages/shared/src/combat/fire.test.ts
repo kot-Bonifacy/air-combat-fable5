@@ -17,6 +17,7 @@ function testArmament(over: Partial<Armament> = {}): Armament {
   return {
     muzzleVelocityMs: 744,
     convergenceM: 200,
+    convergenceRiseM: 0,
     fireRateRpmPerGun: 1150,
     ammoPerGun: 300,
     dispersionMrad: 0,
@@ -100,11 +101,24 @@ describe('konwergencja luf', () => {
   });
 
   it('aimDirectionBody robi zbieg (toe-in) ku osi', () => {
-    const left = aimDirectionBody(new Vector3(1.5, -0.25, 1.2), 200, new Vector3());
-    const right = aimDirectionBody(new Vector3(-1.5, -0.25, 1.2), 200, new Vector3());
+    const left = aimDirectionBody(new Vector3(1.5, -0.25, 1.2), 200, 0, new Vector3());
+    const right = aimDirectionBody(new Vector3(-1.5, -0.25, 1.2), 200, 0, new Vector3());
     expect(left.x).toBeLessThan(0); // lewe skrzydło celuje w prawo
     expect(right.x).toBeGreaterThan(0);
     expect(left.z).toBeGreaterThan(0.99); // niemal do przodu
+  });
+
+  it('convergenceRiseM podnosi celowanie (kompensacja opadu) ponad linię osi', () => {
+    const muzzle = new Vector3(1.5, -0.25, 1.2);
+    const flat = aimDirectionBody(muzzle.clone(), 200, 0, new Vector3());
+    const raised = aimDirectionBody(muzzle.clone(), 200, 0.41, new Vector3());
+    // ten sam wylot, większe rise ⇒ kierunek mierzy wyżej (większy składnik +Y)
+    expect(raised.y).toBeGreaterThan(flat.y);
+    // geometryczny punkt celowania na convergenceM podnosi się o ~rise nad oś
+    const tRaised = (200 - muzzle.z) / raised.z;
+    expect(muzzle.y + tRaised * raised.y).toBeCloseTo(0.41, 2);
+    const tFlat = (200 - muzzle.z) / flat.z;
+    expect(muzzle.y + tFlat * flat.y).toBeCloseTo(0, 5);
   });
 });
 
