@@ -2,11 +2,13 @@ import {
   AmbientLight,
   DirectionalLight,
   PerspectiveCamera,
+  PMREMGenerator,
   Quaternion,
   Scene,
   Vector3,
   WebGLRenderer,
 } from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   ARENA_RELEASE_DISTANCE_M,
   ARENA_WARNING_DISTANCE_M,
@@ -155,7 +157,10 @@ const chaseCamera = new ChaseCamera(camera);
 const orbit = new OrbitCamera(camera, renderer.domElement);
 let cameraMode: 'pościgowa' | 'orbitalna' = 'pościgowa';
 
-const planeMesh = createPlaneMesh();
+// rozpiętość skrzydeł [m] z parametrów fizyki: b = √(AR · S) — bez literału w kodzie
+const wingspanM = Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
+const planeModel = createPlaneMesh(wingspanM);
+const planeMesh = planeModel.object;
 scene.add(planeMesh);
 
 const terrain = createTerrain();
@@ -166,6 +171,12 @@ scene.add(new AmbientLight(0xffffff, 0.4));
 const sun = new DirectionalLight(0xffffff, 1.2);
 sun.position.set(30, 50, 20);
 scene.add(sun);
+
+// IBL: bez environment mapy materiały PBR metalu (model Spitfire'a) renderują
+// się prawie czarne. RoomEnvironment to tani, neutralny refleks otoczenia.
+// Dotyczy tylko MeshStandardMaterial — teren/ocean (Lambert) bez zmian.
+const pmrem = new PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const arrows = new ForceArrows(scene);
 
@@ -225,6 +236,7 @@ renderer.setAnimationLoop((timeMs) => {
   const alpha = loop.advance(frameDtS);
   planeMesh.position.lerpVectors(prevPosition, state.position, alpha);
   planeMesh.quaternion.slerpQuaternions(prevOrientation, state.orientation, alpha);
+  planeModel.update(frameDtS, state.throttle);
 
   const buffet = lastTick ? lastTick.stall.buffetIntensity : 0;
   if (cameraMode === 'pościgowa') {

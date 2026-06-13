@@ -22,11 +22,21 @@ export class OrbitCamera {
   ) {
     dom.addEventListener('pointerdown', (event) => {
       this.dragging = true;
-      dom.setPointerCapture(event.pointerId);
+      // setPointerCapture rzuca DOMException, gdy pointer jest w stanie locked
+      // (po pointer lock z celownika myszy) — bez przechwycenia obsłużymy ruch
+      try {
+        dom.setPointerCapture(event.pointerId);
+      } catch {
+        // pointer niedostępny do przechwycenia — ignorujemy
+      }
     });
     dom.addEventListener('pointerup', (event) => {
       this.dragging = false;
-      dom.releasePointerCapture(event.pointerId);
+      try {
+        dom.releasePointerCapture(event.pointerId);
+      } catch {
+        // nic nie było przechwycone
+      }
     });
     dom.addEventListener('pointermove', (event) => {
       if (!this.dragging) return;
