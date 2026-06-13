@@ -16,10 +16,10 @@ import type { Bullet } from '@air-combat/shared';
 // większość amunicji bez smugi). Pozycja interpolowana prev→curr alfą renderu.
 
 /** Grubość smugi [m]. */
-const STREAK_THICK_M = 0.35;
-/** Długość smugi [m] — efekt rozmycia ruchu. */
-const STREAK_LENGTH_M = 16;
-const TRACER_COLOR = 0xffd060;
+const STREAK_THICK_M = 0.16;
+/** Długość smugi [m] — krótki ślad rozmycia CIĄGNĄCY SIĘ ZA pociskiem. */
+const STREAK_LENGTH_M = 9;
+const TRACER_COLOR = 0xffb840;
 
 const UNIT_Z = new Vector3(0, 0, 1);
 const scratchPos = new Vector3();
@@ -36,7 +36,7 @@ export class BulletTracers {
     const material = new MeshBasicMaterial({
       color: TRACER_COLOR,
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.6,
       blending: AdditiveBlending,
       depthWrite: false,
       fog: false,
@@ -57,6 +57,9 @@ export class BulletTracers {
       if (scratchDir.lengthSq() > 0) scratchDir.normalize();
       else scratchDir.copy(UNIT_Z);
       scratchQuat.setFromUnitVectors(UNIT_Z, scratchDir);
+      // przedni koniec smugi DOKŁADNIE na pocisku — cofamy środek o pół długości,
+      // żeby ślad ciągnął się ZA pociskiem (nic nie renderuje się przed lufą)
+      scratchPos.addScaledVector(scratchDir, -STREAK_LENGTH_M / 2);
       scratchMat.compose(scratchPos, scratchQuat, scratchScale);
       this.mesh.setMatrixAt(n, scratchMat);
       n++;
