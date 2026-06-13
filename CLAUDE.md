@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0–4 ; aktualny fokus: Faza 5 — Uzbrojenie, balistyka, HP
+Fazy ukończone: 0–5 ; aktualny fokus: Faza 6 — Bot AI (FSM przez instruktora)
 
 ## Stack (skrót)
 

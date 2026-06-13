@@ -27,6 +27,21 @@ function validRaw(): Record<string, unknown> {
     weathervaneMaxRateDegS: 120,
     sideslipDampingS: 0.5,
     sideslipMaxAccelG: 0.3,
+    hpPool: 120,
+    armament: {
+      muzzleVelocityMs: 744,
+      convergenceM: 200,
+      fireRateRpmPerGun: 1150,
+      ammoPerGun: 300,
+      dispersionMrad: 3.0,
+      damagePerHit: 1.5,
+      bulletDragK: 0.001,
+      bulletLifetimeS: 3.0,
+      muzzles: [
+        [1.5, -0.25, 1.2],
+        [-1.5, -0.25, 1.2],
+      ],
+    },
     stall: {
       buffetOnsetRatio: 0.9,
       noseDropRateDegS: 12,
@@ -114,6 +129,32 @@ describe('loader konfiguracji samolotu', () => {
     const raw = validRaw();
     raw['nMinG'] = 0;
     expect(() => loadPlaneConfig(raw)).toThrowError(/nMinG/);
+  });
+
+  it('armament: poprawne uzbrojenie zachowuje wartości i lufy', () => {
+    const config = loadPlaneConfig(validRaw());
+    expect(config.armament.muzzleVelocityMs).toBe(744);
+    expect(config.armament.muzzles).toHaveLength(2);
+    expect(config.armament.muzzles[0]?.[0]).toBe(1.5);
+    expect(config.hpPool).toBe(120);
+  });
+
+  it('armament: pole poza zakresem → PlaneConfigError ze ścieżką', () => {
+    const raw = validRaw();
+    (raw['armament'] as Record<string, unknown>)['muzzleVelocityMs'] = 5; // m/s zamiast realnej
+    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.muzzleVelocityMs/);
+  });
+
+  it('armament: literówka w lufach → PlaneConfigError', () => {
+    const raw = validRaw();
+    (raw['armament'] as Record<string, unknown>)['muzzles'] = [[1.5, -0.25]]; // brak Z
+    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.muzzles/);
+  });
+
+  it('armament: nieznane pole → PlaneConfigError', () => {
+    const raw = validRaw();
+    (raw['armament'] as Record<string, unknown>)['kadencja'] = 1150;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.kadencja/);
   });
 
   it('K = 1/(π·e·AR)', () => {

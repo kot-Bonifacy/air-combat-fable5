@@ -16,8 +16,15 @@ export interface HudData {
   /** Pochylenie nosa nad horyzont [rad]. */
   pitchRad: number;
   controlMode: 'mysz' | 'klawiatura';
+  /** Pozostała amunicja (suma luf). */
+  ammo: number;
+  /** Pełny zapas amunicji (do wyróżnienia stanu niskiego). */
+  ammoMax: number;
   extraLines: readonly string[];
 }
+
+/** Próg ostrzeżenia o niskiej amunicji (udział pełnego zapasu). */
+const LOW_AMMO_RATIO = 0.15;
 
 const PITCH_PX_PER_RAD = 120;
 
@@ -49,6 +56,13 @@ export class Hud {
       `n     ${data.nG.toFixed(1).padStart(5)} G     (dostępne ${data.nAvailG.toFixed(1)} G)`,
       `α     ${data.alphaDeg.toFixed(1).padStart(5)}°     E ${data.energyMj.toFixed(1)} MJ${stallText}`,
       `ster  ${data.controlMode}`,
+      `amun. ${String(data.ammo).padStart(4)} / ${String(data.ammoMax)}${
+        data.ammo === 0
+          ? '   *** PUSTE ***'
+          : data.ammo <= data.ammoMax * LOW_AMMO_RATIO
+            ? '   ! mało !'
+            : ''
+      }`,
       ...data.extraLines,
     ].join('\n');
 

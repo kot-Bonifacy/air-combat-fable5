@@ -56,3 +56,31 @@ export const CRASH_MARGIN_M = 2;
 
 /** Czas od rozbicia do gotowości respawnu [s]. */
 export const RESPAWN_DELAY_S = 3;
+
+// --- walka (faza 5) ---
+
+/**
+ * Pojemność puli pocisków (zero alokacji w pętli — niezmiennik nr 6 ducha:
+ * hot path bez GC). Spitfire: 8 luf × 1150 rpm ≈ 153 poc./s × 3 s życia ≈ 460
+ * aktywnych w szczycie; 768 daje zapas także na pierwsze obce samoloty (faza 8+).
+ */
+export const BULLET_POOL_CAPACITY = 768;
+
+/** Konwersja milliradianów (rozrzut w JSON) → radiany. */
+export const MRAD_TO_RAD = 1e-3;
+
+/**
+ * Strzelnica testowa (faza 5): cele do kalibracji celowania. NIE są samolotami,
+ * więc ich parametry żyją tu, a nie w planes/*.json. Usuwane/zastępowane botami
+ * w fazie 6. Współrzędne dobrane przed nosem startującego gracza (spawn na −Z,
+ * nos na +Z ku wyspie) — w zasięgu pierwszego przelotu.
+ */
+export const TARGET_BALLOON_HP = 50;
+/** HP małego, ruchomego drona-celu (mniejszy, trudniejszy — niższe HP). */
+export const TARGET_DRONE_HP = 35;
+/** Promień sfery trafień balonu [m] (≈ jego widoczny rozmiar). */
+export const TARGET_BALLOON_RADIUS_M = 11;
+/** Promień sfery trafień drona [m]. */
+export const TARGET_DRONE_RADIUS_M = 7;
+/** Czas od zestrzelenia celu do jego respawnu [s]. */
+export const TARGET_RESPAWN_DELAY_S = 4;

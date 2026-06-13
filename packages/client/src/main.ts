@@ -12,6 +12,8 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import {
   ARENA_RELEASE_DISTANCE_M,
   ARENA_WARNING_DISTANCE_M,
+  BULLET_POOL_CAPACITY,
+  BulletPool,
   FixedStepLoop,
   GRAVITY_MS2,
   MS_TO_KMH,
@@ -20,7 +22,9 @@ import {
   RESPAWN_DELAY_S,
   SPITFIRE_MK1,
   createControlDeflections,
+  createFireControl,
   createPilotDemands,
+  createRng,
   createSimPlane,
   createTerrain,
   distanceToArenaEdgeM,
@@ -30,10 +34,13 @@ import {
   pilotStep,
   sumForces,
   surfaceHeightM,
+  totalAmmo,
+  updateFire,
   updateLifecycle,
   validatePlaneState,
   type PilotTickResult,
 } from '@air-combat/shared';
+import { BulletTracers } from './bullet-tracers';
 import { ChaseCamera } from './chase-camera';
 import { Explosions } from './explosion';
 import { FlightRecorder } from './flight-recorder';
@@ -41,9 +48,11 @@ import { ForceArrows } from './force-arrows';
 import { Hud } from './hud';
 import { KeyboardInput } from './input';
 import { MouseAim, projectDirToScreen } from './mouse-aim';
+import { MuzzleFlash } from './muzzle-flash';
 import { connectNetStatus } from './net-status';
 import { OrbitCamera } from './orbit-camera';
 import { createPlaneMesh } from './plane-mesh';
+import { Targets, type TargetHit } from './targets';
 import { createWorld } from './world';
 
 // --- faza 4: świat (ocean + wyspa + kolizje + granice areny) na sterowaniu z fazy 3 ---
@@ -66,6 +75,49 @@ const prevPosition = new Vector3();
 const prevOrientation = new Quaternion();
 let lastTick: PilotTickResult | undefined;
 
+// --- walka (faza 5) ---
+/** Seed rozrzutu — lokalnie stały; serwer zaseeduje per mecz (faza 11). */
+const COMBAT_SEED = 0x5eed;
+/** Id właściciela pocisków (kill credit) — lokalnie jeden gracz. */
+const OWNER_ID = 0;
+const pool = new BulletPool(BULLET_POOL_CAPACITY);
+const fireControl = createFireControl(plane.armament);
+const combatRng = createRng(COMBAT_SEED);
+const AMMO_MAX = totalAmmo(plane.armament);
+/** Spust: LPM aktywne tylko przy zablokowanej myszy, Spacja zawsze. */
+let triggerMouse = false;
+let triggerKey = false;
+let pendingMuzzleFlash = false;
+
+// hit marker (krzyżyk) + kill feed
+const HIT_MARKER_S = 0.12;
+const HIT_MARKER_KILL_S = 0.5;
+const KILL_FEED_TTL_S = 4;
+let hitMarkerTimerS = 0;
+let hitMarkerKill = false;
+interface KillFeedLine {
+  text: string;
+  ageS: number;
+}
+const killFeed: KillFeedLine[] = [];
+
+function triggerHeld(): boolean {
+  return (mouseAim.locked && triggerMouse) || triggerKey;
+}
+
+/** Reakcja na trafienie pocisku w cel: hit marker, a przy zniszczeniu wybuch + kill feed. */
+function onTargetHit(hit: TargetHit): void {
+  if (hit.destroyed) {
+    hitMarkerTimerS = HIT_MARKER_KILL_S;
+    hitMarkerKill = true;
+    explosions.spawn(hit.position);
+    killFeed.push({ text: `✕ ${hit.label} zestrzelony`, ageS: 0 });
+    if (killFeed.length > 5) killFeed.shift();
+  } else if (!hitMarkerKill) {
+    hitMarkerTimerS = HIT_MARKER_S;
+  }
+}
+
 // --- scena (przed inputem: mysz wymaga elementu canvas) ---
 
 const app = document.getElementById('app');
@@ -79,6 +131,24 @@ const keyboard = new KeyboardInput(window);
 const mouseAim = new MouseAim(renderer.domElement, control.mouseAim);
 /** Poza areną stery przejmuje autopilot zawracający (histereza ARENA_RELEASE_DISTANCE_M). */
 let autopilotActive = false;
+
+// spust: LPM (na canvasie) + Spacja (globalnie). Pierwsze kliknięcie przejmuje
+// pointer lock i NIE strzela (triggerHeld bramkuje LPM na mouseAim.locked).
+renderer.domElement.addEventListener('mousedown', (event) => {
+  if (event.button === 0) triggerMouse = true;
+});
+window.addEventListener('mouseup', (event) => {
+  if (event.button === 0) triggerMouse = false;
+});
+window.addEventListener('keydown', (event) => {
+  if (event.code === 'Space') {
+    event.preventDefault();
+    triggerKey = true;
+  }
+});
+window.addEventListener('keyup', (event) => {
+  if (event.code === 'Space') triggerKey = false;
+});
 
 const scratchTargetDir = new Vector3();
 const scratchFwd = new Vector3();
@@ -98,6 +168,8 @@ function resetPlane(): void {
   state.lifeTimerS = 0;
   keyboard.throttle = 0.8;
   autopilotActive = false;
+  fireControl.ammoRemaining = AMMO_MAX;
+  fireControl.cooldownS = 0;
   control.reset(state);
   prevPosition.copy(state.position);
   prevOrientation.copy(state.orientation);
@@ -109,40 +181,49 @@ function physicsStep(dtS: number): void {
   prevPosition.copy(state.position);
   prevOrientation.copy(state.orientation);
 
-  if (state.life !== 'alive') {
-    // wrak: fizyka stoi, liczy się tylko timer respawnu
-    if (updateLifecycle(state, terrain, dtS) === 'respawnReady') resetPlane();
-    return;
-  }
+  if (state.life === 'alive') {
+    keyboard.update(dtS);
+    state.throttle = keyboard.throttle;
 
-  keyboard.update(dtS);
-  state.throttle = keyboard.throttle;
+    // granice areny: poza nimi miękka utrata kontroli na rzecz autopilota zawracającego
+    const edgeM = distanceToArenaEdgeM(state.position.x, state.position.z);
+    if (edgeM < 0) autopilotActive = true;
+    else if (edgeM >= ARENA_RELEASE_DISTANCE_M) autopilotActive = false;
 
-  // granice areny: poza nimi miękka utrata kontroli na rzecz autopilota zawracającego
-  const edgeM = distanceToArenaEdgeM(state.position.x, state.position.z);
-  if (edgeM < 0) autopilotActive = true;
-  else if (edgeM >= ARENA_RELEASE_DISTANCE_M) autopilotActive = false;
+    if (autopilotActive) {
+      scratchTargetDir.set(-state.position.x, 0, -state.position.z).normalize();
+      control.updateWithTarget(state, plane, scratchTargetDir, dtS, demands);
+    } else {
+      deflections.pitchUp = keyboard.pitchDeflection;
+      deflections.rollRight = keyboard.rollDeflection;
+      deflections.yawRight = keyboard.yawDeflection;
+      control.update(state, plane, deflections, dtS, demands);
+    }
 
-  if (autopilotActive) {
-    scratchTargetDir.set(-state.position.x, 0, -state.position.z).normalize();
-    control.updateWithTarget(state, plane, scratchTargetDir, dtS, demands);
+    lastTick = pilotStep(sim, plane, demands, dtS);
+    if (import.meta.env.DEV) {
+      validatePlaneState(state, 'tick klienta');
+      recorder?.record(state, lastTick, plane, dtS);
+    }
+
+    // ogień: tylko pod kontrolą gracza (nie podczas autopilota zawracającego)
+    const wantFire = !autopilotActive && triggerHeld();
+    const fired = updateFire(fireControl, plane.armament, state, OWNER_ID, combatRng, pool, wantFire, dtS);
+    if (fired > 0) pendingMuzzleFlash = true;
+
+    if (updateLifecycle(state, terrain, dtS) === 'crashed') {
+      explosions.spawn(state.position);
+      planeMesh.visible = false;
+    }
   } else {
-    deflections.pitchUp = keyboard.pitchDeflection;
-    deflections.rollRight = keyboard.rollDeflection;
-    deflections.yawRight = keyboard.yawDeflection;
-    control.update(state, plane, deflections, dtS, demands);
+    // wrak: fizyka samolotu stoi, liczy się tylko timer respawnu
+    if (updateLifecycle(state, terrain, dtS) === 'respawnReady') resetPlane();
   }
 
-  lastTick = pilotStep(sim, plane, demands, dtS);
-  if (import.meta.env.DEV) {
-    validatePlaneState(state, 'tick klienta');
-    recorder?.record(state, lastTick, plane, dtS);
-  }
-
-  if (updateLifecycle(state, terrain, dtS) === 'crashed') {
-    explosions.spawn(state.position);
-    planeMesh.visible = false;
-  }
+  // pociski i cele żyją niezależnie od stanu gracza
+  targets.update(dtS);
+  pool.update(plane.armament.bulletDragK, plane.armament.bulletLifetimeS, dtS);
+  targets.resolveBulletHits(pool, onTargetHit);
 }
 
 let physicsHz = PHYSICS_HZ;
@@ -166,6 +247,9 @@ scene.add(planeMesh);
 const terrain = createTerrain();
 const world = createWorld(scene, terrain);
 const explosions = new Explosions(scene);
+const targets = new Targets(scene);
+const tracers = new BulletTracers(scene, BULLET_POOL_CAPACITY);
+const muzzleFlash = new MuzzleFlash(scene, plane.armament.muzzles);
 
 scene.add(new AmbientLight(0xffffff, 0.4));
 const sun = new DirectionalLight(0xffffff, 1.2);
@@ -190,6 +274,8 @@ const hud = new Hud(requireEl('hud'), requireEl('stall-warning'), requireEl('hor
 const reticleEl = requireEl('reticle');
 const noseMarkerEl = requireEl('nose-marker');
 const alertEl = requireEl('arena-alert');
+const hitMarkerEl = requireEl('hit-marker');
+const killFeedEl = requireEl('kill-feed');
 
 function resize(): void {
   const { clientWidth, clientHeight } = app as HTMLElement;
@@ -251,6 +337,43 @@ renderer.setAnimationLoop((timeMs) => {
 
   world.update(camera.position);
   explosions.update(frameDtS);
+
+  // smugacze (interpolacja prev→curr alfą) + błysk luf na każdej oddanej salwie
+  tracers.update(pool.bullets, alpha);
+  if (pendingMuzzleFlash) {
+    muzzleFlash.flash();
+    pendingMuzzleFlash = false;
+  }
+  muzzleFlash.update(planeMesh.position, planeMesh.quaternion, camera.position, frameDtS);
+
+  // hit marker (krzyżyk w centrum) — błysk na trafieniu, mocniejszy na zestrzeleniu
+  if (hitMarkerTimerS > 0) {
+    const dur = hitMarkerKill ? HIT_MARKER_KILL_S : HIT_MARKER_S;
+    hitMarkerEl.className = hitMarkerKill ? 'kill' : '';
+    hitMarkerEl.style.opacity = Math.min(1, hitMarkerTimerS / dur).toFixed(2);
+    hitMarkerTimerS -= frameDtS;
+    if (hitMarkerTimerS <= 0) hitMarkerKill = false;
+  } else {
+    hitMarkerEl.style.opacity = '0';
+  }
+
+  // kill feed — linie gasną przez ostatnią sekundę życia
+  if (killFeed.length > 0) {
+    for (let i = killFeed.length - 1; i >= 0; i--) {
+      const line = killFeed[i];
+      if (!line) continue;
+      line.ageS += frameDtS;
+      if (line.ageS >= KILL_FEED_TTL_S) killFeed.splice(i, 1);
+    }
+  }
+  killFeedEl.replaceChildren(
+    ...killFeed.map((line) => {
+      const span = document.createElement('span');
+      span.textContent = line.text;
+      span.style.opacity = Math.max(0, Math.min(1, KILL_FEED_TTL_S - line.ageS)).toFixed(2);
+      return span;
+    }),
+  );
 
   fpsFrames++;
   fpsWindowS += frameDtS;
@@ -329,12 +452,14 @@ renderer.setAnimationLoop((timeMs) => {
     bankRad: Math.atan2(-scratchRight.y, scratchUp.y),
     pitchRad: Math.asin(Math.min(1, Math.max(-1, scratchFwd.y))),
     controlMode: control.mode,
+    ammo: fireControl.ammoRemaining,
+    ammoMax: AMMO_MAX,
     extraLines: [
       '',
-      `fps   ${String(fpsValue).padStart(3)}`,
+      `fps   ${String(fpsValue).padStart(3)}   pociski ${String(pool.activeCount).padStart(3)}`,
       mouseAim.locked
-        ? 'mysz: celuj   WSAD/QE: stery   LShift/LCtrl: gaz   [Esc] zwolnij mysz'
-        : 'KLIKNIJ, by sterować myszą (pointer lock)   WSAD/QE: stery   LShift/LCtrl: gaz',
+        ? 'mysz: celuj   LPM/Spacja: OGIEŃ   WSAD/QE: stery   LShift/LCtrl: gaz   [Esc] zwolnij'
+        : 'KLIKNIJ, by sterować myszą (pointer lock)   LPM/Spacja: ogień   WSAD/QE: stery',
       `[C] kamera: ${cameraMode}   [F3] siły: ${arrowsVisible ? 'ON' : 'OFF'}   [F4] tick ${physicsHz} Hz${physicsHz !== PHYSICS_HZ ? ' ← SPOWOLNIONY' : ''}   [R] reset`,
     ],
   });

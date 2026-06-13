@@ -29,6 +29,21 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
     weathervaneMaxRateDegS: 120,
     sideslipDampingS: 0.5,
     sideslipMaxAccelG: 0.3,
+    hpPool: 100,
+    armament: {
+      muzzleVelocityMs: 744,
+      convergenceM: 200,
+      fireRateRpmPerGun: 1150,
+      ammoPerGun: 300,
+      dispersionMrad: 3,
+      damagePerHit: 1.5,
+      bulletDragK: 0.001,
+      bulletLifetimeS: 3,
+      muzzles: [
+        [1.5, -0.25, 1.2],
+        [-1.5, -0.25, 1.2],
+      ],
+    },
     stall: {
       buffetOnsetRatio: 0.9,
       noseDropRateDegS: 12,

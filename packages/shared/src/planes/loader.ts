@@ -40,8 +40,36 @@ export interface PlaneConfig {
   sideslipDampingS: number;
   /** Limit przyspieszenia bocznego od siły kadłuba gaszącej ślizg [G]. */
   sideslipMaxAccelG: number;
+  /** Globalna pula HP płatowca (model bezstrefowy MVP; strefy → faza 17). */
+  hpPool: number;
   stall: StallConfig;
   instructor: InstructorConfig;
+  armament: Armament;
+}
+
+/** Parametry uzbrojenia strzeleckiego (faza 5, docs/phases/faza-05.md). */
+export interface Armament {
+  /** Prędkość wylotowa pocisku względem samolotu [m/s] (.303 ≈ 744). */
+  muzzleVelocityMs: number;
+  /** Odległość konwergencji luf [m] — punkt, w którym schodzą się strumienie. */
+  convergenceM: number;
+  /** Kadencja POJEDYNCZEJ lufy [pocisków/min]; salwa = wszystkie lufy naraz. */
+  fireRateRpmPerGun: number;
+  /** Zapas amunicji na lufę [szt.]. */
+  ammoPerGun: number;
+  /** Rozrzut: promień stożka losowego odchylenia kierunku [milliradiany]. */
+  dispersionMrad: number;
+  /** Obrażenia jednego trafienia [HP]. */
+  damagePerHit: number;
+  /** Współczynnik oporu kwadratowego pocisku k [1/m] (a = −k·|v|·v). */
+  bulletDragK: number;
+  /** Czas życia pocisku [s] — po nim gaśnie (cap zasięgu). */
+  bulletLifetimeS: number;
+  /**
+   * Pozycje wylotów luf w body frame [m] (+Z nos, +Y góra, +X LEWE skrzydło).
+   * Liczba pozycji = liczba luf. Kierunek każdego pocisku: do punktu konwergencji.
+   */
+  muzzles: readonly (readonly [x: number, y: number, z: number])[];
 }
 
 /** Parametry przeciągnięcia (fizyka-lotu.md rozdz. 6.5). */
@@ -81,8 +109,11 @@ export interface InstructorConfig {
 
 type NumericKey = Exclude<
   keyof PlaneConfig,
-  'name' | 'rollRateCurve' | 'stall' | 'instructor'
+  'name' | 'rollRateCurve' | 'stall' | 'instructor' | 'armament'
 >;
+
+/** Pola skalarne uzbrojenia (bez `muzzles`, walidowanego osobno). */
+type ArmamentNumericKey = Exclude<keyof Armament, 'muzzles'>;
 
 // Zakresy sanity per pole — łapią literówki i pomyłki jednostek
 // (np. moc w kW zamiast W wypada poniżej minimum).
@@ -104,6 +135,18 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   weathervaneMaxRateDegS: [10, 720],
   sideslipDampingS: [0.05, 5],
   sideslipMaxAccelG: [0.05, 2],
+  hpPool: [1, 100_000],
+};
+
+const ARMAMENT_RANGES: Record<ArmamentNumericKey, readonly [min: number, max: number]> = {
+  muzzleVelocityMs: [100, 1500],
+  convergenceM: [50, 1000],
+  fireRateRpmPerGun: [100, 2000],
+  ammoPerGun: [10, 5000],
+  dispersionMrad: [0, 50],
+  damagePerHit: [0.1, 1000],
+  bulletDragK: [0, 0.02],
+  bulletLifetimeS: [0.5, 10],
 };
 
 const STALL_RANGES: Record<keyof StallConfig, readonly [min: number, max: number]> = {
@@ -129,8 +172,11 @@ const KNOWN_KEYS = new Set<string>([
   'rollRateCurve',
   'stall',
   'instructor',
+  'armament',
   ...Object.keys(NUMERIC_RANGES),
 ]);
+
+const ARMAMENT_KNOWN_KEYS = new Set<string>(['muzzles', ...Object.keys(ARMAMENT_RANGES)]);
 
 function checkNumericFields(
   obj: Record<string, unknown>,
@@ -196,6 +242,41 @@ function checkRollRateCurve(obj: Record<string, unknown>, problems: string[]): v
   });
 }
 
+function checkMuzzles(armament: Record<string, unknown>, problems: string[]): void {
+  const muzzles = armament['muzzles'];
+  if (!Array.isArray(muzzles) || muzzles.length < 1) {
+    problems.push('armament.muzzles: oczekiwano tablicy ≥1 pozycji [x,y,z] w body frame [m]');
+    return;
+  }
+  muzzles.forEach((m, i) => {
+    if (!Array.isArray(m) || m.length !== 3) {
+      problems.push(`armament.muzzles[${String(i)}]: oczekiwano trójki [x,y,z]`);
+      return;
+    }
+    (m as unknown[]).forEach((v, axis) => {
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < -15 || v > 15) {
+        problems.push(
+          `armament.muzzles[${String(i)}][${String(axis)}]: ${JSON.stringify(v)} poza [−15, 15] m`,
+        );
+      }
+    });
+  });
+}
+
+function checkArmament(obj: Record<string, unknown>, problems: string[]): void {
+  const section = obj['armament'];
+  if (typeof section !== 'object' || section === null || Array.isArray(section)) {
+    problems.push('armament: oczekiwano obiektu');
+    return;
+  }
+  const armament = section as Record<string, unknown>;
+  checkNumericFields(armament, ARMAMENT_RANGES, 'armament.', problems);
+  checkMuzzles(armament, problems);
+  for (const key of Object.keys(armament)) {
+    if (!ARMAMENT_KNOWN_KEYS.has(key)) problems.push(`armament.${key}: nieznane pole (literówka?)`);
+  }
+}
+
 /**
  * Walidacja schematu przy ładowaniu: wymagane pola, typy, zakresy sanity,
  * brak nieznanych kluczy. Wszystkie problemy zbierane do jednego wyjątku.
@@ -216,6 +297,7 @@ export function loadPlaneConfig(raw: unknown, source = 'konfiguracja samolotu'):
   checkRollRateCurve(obj, problems);
   checkSection(obj, 'stall', STALL_RANGES, problems);
   checkSection(obj, 'instructor', INSTRUCTOR_RANGES, problems);
+  checkArmament(obj, problems);
 
   const nMin = obj['nMinG'];
   if (typeof nMin === 'number' && nMin >= 0) {

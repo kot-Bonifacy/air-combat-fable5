@@ -32,12 +32,13 @@ bomby/rakiety (backlog).
 
 ## Kryteria ukończenia
 
-- [ ] Test: pocisk na 300 m opada zgodnie z balistyką (wartość analityczna ±2%)
-- [ ] Test: hit detection łapie przelot przez sferę nawet przy 1 ticku wewnątrz segmentu
-- [ ] W grze: zestrzelenie balonu nieruchomego i poruszającego się (z wyprzedzeniem) —
-  trafienia czuć spójnie z tracerami
-- [ ] 8 luf × 60 Hz nie alokuje w pętli (pula; brak zauważalnego GC w profilerze)
-- [ ] typecheck + test + lint zielone; commit `faza-5`; memory zapisane
+- [x] Test: pocisk na 300 m opada zgodnie z balistyką (wartość analityczna ±2%)
+- [x] Test: hit detection łapie przelot przez sferę nawet przy 1 ticku wewnątrz segmentu
+- [~] W grze: zestrzelenie balonu nieruchomego i poruszającego się (z wyprzedzeniem) —
+  trafienia czuć spójnie z tracerami → do weryfikacji w grze (`npm run dev`); ścieżkę
+  walki end-to-end pokrywa test integracyjny `combat/integration.test.ts`
+- [x] 8 luf × 60 Hz nie alokuje w pętli (pula prealokowana 768; krok puli bez `new`)
+- [x] typecheck + test + lint zielone; commit `faza-5`; memory zapisane
 
 ## Pułapki
 
@@ -47,6 +48,36 @@ bomby/rakiety (backlog).
   liczb po obu stronach przy tym samym seedzie)
 - Tracery: NIE jeden mesh per pocisk — InstancedMesh albo punkty, inaczej fps zjedzony
 
-## Wynik (uzupełnić po zakończeniu)
+## Wynik
 
-—
+Zaimplementowano kompletny rdzeń walki w `shared/combat/` + warstwę kliencką.
+
+**Decyzje użytkownika (2026-06-13):** ogień na LPM (+ Spacja w obu trybach), opór pocisku
+**kwadratowy** `a = −k·|v|·v`, obrażenia **realistyczne** (.303 słabe, zestrzelenie = długa seria).
+
+**Moduły `shared/combat/`:**
+- `ballistics.ts` — `stepBullet` (grawitacja + opór kwadratowy) i `BulletPool` (prealokacja
+  768, spawn/krok bez alokacji, nadpisanie najstarszego przy przepełnieniu). Pocisk całkuje
+  pozycję jako `p += v·dt + ½·a·dt²` (NIE semi-implicit Euler jak płatowiec) — bez członu
+  ½·a·dt² opad grawitacyjny był zawyżony o ~1/n (≈4% na 300 m, ponad próg ±2%).
+- `hit.ts` — `segmentSphereHitT` (odcinek prev→pos vs sfera): łapie tunelowanie (oba końce
+  poza sferą), styczną, start wewnątrz; zwraca t∈[0,1] lub −1.
+- `health.ts` — pula HP, `applyDamage` zwraca `absorbed`/`destroyed`/`ignored` (kill liczony raz).
+- `fire.ts` — `updateFire` (kadencja, amunicja), konwergencja (`aimDirectionBody` → punkt
+  (0,0,convergenceM), zbieg luf w skrzydłach), rozrzut (`applyDispersion`, seeded RNG z shared),
+  smugacz co 3. pocisk, dziedziczenie prędkości samolotu.
+- `integration.test.ts` — end-to-end: seria w sferę na 200 m niszczy ją (lustro pętli klienta).
+
+**Konfiguracja (JSON/stałe, zero liczb w kodzie):** `spitfire-mk1.json` → `hpPool: 120` +
+`armament` (8 luf .303, 744 m/s, konwergencja 200 m, 1150 rpm/lufę, 300 szt./lufę, rozrzut
+3 mrad, dmg 1.5, dragK 0.001, życie 3 s). Walidacja sekcji w `loader.ts`. Cele strzelnicy
+(HP/promień/respawn) w `constants.ts` — nie są samolotami.
+
+**Klient:** `bullet-tracers.ts` (InstancedMesh, tylko smugacze, interpolacja prev→curr),
+`muzzle-flash.ts` (billboardowane błyski w lufach), `targets.ts` (balon nieruchomy + 2 drony
+po okręgu, HP + respawn + rozwiązywanie trafień), hit marker (krzyżyk) + kill feed + licznik
+amunicji w HUD. Strzał: LPM (przy zablokowanej myszy) lub Spacja.
+
+**Pozostało do oceny przez gracza:** „czucie" trafień i wyprzedzenia (npm run dev). Knoby
+strojenia: `armament.*` w JSON, `TARGET_*_HP` w constants, długość/grubość smugi w
+`bullet-tracers.ts`, `dispersionMrad`/`convergenceM` dla rozrzutu/zbiegu.
