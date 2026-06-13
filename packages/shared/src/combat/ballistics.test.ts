@@ -13,6 +13,7 @@ function makeBullet(velocity: Vector3): Bullet {
   return {
     position: new Vector3(0, 0, 0),
     prevPosition: new Vector3(),
+    origin: new Vector3(),
     velocity: velocity.clone(),
     ageS: 0,
     active: true,

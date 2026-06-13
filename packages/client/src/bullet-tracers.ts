@@ -17,7 +17,7 @@ import type { Bullet } from '@air-combat/shared';
 
 /** Grubość smugi [m]. */
 const STREAK_THICK_M = 0.16;
-/** Długość smugi [m] — krótki ślad rozmycia CIĄGNĄCY SIĘ ZA pociskiem. */
+/** Maksymalna długość smugi [m] — krótki ślad rozmycia CIĄGNĄCY SIĘ ZA pociskiem. */
 const STREAK_LENGTH_M = 9;
 const TRACER_COLOR = 0xffb840;
 
@@ -57,9 +57,15 @@ export class BulletTracers {
       if (scratchDir.lengthSq() > 0) scratchDir.normalize();
       else scratchDir.copy(UNIT_Z);
       scratchQuat.setFromUnitVectors(UNIT_Z, scratchDir);
+      // ogon smugi nie może wyjść ZA lufę: przy świeżym strzale pocisk jest tuż
+      // przy wylocie, a pełne 9 m ciągnęłoby się przez/za skrzydło ku ogonowi.
+      // Skracamy do dystansu od punktu spawnu — smuga rośnie 0→max gdy pocisk
+      // odlatuje (po jednym ticku v0≈744 m/s pokonuje >9 m, więc szybko pełna).
+      const len = Math.min(STREAK_LENGTH_M, scratchPos.distanceTo(b.origin));
+      scratchScale.z = len;
       // przedni koniec smugi DOKŁADNIE na pocisku — cofamy środek o pół długości,
       // żeby ślad ciągnął się ZA pociskiem (nic nie renderuje się przed lufą)
-      scratchPos.addScaledVector(scratchDir, -STREAK_LENGTH_M / 2);
+      scratchPos.addScaledVector(scratchDir, -len / 2);
       scratchMat.compose(scratchPos, scratchQuat, scratchScale);
       this.mesh.setMatrixAt(n, scratchMat);
       n++;

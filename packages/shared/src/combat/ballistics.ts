@@ -18,6 +18,8 @@ export interface Bullet {
   position: Vector3;
   /** Pozycja na początku bieżącego ticku [m] — start odcinka do hit-detekcji. */
   prevPosition: Vector3;
+  /** Punkt wylotu (spawn) [m] — render smugi przycina ślad, by nie wychodził za lufę. */
+  origin: Vector3;
   /** Prędkość w układzie świata [m/s]. */
   velocity: Vector3;
   /** Wiek [s] — pocisk gaśnie po przekroczeniu czasu życia. */
@@ -36,6 +38,7 @@ function createBullet(): Bullet {
   return {
     position: new Vector3(),
     prevPosition: new Vector3(),
+    origin: new Vector3(),
     velocity: new Vector3(),
     ageS: 0,
     active: false,
@@ -112,6 +115,7 @@ export class BulletPool {
     if (slot === null) return null;
     slot.position.copy(position);
     slot.prevPosition.copy(position);
+    slot.origin.copy(position);
     slot.velocity.copy(velocity);
     slot.ageS = 0;
     slot.active = true;
