@@ -160,17 +160,21 @@ export class Targets {
           t.baseY + Math.sin(t.tS * 0.5) * 4,
           t.orbit.center.z + Math.sin(a) * t.orbit.radiusM,
         );
-        // dziób drona wzdłuż stycznej toru
+      } else {
+        t.position.y = t.baseY + Math.sin(t.tS * 0.6) * 1.5;
+      }
+      // pozycja PRZED lookAt — inaczej orientacja liczona ze starego miejsca
+      t.mesh.position.copy(t.position);
+      if (t.orbit) {
+        // dziób drona wzdłuż stycznej toru (znak = kierunek obiegu)
+        const a = t.orbit.phaseRad + t.orbit.angSpeedRadS * t.tS;
         const dir = Math.sign(t.orbit.angSpeedRadS);
         t.mesh.lookAt(
           t.position.x - Math.sin(a) * dir,
           t.position.y,
           t.position.z + Math.cos(a) * dir,
         );
-      } else {
-        t.position.y = t.baseY + Math.sin(t.tS * 0.6) * 1.5;
       }
-      t.mesh.position.copy(t.position);
 
       if (!t.health.alive) {
         t.respawnTimerS -= dtS;
