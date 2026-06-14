@@ -17,12 +17,11 @@
     "evadeJinkPeriodS": 1.6,
     "extendDiveDeg": 12,
     "waypointReachedM": 450,
-    "groundSafetyMarginM": 350,
+    "groundSafetyMarginM": 400,
     "groundHardFloorM": 140,
-    "groundLookAheadS": 4,
+    "groundLookAheadS": 7,
     "groundClimbDeg": 25,
-    "maxDiveDeg": 28,
-    "arenaTurnMarginM": 1800
+    "maxDiveDeg": 28
   },
   "levels": {
     "latwy": {

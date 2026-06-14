@@ -5,14 +5,15 @@ import { createSimPlane, pilotStep, type SimPlane } from '../physics/pilot-step'
 import { createPilotDemands } from '../instructor/instructor';
 import { validatePlaneState } from '../physics/nan-guard';
 import { SPITFIRE_MK1 } from '../planes/loader';
+import { wrapToArena } from '../world/arena';
 import { createTerrain, type Terrain } from '../world/terrain';
 import { lookaheadSurfaceM, surfaceHeightM, updateLifecycle } from '../world/lifecycle';
 import { Bot, selectNearestTarget } from './bot';
 import { BOT_CONFIG, type DifficultyLevel } from './difficulty';
 
-// Kryterium faza-06.md: 10 min symulacji, 4 boty, zero rozbić o teren ani granicę
-// areny. To test NADRZĘDNYCH warstw bezpieczeństwa (unikanie ziemi, zawracanie
-// z granicy) pod pełną fizyką — broń wyłączona, liczy się samo latanie.
+// Kryterium faza-06.md: 10 min symulacji, 4 boty, zero rozbić o teren. To test
+// NADRZĘDNEGO override'u unikania ziemi pod pełną fizyką — broń wyłączona, liczy
+// się samo latanie. Świat jest torusem: zawijanie utrzymuje boty w granicach areny.
 
 interface Agent {
   sim: SimPlane;
@@ -61,6 +62,7 @@ describe('symulacja 4 botów (flight safety)', () => {
     ];
 
     const others: typeof agents = [];
+    const wrapDelta = new Vector3();
     let crashes = 0;
     let maxAbsXZ = 0;
     const TICKS = Math.round(600 / FIXED_DT_S); // 10 minut
@@ -76,6 +78,7 @@ describe('symulacja 4 botów (flight safety)', () => {
         const out = a.bot.update(a.sim.state, SPITFIRE_MK1, target, env, FIXED_DT_S, demands);
         a.sim.state.throttle = out.throttle;
         pilotStep(a.sim, SPITFIRE_MK1, demands, FIXED_DT_S);
+        wrapToArena(a.sim.state.position, wrapDelta); // świat-torus jak po stronie klienta
         validatePlaneState(a.sim.state, `bot tick ${String(tick)}`);
 
         if (updateLifecycle(a.sim.state, terrain, FIXED_DT_S) === 'crashed') {
@@ -97,7 +100,7 @@ describe('symulacja 4 botów (flight safety)', () => {
     }
 
     expect(crashes).toBe(0);
-    // zawracanie z granicy: nie wypadają daleko poza arenę (margines na łuk zawracania)
-    expect(maxAbsXZ).toBeLessThan(ARENA_SIZE_M / 2 + 2000);
+    // świat-torus: zawijanie utrzymuje samoloty w granicach areny (|x|,|z| ≤ HALF)
+    expect(maxAbsXZ).toBeLessThanOrEqual(ARENA_SIZE_M / 2);
   }, 30000);
 });

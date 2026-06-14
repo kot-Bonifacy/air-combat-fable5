@@ -85,7 +85,19 @@ export class PilotControl {
     deflections: ControlDeflections,
     dtS: number,
     out: PilotDemands,
+    mouseEnabled = true,
   ): ControlMode {
+    // Kamera orbitalna (rozglądanie się): sterowanie myszą wyłączone — lot WYŁĄCZNIE
+    // z klawiatury. Zerowe wychylenia → keyboardDemands trzyma obecną orientację
+    // (n bazowe, zero roll/yaw), więc brak klawisza = brak skrętu. Celownik trzymany
+    // na nosie, by powrót do myszy (kamera pościgowa) nie szarpnął kierunkiem.
+    if (!mouseEnabled) {
+      this.keyboardActive = true;
+      this.instructor.reset();
+      keyboardDemands(state, plane, deflections, out);
+      this.mouseAim.alignTo(getForward(state.orientation, scratchFwd));
+      return this.mode;
+    }
     const hasRotationInput =
       deflections.pitchUp !== 0 || deflections.rollRight !== 0 || deflections.yawRight !== 0;
     if (hasRotationInput) {

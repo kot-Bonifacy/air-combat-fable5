@@ -48,7 +48,6 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
     },
     stall: {
       buffetOnsetRatio: 0.9,
-      noseDropRateDegS: 12,
       aileronEffectiveness: 0.3,
       wingDropDelayS: 1.0,
       wingDropRateDegS: 40,

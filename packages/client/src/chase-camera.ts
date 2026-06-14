@@ -34,6 +34,11 @@ export class ChaseCamera {
     this.initialized = false;
   }
 
+  /** Przesuwa wygładzoną pozycję o wektor zawinięcia torusa — teleport bez przelotu kamery. */
+  translate(delta: Vector3): void {
+    this.smoothedPos.add(delta);
+  }
+
   update(
     dtS: number,
     planePos: Vector3,

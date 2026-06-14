@@ -84,8 +84,6 @@ export interface Armament {
 export interface StallConfig {
   /** Udział |Cl wymaganego|/clMax, od którego zaczyna się buffet (~0.9 = 10% przed progiem). */
   buffetOnsetRatio: number;
-  /** Wymuszone opadanie nosa w przeciągnięciu [°/s]. */
-  noseDropRateDegS: number;
   /** Mnożnik sterowności lotek w przeciągnięciu (~0.3). */
   aileronEffectiveness: number;
   /** Czas trzymania przeciągnięcia do wing dropu [s]. */
@@ -161,7 +159,6 @@ const ARMAMENT_RANGES: Record<ArmamentNumericKey, readonly [min: number, max: nu
 
 const STALL_RANGES: Record<keyof StallConfig, readonly [min: number, max: number]> = {
   buffetOnsetRatio: [0.5, 1],
-  noseDropRateDegS: [1, 60],
   aileronEffectiveness: [0, 1],
   wingDropDelayS: [0.1, 10],
   wingDropRateDegS: [1, 180],

@@ -21,6 +21,8 @@ export * from './planes/loader';
 export * from './world/terrain';
 export * from './world/arena';
 export * from './world/lifecycle';
+export * from './world/match';
+export * from './world/zone';
 export * from './combat/ballistics';
 export * from './combat/hit';
 export * from './combat/health';

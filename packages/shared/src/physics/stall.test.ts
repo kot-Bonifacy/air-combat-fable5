@@ -39,7 +39,6 @@ describe('maszyna stanów przeciągnięcia (6.5)', () => {
     expect(effects.phase).toBe('normal');
     expect(effects.buffetIntensity).toBe(0);
     expect(effects.aileronFactor).toBe(1);
-    expect(effects.pitchRateOffsetRadS).toBe(0);
     expect(effects.rollRateOffsetRadS).toBe(0);
   });
 
@@ -57,13 +56,15 @@ describe('maszyna stanów przeciągnięcia (6.5)', () => {
     expect(effects.buffetIntensity).toBeGreaterThan(0.9);
   });
 
-  it('przekroczenie clMax → stalled: nose drop, lotki ~30%, pełny buffet', () => {
+  it('przekroczenie clMax → stalled: lotki ~30%, pełny buffet, brak wymuszania nosa', () => {
     const { machine, effects } = machineAt();
     machine.update(1.1, plane, FIXED_DT_S, effects);
     expect(effects.phase).toBe('stalled');
     expect(effects.buffetIntensity).toBe(1);
     expect(effects.aileronFactor).toBe(plane.stall.aileronEffectiveness);
-    expect(effects.pitchRateOffsetRadS).toBeLessThan(0);
+    // przed wingDropDelayS żaden "twardy" obrót nie jest wymuszany (nos opada
+    // naturalnie za torem, nie skryptem)
+    expect(effects.rollRateOffsetRadS).toBe(0);
   });
 
   it('wing drop dopiero po wingDropDelayS trzymania przeciągnięcia', () => {
@@ -100,7 +101,6 @@ describe('maszyna stanów przeciągnięcia (6.5)', () => {
     machine.update(0.7, plane, FIXED_DT_S, effects);
     expect(effects.phase).toBe('normal');
     expect(effects.aileronFactor).toBe(1);
-    expect(effects.pitchRateOffsetRadS).toBe(0);
     expect(effects.rollRateOffsetRadS).toBe(0);
 
     // ponowne wejście: timer wing dropu liczy od zera
@@ -108,13 +108,12 @@ describe('maszyna stanów przeciągnięcia (6.5)', () => {
     expect(effects.rollRateOffsetRadS).toBe(0);
   });
 
-  it('przeciągnięcie na ujemnym Cl (pchanie): nos wymuszany KU torowi (offset > 0)', () => {
+  it('przeciągnięcie na ujemnym Cl (pchanie): pełne skutki symetrycznie (|clRatio|)', () => {
     const { machine, effects } = machineAt();
     machine.update(-1.1, plane, FIXED_DT_S, effects);
     expect(effects.phase).toBe('stalled');
     expect(effects.buffetIntensity).toBe(1);
     expect(effects.aileronFactor).toBe(plane.stall.aileronEffectiveness);
-    expect(effects.pitchRateOffsetRadS).toBeGreaterThan(0);
   });
 
   it('buffet działa też na ujemnym Cl (progi na |clRatio|)', () => {
@@ -122,13 +121,13 @@ describe('maszyna stanów przeciągnięcia (6.5)', () => {
     machine.update(-(plane.stall.buffetOnsetRatio + 0.001), plane, FIXED_DT_S, effects);
     expect(effects.phase).toBe('buffet');
     expect(effects.buffetIntensity).toBeGreaterThan(0);
-    expect(effects.pitchRateOffsetRadS).toBe(0);
+    expect(effects.aileronFactor).toBe(1);
   });
 
   it('q→0 (zawiśnięcie na śmigle): clRatio=∞ → stalled bez NaN', () => {
     const { machine, effects } = machineAt();
     machine.update(Infinity, plane, FIXED_DT_S, effects);
     expect(effects.phase).toBe('stalled');
-    expect(Number.isFinite(effects.pitchRateOffsetRadS)).toBe(true);
+    expect(Number.isFinite(effects.rollRateOffsetRadS)).toBe(true);
   });
 });

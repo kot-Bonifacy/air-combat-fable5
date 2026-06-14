@@ -56,8 +56,6 @@ export interface BotTuning {
   groundClimbRad: number;
   /** Maksymalny kąt zniżania dozwolony wysoko nad terenem [rad] (sufit AGL go zaostrza nisko). */
   maxDiveRad: number;
-  /** Dystans od granicy areny, od którego bot zawraca do środka [m]. */
-  arenaTurnMarginM: number;
 }
 
 /** Degradacja per poziom trudności (SI). */
@@ -109,7 +107,6 @@ const TUNING_RANGES: Record<string, readonly [min: number, max: number]> = {
   groundLookAheadS: [0.5, 15],
   groundClimbDeg: [5, 60],
   maxDiveDeg: [15, 80],
-  arenaTurnMarginM: [200, 5000],
 };
 
 const LEVEL_RANGES: Record<string, readonly [min: number, max: number]> = {
@@ -187,7 +184,6 @@ export function loadBotConfig(raw: unknown, source = 'difficulty.json'): BotConf
     groundLookAheadS: num(t, 'groundLookAheadS', 'tuning.', problems),
     groundClimbRad: num(t, 'groundClimbDeg', 'tuning.', problems) * DEG_TO_RAD,
     maxDiveRad: num(t, 'maxDiveDeg', 'tuning.', problems) * DEG_TO_RAD,
-    arenaTurnMarginM: num(t, 'arenaTurnMarginM', 'tuning.', problems),
   };
 
   const levelsRaw = asObject(root['levels'], 'levels', problems);

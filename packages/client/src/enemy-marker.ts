@@ -1,17 +1,27 @@
 import { PerspectiveCamera, Vector3 } from 'three';
 
-// Znacznik przeciwnika w HUD (faza-06.md krok 5): na ekranie ramka nad celem
-// z dystansem; poza ekranem strzałka przy krawędzi wskazująca kierunek. Czysty
-// DOM — pozycjonowany co klatkę z projekcji pozycji świata na ekran.
+// Znacznik samolotu w HUD (faza-06.md krok 5; faza 7: wielu + sojusznicy):
+// na ekranie ramka nad celem z dystansem; poza ekranem strzałka przy krawędzi
+// wskazująca kierunek. Czysty DOM — pozycjonowany co klatkę z projekcji pozycji
+// świata na ekran. Paleta foe/friend odróżnia wroga (czerwony) od sojusznika
+// (zielony) — w trybie drużynowym oba kolory są na ekranie naraz.
 
 const MARGIN_PX = 48;
 const scratchCs = new Vector3();
 const scratchNdc = new Vector3();
 
+interface Palette {
+  arrow: string;
+  label: string;
+}
+const FOE_PALETTE: Palette = { arrow: '#ff5a4a', label: '#ff8a6a' };
+const FRIEND_PALETTE: Palette = { arrow: '#46e07a', label: '#8af0a6' };
+
 export class EnemyMarker {
   private readonly el: HTMLElement;
   private readonly arrow: HTMLElement;
   private readonly label: HTMLElement;
+  private foe = true;
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement('div');
@@ -19,13 +29,24 @@ export class EnemyMarker {
       'position:fixed;display:none;pointer-events:none;transform:translate(-50%,-50%);' +
       'text-align:center;z-index:5;';
     this.arrow = document.createElement('div');
-    this.arrow.style.cssText =
-      'font:18px/1 monospace;color:#ff5a4a;text-shadow:0 0 6px rgba(255,60,40,0.8);';
     this.label = document.createElement('div');
-    this.label.style.cssText =
-      'font:bold 12px/1.2 monospace;color:#ff8a6a;text-shadow:0 0 4px rgba(0,0,0,0.9);';
     this.el.append(this.arrow, this.label);
     parent.append(this.el);
+    this.applyPalette();
+  }
+
+  /** Przełącza kolor markera: foe=true wróg (czerwony), false sojusznik (zielony). */
+  setFoe(foe: boolean): void {
+    if (foe === this.foe) return;
+    this.foe = foe;
+    this.applyPalette();
+  }
+
+  private applyPalette(): void {
+    const p = this.foe ? FOE_PALETTE : FRIEND_PALETTE;
+    this.arrow.style.cssText = `font:18px/1 monospace;color:${p.arrow};text-shadow:0 0 6px rgba(0,0,0,0.7);`;
+    this.label.style.cssText =
+      `font:bold 12px/1.2 monospace;color:${p.label};text-shadow:0 0 4px rgba(0,0,0,0.9);`;
   }
 
   hide(): void {

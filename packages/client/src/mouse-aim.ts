@@ -15,13 +15,19 @@ const scratchWorld = new Vector3();
 
 export class MouseAim {
   locked = false;
+  /**
+   * Czy klik może przejąć pointer lock do celowania myszą. Kamera orbitalna to
+   * wyłącza (klawisz C w main.ts): mysz służy wtedy do rozglądania się (orbita),
+   * a lot prowadzi tylko klawiatura. Po wyłączeniu zwalniamy też istniejący lock.
+   */
+  enabled = true;
 
   constructor(
     private readonly dom: HTMLElement,
     private readonly core: MouseAimCore,
   ) {
     dom.addEventListener('click', () => {
-      if (!this.locked) void this.dom.requestPointerLock();
+      if (this.enabled && !this.locked) void this.dom.requestPointerLock();
     });
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.dom;

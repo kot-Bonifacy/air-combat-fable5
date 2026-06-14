@@ -47,7 +47,8 @@ export interface PilotTickResult extends PlaneTickResult {
  * Jeden tick z pełnym pipeline'em sterowania. Kolejność jest częścią kontraktu:
  * 1. koperta: clamp n (struktura + n_avail), clamp roll z krzywej IAS
  * 2. maszyna przeciągnięcia na surowym żądaniu (clRatio = n_demand/n_avail)
- * 3. rates: pitch z n (nos podąża za torem) + weathervane + nose drop;
+ * 3. rates: pitch z n (nos podąża za torem) + weathervane — przeciągnięcie NIE
+ *    wymusza nosa, tor sam opada przy obciętym Cl (gracz wyprowadza nurkując);
  *    roll po kopercie × sterowność lotek + wing drop; yaw + weathervane
  * 4. stepPlane (siły + integracja) — state.stalled pochodzi z maszyny stanów
  * 5. dampSideslip (koordynacja yaw na nowym wektorze prędkości)
@@ -70,8 +71,10 @@ export function pilotStep(
 
   // (2) przeciągnięcie — próg na ŻĄDANIU obciętym tylko strukturalnie:
   // koperta n_avail z definicji nie pozwala przekroczyć clMax, a maszyna
-  // ma wykrywać właśnie "chcę więcej, niż fizyka daje"; ratio ZE ZNAKIEM —
-  // znak żądanego Cl steruje kierunkiem nose dropu w maszynie
+  // ma wykrywać właśnie "chcę więcej, niż fizyka daje". Maszyna patrzy na
+  // |clRatio| (znak bez znaczenia — przeciągnięcie i pchanie symetryczne);
+  // liczymy go ze znakiem tylko po to, by przy q→0 (nAvail=0) ±Infinity
+  // zachowało sens dla obu kierunków
   const nStructG = Math.min(plane.nMaxG, Math.max(plane.nMinG, demands.nDemandG));
   const clRatio =
     nAvail > 0 ? nStructG / nAvail : nStructG === 0 ? 0 : Infinity * Math.sign(nStructG);
@@ -88,7 +91,7 @@ export function pilotStep(
   const alphaImpliedRad = clNow / plane.clAlphaPerRad;
   const pathPitchRate = pitchRateForLoadFactor(state, nClampedG);
   weathervaneRates(state, alphaImpliedRad, plane, sim.weathervane);
-  state.angularRates.pitch = pathPitchRate + sim.weathervane.pitch + stall.pitchRateOffsetRadS;
+  state.angularRates.pitch = pathPitchRate + sim.weathervane.pitch;
   state.angularRates.roll = rollClamped * stall.aileronFactor + stall.rollRateOffsetRadS;
   state.angularRates.yaw = demands.yawRateRadS + sim.weathervane.yaw;
 

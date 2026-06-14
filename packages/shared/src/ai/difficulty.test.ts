@@ -26,7 +26,6 @@ function validTuning(): Record<string, unknown> {
     groundLookAheadS: 4,
     groundClimbDeg: 25,
     maxDiveDeg: 28,
-    arenaTurnMarginM: 1800,
   };
 }
 

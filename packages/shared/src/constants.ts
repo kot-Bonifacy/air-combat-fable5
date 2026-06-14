@@ -39,11 +39,8 @@ export const MS_TO_KMH = 3.6;
 /** Bok kwadratowej areny [m] (PLAN.md: 20×20 km, bez streamingu mapy). */
 export const ARENA_SIZE_M = 20_000;
 
-/** Odległość do granicy areny, od której HUD ostrzega [m]. */
+/** Odległość do granicy areny, od której HUD ostrzega o nadchodzącym przeniesieniu (torus) [m]. */
 export const ARENA_WARNING_DISTANCE_M = 1_000;
-
-/** Autopilot zawracający oddaje stery dopiero tyle metrów W GŁĄB areny (histereza). */
-export const ARENA_RELEASE_DISTANCE_M = 500;
 
 /** Seed heightmapy świata — identyczna mapa po obu stronach sieci (serwer od fazy 8). */
 export const TERRAIN_SEED = 1940;
@@ -69,23 +66,46 @@ export const BULLET_POOL_CAPACITY = 768;
 /** Konwersja milliradianów (rozrzut w JSON) → radiany. */
 export const MRAD_TO_RAD = 1e-3;
 
-/**
- * Strzelnica testowa (faza 5): cele do kalibracji celowania. NIE są samolotami,
- * więc ich parametry żyją tu, a nie w planes/*.json. Usuwane/zastępowane botami
- * w fazie 6. Współrzędne dobrane przed nosem startującego gracza (spawn na −Z,
- * nos na +Z ku wyspie) — w zasięgu pierwszego przelotu.
- */
-export const TARGET_BALLOON_HP = 50;
-/** HP małego, ruchomego drona-celu (mniejszy, trudniejszy — niższe HP). */
-export const TARGET_DRONE_HP = 35;
-/** Promień sfery trafień balonu [m] (≈ jego widoczny rozmiar). */
-export const TARGET_BALLOON_RADIUS_M = 11;
-/** Promień sfery trafień drona [m]. */
-export const TARGET_DRONE_RADIUS_M = 7;
-/** Czas od zestrzelenia celu do jego respawnu [s]. */
-export const TARGET_RESPAWN_DELAY_S = 4;
-
 // --- mecz offline (faza 6) ---
 
 /** Liczba zestrzeleń kończąca pojedynek 1v1 (punkty do N, z respawnami). */
 export const MATCH_SCORE_TO_WIN = 3;
+
+// --- tryby multi (faza 7: FFA i drużynowy) ---
+
+/**
+ * Liczba żyć (samolotów) na uczestnika w trybach eliminacyjnych. Frakcja odpada,
+ * gdy wszyscy jej uczestnicy wyczerpią życia; ostatnia frakcja wygrywa. Jedno =
+ * jedna śmierć eliminuje uczestnika (brak respawnów w meczu).
+ */
+export const MATCH_LIVES = 1;
+
+/** Maksymalna liczba botów obok gracza w trybach multi (budżet wydajności/HUD). */
+export const MAX_BOTS = 5;
+
+// --- kontrola strefy (faza 7: główny cel — „przeciąganie liny" nad górą) ---
+
+/**
+ * Środek strefy kontroli = szczyt góry w centrum wyspy. Teren ma radialną maskę
+ * wokół (0,0) (terrain.ts), więc rdzeń góry leży dokładnie w origin — strefa jest
+ * z nim współśrodkowa, bez osobnego „landmarku" do utrzymania w synchronizacji.
+ */
+export const ZONE_CENTER_X_M = 0;
+export const ZONE_CENTER_Z_M = 0;
+
+/** Promień strefy kontroli [m] — POZIOMY walec bez limitu wysokości (liczy się nad górą). */
+export const ZONE_RADIUS_M = 2_000;
+
+/**
+ * Sekundy WYŁĄCZNEJ kontroli (jedna frakcja sama w strefie) potrzebne do przejęcia
+ * strefy = zwycięstwo. 180 s = 3 min (decyzja briefingu). Model KotH bez cofania:
+ * sporna/pusta strefa pauzuje liczniki, nic nie zanika (patrz world/zone.ts).
+ */
+export const ZONE_CAPTURE_SECONDS = 180;
+
+/**
+ * Pułap krążenia botów nad strefą [m] — bezpiecznie nad szczytem (rdzeń ~1010 m
+ * + szum do ~400 m), z zapasem ponad margines unikania ziemi bota. To waypoint
+ * „patrolu" botów: bez pilnego celu ciążą ku temu punktowi (kontestują strefę).
+ */
+export const ZONE_LOITER_ALT_M = 2_000;

@@ -46,7 +46,6 @@ function validRaw(): Record<string, unknown> {
     },
     stall: {
       buffetOnsetRatio: 0.9,
-      noseDropRateDegS: 12,
       aileronEffectiveness: 0.3,
       wingDropDelayS: 1.0,
       wingDropRateDegS: 40,
@@ -123,8 +122,8 @@ describe('loader konfiguracji samolotu', () => {
 
   it('literówka w sekcji stall → PlaneConfigError z pełną ścieżką', () => {
     const raw = validRaw();
-    (raw['stall'] as Record<string, unknown>)['noseDropRateDegSec'] = 12;
-    expect(() => loadPlaneConfig(raw)).toThrowError(/stall\.noseDropRateDegSec/);
+    (raw['stall'] as Record<string, unknown>)['wingDropRateDegSec'] = 40;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/stall\.wingDropRateDegSec/);
   });
 
   it('nMinG ≥ 0 → PlaneConfigError (limit ujemny musi być ujemny)', () => {

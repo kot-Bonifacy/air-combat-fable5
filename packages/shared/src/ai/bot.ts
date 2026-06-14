@@ -4,7 +4,7 @@ import { getForward, getRight, getUp } from '../math/frame';
 import { Instructor, type PilotDemands } from '../instructor/instructor';
 import type { PlaneState } from '../physics/state';
 import type { PlaneConfig } from '../planes/loader';
-import { distanceToArenaEdgeM } from '../world/arena';
+import { nearestToroidalImage, toroidalDistanceSqM } from '../world/arena';
 import {
   angleBetweenRad,
   computeGeometry,
@@ -54,6 +54,7 @@ const scratchSelfFwd = new Vector3();
 const scratchSelfUp = new Vector3();
 const scratchSelfRight = new Vector3();
 const scratchTargetFwd = new Vector3();
+const scratchTargetPos = new Vector3();
 const scratchLos = new Vector3();
 const scratchHoriz = new Vector3();
 const scratchRotAxis = new Vector3();
@@ -72,7 +73,7 @@ export function selectNearestTarget(
   let bestD = Infinity;
   for (const c of candidates) {
     if (c.life !== 'alive') continue;
-    const d = selfPos.distanceToSquared(c.position);
+    const d = toroidalDistanceSqM(selfPos, c.position); // torus: cel za szwem nie „znika"
     if (d < bestD) {
       bestD = d;
       best = c;
@@ -148,13 +149,16 @@ export class Bot {
     getRight(self.orientation, scratchSelfRight);
 
     const hasTarget = target !== null && target.life === 'alive';
-    if (hasTarget) {
+    if (hasTarget && target) {
+      // torus: percepcja celu z najbliższego obrazu toroidalnego (a nie surowej
+      // pozycji świata), inaczej cel tuż za szwem mapy „skacze" o ~całą arenę
+      const tgtPos = nearestToroidalImage(target.position, self.position, scratchTargetPos);
       getForward(target.orientation, scratchTargetFwd);
       computeGeometry(
         self.position,
         scratchSelfFwd,
         self.velocity,
-        target.position,
+        tgtPos,
         scratchTargetFwd,
         target.velocity,
         this.geom,
@@ -162,7 +166,7 @@ export class Bot {
       solveLead(
         self.position,
         self.velocity,
-        target.position,
+        tgtPos,
         target.velocity,
         plane.armament.muzzleVelocityMs,
         this.lead,
@@ -196,11 +200,11 @@ export class Bot {
           break;
         }
         case 'evade':
-          this.steerEvade(self, target, aimDir);
+          this.steerEvade(self, scratchTargetPos, aimDir);
           throttle = this.difficulty.throttle;
           break;
         case 'extend':
-          this.steerExtend(self, target, aimDir);
+          this.steerExtend(self, scratchTargetPos, aimDir);
           throttle = this.difficulty.throttle;
           break;
         case 'patrol':
@@ -218,8 +222,8 @@ export class Bot {
     this.applyReactionLag(aimDir, dtS);
     this.applyAimNoise(aimDir, dtS);
 
-    // (3) override'y bezpieczeństwa (nadrzędne, precyzyjne)
-    this.applyArenaReturn(self, aimDir);
+    // (3) override bezpieczeństwa (nadrzędny, precyzyjny). Granicy areny NIE ma
+    // co pilnować — świat jest torusem, wyjście poza krawędź zawija na drugą stronę.
     const climbed = this.applyGroundAvoidance(self, env, aimDir);
     if (climbed) {
       throttle = this.difficulty.throttle;
@@ -244,7 +248,7 @@ export class Bot {
       aim.normalize();
       return;
     }
-    // brak waypointów: lot poziomy na bieżącym kursie (override areny zawróci przy granicy)
+    // brak waypointów: lot poziomy na bieżącym kursie (świat-torus zawija przy krawędzi)
     aim.set(scratchSelfFwd.x, 0, scratchSelfFwd.z);
     if (aim.lengthSq() < 1e-6) aim.set(0, 0, 1);
     aim.normalize();
@@ -255,8 +259,8 @@ export class Bot {
     aim.copy(this.lead.aimDir);
   }
 
-  private steerEvade(self: PlaneState, target: PlaneState, aim: Vector3): void {
-    scratchLos.subVectors(target.position, self.position);
+  private steerEvade(self: PlaneState, targetPos: Vector3, aim: Vector3): void {
+    scratchLos.subVectors(targetPos, self.position);
     if (scratchLos.lengthSq() < 1e-6) scratchLos.copy(scratchSelfFwd);
     scratchLos.normalize();
     // zrywaj W STRONĘ przeciwną do zagrożenia (wymuszony overshoot przeciwnika)
@@ -272,8 +276,8 @@ export class Bot {
     aim.normalize();
   }
 
-  private steerExtend(self: PlaneState, target: PlaneState, aim: Vector3): void {
-    scratchHoriz.set(self.position.x - target.position.x, 0, self.position.z - target.position.z);
+  private steerExtend(self: PlaneState, targetPos: Vector3, aim: Vector3): void {
+    scratchHoriz.set(self.position.x - targetPos.x, 0, self.position.z - targetPos.z);
     if (scratchHoriz.lengthSq() < 1e-6) scratchHoriz.set(scratchSelfFwd.x, 0, scratchSelfFwd.z);
     if (scratchHoriz.lengthSq() < 1e-6) scratchHoriz.set(0, 0, 1);
     scratchHoriz.normalize();
@@ -334,19 +338,7 @@ export class Bot {
       .normalize();
   }
 
-  // --- override'y bezpieczeństwa ---
-
-  /** Przy granicy areny zastępuje poziomy kurs kierunkiem do środka (pion bez zmian). */
-  private applyArenaReturn(self: PlaneState, aim: Vector3): void {
-    const edgeM = distanceToArenaEdgeM(self.position.x, self.position.z);
-    if (edgeM >= this.tuning.arenaTurnMarginM) return;
-    scratchHoriz.set(-self.position.x, 0, -self.position.z);
-    if (scratchHoriz.lengthSq() < 1) return; // już w środku
-    scratchHoriz.normalize();
-    const vY = clamp(aim.y, -1, 1);
-    const horizLen = Math.sqrt(Math.max(0, 1 - vY * vY));
-    aim.set(scratchHoriz.x * horizLen, vY, scratchHoriz.z * horizLen).normalize();
-  }
+  // --- override bezpieczeństwa ---
 
   /**
    * Unikanie ziemi jako CIĄGŁY sufit zniżania zależny od AGL (nie nagły override):

@@ -3,12 +3,13 @@ import type { PlaneConfig } from '../planes/loader';
 
 // Maszyna stanów przeciągnięcia (fizyka-lotu.md rozdz. 6.5):
 // normal → buffet → stalled, z wing dropem po przetrzymaniu przeciągnięcia.
-// Wejściem jest clRatio = Cl wymagany przez żądanie / clMax (ZE ZNAKIEM) —
-// czyli n_demand / n_avail; progi działają na |clRatio|, znak steruje
-// kierunkiem nose dropu (zawsze ku mniejszemu |α| — przeciągnięcie na
-// ujemnym Cl wypycha nos ku torowi, nie dalej od niego). Obcięcie Cl
-// w lift.ts robi swoje niezależnie, ta maszyna dokłada skutki "miękkie":
-// buffet, nose drop, utratę lotek, wing drop.
+// Wejściem jest clRatio = n_demand/n_avail (równoważnie |Cl wymagany|/clMax);
+// progi działają na |clRatio| (znak nieistotny — przeciągnięcie ujemne, czyli
+// pchanie, wykrywane symetrycznie). Maszyna celowo NIE wymusza obrotu nosa:
+// wyjście z przeciągnięcia jest naturalne — obcięcie Cl do clMax (n→n_avail
+// w kopercie) sprawia, że nośna nie utrzymuje toru, tor (a za nim nos) opada,
+// a pilot odzyskuje prędkość nurkując. Maszyna dokłada tylko skutki "miękkie"
+// reprezentujące UTRATĘ sterowności: buffet, osłabienie lotek, wing drop.
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -20,12 +21,6 @@ export interface StallEffects {
   buffetIntensity: number;
   /** Mnożnik żądania roll pilota (utrata sterowności lotek w przeciągnięciu). */
   aileronFactor: number;
-  /**
-   * Wymuszony obrót nosa ku mniejszemu |α| [rad/s] (tylko w przeciągnięciu).
-   * Przeciągnięcie na dodatnim Cl → nose drop (< 0); na ujemnym Cl → nos
-   * ku torowi (> 0).
-   */
-  pitchRateOffsetRadS: number;
   /** Wing drop [rad/s] — losowo-deterministyczny powolny przewrót po wingDropDelayS. */
   rollRateOffsetRadS: number;
 }
@@ -35,7 +30,6 @@ export function createStallEffects(): StallEffects {
     phase: 'normal',
     buffetIntensity: 0,
     aileronFactor: 1,
-    pitchRateOffsetRadS: 0,
     rollRateOffsetRadS: 0,
   };
 }
@@ -52,8 +46,9 @@ export class StallMachine {
   }
 
   /**
-   * Jeden tick maszyny. `clRatio` = Cl wymagany/clMax z bieżącego żądania
-   * ZE ZNAKIEM (równoważnie n_demand/n_avail). Wynik zapisywany do `effects`.
+   * Jeden tick maszyny. `clRatio` = n_demand/n_avail (równoważnie |Cl wymagany|
+   * /clMax); liczy się tylko |clRatio| — znak (kierunek przeciągnięcia) nie
+   * wpływa już na wynik. Wynik zapisywany do `effects`.
    */
   update(clRatio: number, plane: PlaneConfig, dtS: number, effects: StallEffects): StallEffects {
     const stall = plane.stall;
@@ -72,9 +67,8 @@ export class StallMachine {
       this.stalledTimeS += dtS;
       effects.buffetIntensity = 1;
       effects.aileronFactor = stall.aileronEffectiveness;
-      // nos zawsze ku mniejszemu |α|: stall na dodatnim Cl → w dół,
-      // na ujemnym (pchanie) → w górę, ku torowi
-      effects.pitchRateOffsetRadS = -Math.sign(clRatio) * stall.noseDropRateDegS * DEG_TO_RAD;
+      // bez wymuszonego nose dropu — nos opada naturalnie za torem (obcięty Cl);
+      // jedyny "twardy" skutek to wing drop po przetrzymaniu przeciągnięcia
       effects.rollRateOffsetRadS =
         this.stalledTimeS > stall.wingDropDelayS
           ? this.wingDropFactor * stall.wingDropRateDegS * DEG_TO_RAD
@@ -86,7 +80,6 @@ export class StallMachine {
           ? Math.min(1, (ratioAbs - stall.buffetOnsetRatio) / (1 - stall.buffetOnsetRatio))
           : 0;
       effects.aileronFactor = 1;
-      effects.pitchRateOffsetRadS = 0;
       effects.rollRateOffsetRadS = 0;
     }
 

@@ -52,7 +52,6 @@ export function createTuningPanel(plane: PlaneConfig, hooks: TuningPanelHooks): 
 
   const stall = pane.addFolder({ title: 'Przeciągnięcie', expanded: false });
   stall.addBinding(plane.stall, 'buffetOnsetRatio', { min: 0.6, max: 0.99, step: 0.01 });
-  stall.addBinding(plane.stall, 'noseDropRateDegS', { min: 2, max: 40, step: 1 });
   stall.addBinding(plane.stall, 'aileronEffectiveness', { min: 0, max: 1, step: 0.05 });
   stall.addBinding(plane.stall, 'wingDropDelayS', { min: 0.2, max: 5, step: 0.1 });
   stall.addBinding(plane.stall, 'wingDropRateDegS', { min: 5, max: 120, step: 1 });
