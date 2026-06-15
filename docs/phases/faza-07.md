@@ -8,6 +8,7 @@ zanim dojdzie sieć; zastrzyk motywacji; feedback od znajomych.
 ## Zakres
 
 W tej fazie:
+
 - Decyzja: nazwa gry + subdomena (robocza: `dogfight.tatanga.eu`)
 - Model 3D samolotu zamiast bryły zastępczej: asset CC0/CC-BY ze Sketchfab/Poly Haven
   LUB stylizowany low-poly — decyzja po przeglądzie dostępnych assetów; wpis do `assets/LICENSES.md`
@@ -32,8 +33,9 @@ Poza zakresem: backend na produkcji, analityka, jakiekolwiek konta.
 
 ## Kryteria ukończenia
 
-- [ ] `https://dogfight.tatanga.eu` działa z ważnym certyfikatem — **czeka na wdrożenie na VPS**
-  (runbook: `deploy/README.md`; artefakty gotowe i zweryfikowane lokalnie w Dockerze)
+- [x] `https://dogfight.tatanga.eu` działa z ważnym certyfikatem — **wdrożone 2026-06-15**
+  (HTTP/2 200, `text/html`; bundle `/assets/main-*.js` → 200 `application/javascript`; serwowane
+  przez NPM/openresty). Rozgrywka w realnej przeglądarce — potwierdzona przez wdrażającego.
 - [x] Osoba bez instrukcji ustnej uruchamia grę i strzela do bota — overlay „Jak grać"
   (sterowanie) pokazuje się przy pierwszym uruchomieniu; do potwierdzenia na żywo po deployu
 - [x] Brak błędów w konsoli przeglądarki (wskaźnik sieci wyłączony w prod — koniec prób `ws://`);
@@ -41,7 +43,7 @@ Poza zakresem: backend na produkcji, analityka, jakiekolwiek konta.
 - [x] Licencja modelu w `assets/LICENSES.md`; atrybucja widoczna w grze (ekran startowy + „Jak grać")
 - [x] Aktualizacja `C:\AI\vps_home_pl_konfiguracja.md`: wiersz w tabeli portów (8087),
   drzewo katalogów, lista subdomen NPM, „następny wolny port" → 8088
-- [x] typecheck + test (270) + lint zielone; commit zrobiony; **tag `demo-1` po wdrożeniu live**;
+- [x] typecheck + test (270) + lint zielone; commit zrobiony; **tag `demo-1` założony po wdrożeniu**;
   memory zapisane
 
 ## Pułapki / lekcje z bazy wiedzy VPS
@@ -55,10 +57,11 @@ Poza zakresem: backend na produkcji, analityka, jakiekolwiek konta.
 
 ## Wynik
 
-Faza zrealizowana po stronie kodu i artefaktów; **pozostaje samo wdrożenie na VPS** (Ty,
-wg `deploy/README.md`). Stan na 2026-06-15:
+Faza **ukończona i wdrożona** — `https://dogfight.tatanga.eu` działa publicznie (deploy: user
+wg `deploy/WDROZENIE-NA-VPS.md`, tag `demo-1`). Stan na 2026-06-15:
 
 **Klient — gotowość do produkcji statycznej:**
+
 - Tytuł strony `Air Combat — Bitwa o Anglię` (był placeholder `air-combat-fable5`).
 - Ekran ładowania (inline w `index.html`, widoczny przed bundle'em) — chowany po wczytaniu
   modelu gracza (`PlaneModel.ready`) albo po timeoutcie 8 s; brak czarnej strony na starcie.
@@ -84,5 +87,7 @@ lockfile generowany na Windows nie zawiera natywnych bindingów dla linux-musl. 
 **Decyzje:** subdomena `dogfight.tatanga.eu` (port 8087), nazwa gry zostaje „Air Combat — Bitwa
 o Anglię". Podział pracy: artefakty + runbook po mojej stronie, wdrożenie na VPS po stronie usera.
 
-**Do domknięcia fazy (po wdrożeniu):** weryfikacja `https://` z certyfikatem na 2-3 przeglądarkach,
-60 fps na zintegrowanej grafice, potem tag `demo-1`.
+**Wdrożenie (2026-06-15):** user wdrożył wg `deploy/WDROZENIE-NA-VPS.md`. Weryfikacja HTTP:
+`https://dogfight.tatanga.eu` → HTTP/2 200 `text/html` (NPM/openresty), bundle
+`/assets/main-*.js` → 200 `application/javascript` (MIME OK). Rozgrywka w przeglądarce
+potwierdzona przez wdrażającego. Faza zamknięta tagiem `demo-1`.

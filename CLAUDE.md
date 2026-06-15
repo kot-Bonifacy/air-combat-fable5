@@ -8,8 +8,9 @@
 
 ## Status faz
 
-Fazy ukończone: 0–6 ; Faza 7 — kod + artefakty deploy GOTOWE i zweryfikowane lokalnie w Dockerze;
-zostaje wdrożenie na VPS (runbook: `deploy/README.md`) + tag `demo-1`. Subdomena dogfight.tatanga.eu, port 8087.
+Fazy ukończone: 0–7. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
+`https://dogfight.tatanga.eu` (port 8087). Następna: Faza 8 — multiplayer cz.1 (protokół binarny
+DataView w `shared/net` + serwer autorytatywny 60 Hz, jeszcze bez predykcji).
 
 ## Stack (skrót)
 
