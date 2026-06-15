@@ -87,6 +87,12 @@ export interface PlaneModel {
   /** Obiekt do dodania na scenę; fizyka ustawia jego position/quaternion. */
   object: Group;
   /**
+   * Spełnia się, gdy asynchroniczne wczytanie modelu glTF dobiegło końca —
+   * zarówno po sukcesie, jak i po błędzie (zostaje wtedy bryła zastępcza).
+   * Ekran ładowania czeka na to, by menu pokazało się z gotowym Spitfire'em.
+   */
+  ready: Promise<void>;
+  /**
    * Wołać co klatkę: kręci śmigłem proporcjonalnie do gazu (0..1).
    * `engineRunning=false` (zestrzelony wrak) → śmigło wytraca obroty aż do zera.
    */
@@ -334,7 +340,9 @@ export function createPlaneMesh(targetWingspanM: number): PlaneModel {
   group.add(placeholder);
 
   const refs: ModelRefs = { prop: null, propAxis: new Vector3(0, 0, 1), bladeMats: [] };
-  void loadSpitfireModel(group, placeholder, targetWingspanM, refs);
+  // loadSpitfireModel nigdy nie rzuca (błąd → bryła zastępcza), więc `ready`
+  // domyka się też przy nieudanym pobraniu — ekran ładowania nie zawiśnie.
+  const ready = loadSpitfireModel(group, placeholder, targetWingspanM, refs);
 
   // Bieżące obroty śmigła [obr./s] — dochodzą do celu z bezwładnością (PROP_SPIN_TAU_S),
   // żeby zestrzelony silnik wytracał obroty płynnie, a nie zatrzymywał się skokowo.
@@ -342,6 +350,7 @@ export function createPlaneMesh(targetWingspanM: number): PlaneModel {
 
   return {
     object: group,
+    ready,
     update(dtS, throttle01, engineRunning = true) {
       if (!refs.prop) return;
       const targetRevPerS = engineRunning

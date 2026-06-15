@@ -260,9 +260,34 @@ function enemyCandidates(self: Combatant): PlaneState[] {
 const app = document.getElementById('app');
 if (!app) throw new Error('brak elementu #app');
 
-const renderer = new WebGLRenderer({ antialias: true });
+/** Pokazuje pełnoekranowy komunikat WebGL (brak/utrata kontekstu) zamiast białej strony. */
+function showWebglError(): void {
+  document.getElementById('webgl-error')?.classList.add('show');
+  document.getElementById('loading')?.classList.add('hidden');
+}
+
+let renderer: WebGLRenderer;
+try {
+  renderer = new WebGLRenderer({ antialias: true });
+} catch (err) {
+  // brak WebGL2 (stary sprzęt / wyłączona akceleracja) → komunikat zamiast pustej strony
+  showWebglError();
+  throw err instanceof Error ? err : new Error('inicjalizacja WebGL nie powiodła się');
+}
 renderer.setPixelRatio(window.devicePixelRatio);
 app.appendChild(renderer.domElement);
+
+// Utrata kontekstu GPU w trakcie gry (uśpienie, reset sterownika, zbyt wiele
+// kontekstów): preventDefault pozwala przeglądarce go odtworzyć. Pokazujemy
+// komunikat zamiast zamrożonego obrazu; po odzyskaniu — chowamy. three odtwarza
+// własne zasoby GPU przy 'restored'.
+renderer.domElement.addEventListener('webglcontextlost', (event) => {
+  event.preventDefault();
+  showWebglError();
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => {
+  document.getElementById('webgl-error')?.classList.remove('show');
+});
 
 const keyboard = new KeyboardInput(window);
 const mouseAim = new MouseAim(renderer.domElement, control.mouseAim);
@@ -1375,9 +1400,28 @@ renderer.setAnimationLoop((timeMs) => {
   renderer.render(scene, camera);
 });
 
+// Ekran ładowania znika, gdy model gracza jest gotowy (sukces lub błąd → bryła
+// zastępcza), albo po awaryjnym timeoutcie, gdyby pobranie 14 MB modelu zawisło —
+// menu pokazuje się wtedy z gotowym Spitfire'em zamiast nad czarną stroną.
+const loadingEl = document.getElementById('loading');
+const hideLoading = (): void => loadingEl?.classList.add('hidden');
+const loadTimeoutId = setTimeout(hideLoading, 8000);
+void player.model.ready.then(() => {
+  clearTimeout(loadTimeoutId);
+  hideLoading();
+});
+
 const statusEl = document.getElementById('net-status');
 if (!statusEl) throw new Error('brak elementu #net-status');
-connectNetStatus(statusEl);
+// Demo fazy 7 jest w 100% statyczne — brak backendu. Wskaźnik ping/pong ma sens
+// tylko w devie (lokalny serwer WS na localhost); w produkcji łączenie z
+// ws://localhost byłoby mixed-contentem na https i wisiałoby na „rozłączono".
+// Sieć (i ten wskaźnik) wracają w fazie 13.
+if (import.meta.env.DEV) {
+  connectNetStatus(statusEl);
+} else {
+  statusEl.style.display = 'none';
+}
 
 // --- narzędzia dev: rejestrator + panel strojenia (poza prod bundle) ---
 

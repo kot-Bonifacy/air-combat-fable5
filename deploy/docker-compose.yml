@@ -1,0 +1,24 @@
+# Faza 7: publiczne demo single-player — dogfight.tatanga.eu, port zewn. 8087.
+# Build context = korzeń repo (..), bo monorepo workspaces (shared + client).
+# Bez klucza `version:` (przestarzały — ostrzeżenie). Backend (serwer WS) dojdzie
+# w fazie 13 — szkielet niżej, zakomentowany (wtedy też odkomentować /ws w nginx.conf).
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    container_name: dogfight
+    ports:
+      - '8087:80'
+    restart: unless-stopped
+
+  # --- faza 13: autorytatywny serwer WebSocket ---
+  # backend:
+  #   build:
+  #     context: ..
+  #     dockerfile: deploy/Dockerfile.backend
+  #   container_name: dogfight-backend
+  #   environment:
+  #     - NODE_ENV=production
+  #     - CLIENT_ORIGIN=https://dogfight.tatanga.eu
+  #   restart: unless-stopped

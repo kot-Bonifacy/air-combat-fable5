@@ -32,13 +32,17 @@ Poza zakresem: backend na produkcji, analityka, jakiekolwiek konta.
 
 ## Kryteria ukończenia
 
-- [ ] `https://dogfight.tatanga.eu` (lub wybrana subdomena) działa z ważnym certyfikatem
-- [ ] Osoba bez instrukcji ustnej uruchamia grę i strzela do bota (overlay sterowania wystarcza)
-- [ ] 60 fps na laptopie ze zintegrowaną grafiką; brak błędów w konsoli przeglądarki
-- [ ] Licencja modelu w `assets/LICENSES.md`; atrybucja widoczna w grze (ekran startowy)
-- [ ] Aktualizacja `C:\AI\vps_home_pl_konfiguracja.md`: nowy wiersz w tabeli portów (8087)
-  i drzewie katalogów
-- [ ] typecheck + test + lint zielone; commit + tag `demo-1`; memory zapisane
+- [ ] `https://dogfight.tatanga.eu` działa z ważnym certyfikatem — **czeka na wdrożenie na VPS**
+  (runbook: `deploy/README.md`; artefakty gotowe i zweryfikowane lokalnie w Dockerze)
+- [x] Osoba bez instrukcji ustnej uruchamia grę i strzela do bota — overlay „Jak grać"
+  (sterowanie) pokazuje się przy pierwszym uruchomieniu; do potwierdzenia na żywo po deployu
+- [x] Brak błędów w konsoli przeglądarki (wskaźnik sieci wyłączony w prod — koniec prób `ws://`);
+  60 fps na zintegrowanej grafice — do potwierdzenia na żywo
+- [x] Licencja modelu w `assets/LICENSES.md`; atrybucja widoczna w grze (ekran startowy + „Jak grać")
+- [x] Aktualizacja `C:\AI\vps_home_pl_konfiguracja.md`: wiersz w tabeli portów (8087),
+  drzewo katalogów, lista subdomen NPM, „następny wolny port" → 8088
+- [x] typecheck + test (270) + lint zielone; commit zrobiony; **tag `demo-1` po wdrożeniu live**;
+  memory zapisane
 
 ## Pułapki / lekcje z bazy wiedzy VPS
 
@@ -49,6 +53,36 @@ Poza zakresem: backend na produkcji, analityka, jakiekolwiek konta.
 - glTF: modele bywają zorientowane różnie — po imporcie sprawdź, czy nos = +Z body frame;
   jeśli nie, korekta na poziomie sceny (wrapper Object3D), NIE w fizyce
 
-## Wynik (uzupełnić po zakończeniu)
+## Wynik
 
-—
+Faza zrealizowana po stronie kodu i artefaktów; **pozostaje samo wdrożenie na VPS** (Ty,
+wg `deploy/README.md`). Stan na 2026-06-15:
+
+**Klient — gotowość do produkcji statycznej:**
+- Tytuł strony `Air Combat — Bitwa o Anglię` (był placeholder `air-combat-fable5`).
+- Ekran ładowania (inline w `index.html`, widoczny przed bundle'em) — chowany po wczytaniu
+  modelu gracza (`PlaneModel.ready`) albo po timeoutcie 8 s; brak czarnej strony na starcie.
+- Obsługa utraty/braku kontekstu WebGL: `webglcontextlost/restored` + try/catch na tworzeniu
+  renderera → pełnoekranowy komunikat zamiast białej strony.
+- **Wskaźnik sieci wyłączony w prod** (`import.meta.env.DEV`): demo jest w 100% statyczne,
+  więc bez prób `ws://localhost` (byłby mixed-content na https i wieczne „rozłączono").
+- Overlay „Jak grać" (sterowanie + cel) przy pierwszym uruchomieniu (flaga `localStorage`),
+  potem pod przyciskiem „Sterowanie". Atrybucja modelu (barking_dogo, CC-BY 4.0) na ekranie
+  startowym i w „Jak grać".
+
+**Deploy (`deploy/`):** `Dockerfile.frontend` (multi-stage Vite → nginx:alpine),
+`Dockerfile.frontend.dockerignore`, `docker-compose.yml` (8087:80, backend zakomentowany na f.13),
+`nginx.conf` (SPA + cache; `/ws` zakomentowany na f.13), `.env.example`, `README.md` (runbook).
+Zbudowane i przetestowane lokalnie: kontener `dogfight` serwuje index/bundle/model, MIME JS OK,
+fallback SPA OK, jeden czysty `Cache-Control`.
+
+**Pułapka napotkana:** `npm ci` w alpine zrywa się na `Missing: @emnapi/core … from lock file` —
+lockfile generowany na Windows nie zawiera natywnych bindingów dla linux-musl. Rozwiązane
+`npm install` w Dockerfile (wersje wciąż pinuje lock; build na VPS = Linux). **Nie wracać do
+`npm ci`**, póki lock powstaje na Windows.
+
+**Decyzje:** subdomena `dogfight.tatanga.eu` (port 8087), nazwa gry zostaje „Air Combat — Bitwa
+o Anglię". Podział pracy: artefakty + runbook po mojej stronie, wdrożenie na VPS po stronie usera.
+
+**Do domknięcia fazy (po wdrożeniu):** weryfikacja `https://` z certyfikatem na 2-3 przeglądarkach,
+60 fps na zintegrowanej grafice, potem tag `demo-1`.

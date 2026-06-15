@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>air-combat-fable5</title>
+    <title>Air Combat — Bitwa o Anglię</title>
     <style>
       html,
       body {
@@ -183,6 +183,80 @@
         height: 0;
         border-top: 2px solid rgba(255, 240, 120, 0.95);
       }
+      /* Ekran ładowania: inline w HTML, więc widoczny ZANIM sparsuje się bundle
+         (zamiast czarnej strony przy starcie i pobieraniu 14 MB modelu). main.ts
+         chowa go po wczytaniu modelu gracza albo po krótkim timeoutcie. */
+      #loading {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: radial-gradient(circle at 50% 38%, #16314a 0%, #070d15 75%);
+        color: #cde;
+        font: 600 18px/1.4 monospace;
+        letter-spacing: 1px;
+        transition: opacity 0.4s ease;
+      }
+      #loading.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #loading .title {
+        font-size: 26px;
+        color: #ffd24a;
+        letter-spacing: 2px;
+      }
+      #loading .spinner {
+        width: 46px;
+        height: 46px;
+        border: 4px solid rgba(143, 208, 255, 0.25);
+        border-top-color: #8fd0ff;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      /* Komunikat utraty/braku kontekstu WebGL — zamiast białej/zamrożonej strony. */
+      #webgl-error {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: 24px;
+        box-sizing: border-box;
+        text-align: center;
+        background: rgba(7, 13, 21, 0.96);
+        color: #cde;
+        font: 15px/1.5 monospace;
+      }
+      #webgl-error.show {
+        display: flex;
+      }
+      #webgl-error .head {
+        font: 700 22px monospace;
+        color: #ff6a4a;
+      }
+      #webgl-error button {
+        font: 600 15px/1 monospace;
+        padding: 10px 20px;
+        margin-top: 6px;
+        cursor: pointer;
+        color: #cde;
+        background: rgba(40, 60, 80, 0.9);
+        border: 1px solid #4a6c8c;
+        border-radius: 6px;
+      }
     </style>
   </head>
   <body>
@@ -196,6 +270,19 @@
     <div id="stall-warning"></div>
     <div id="arena-alert"></div>
     <div id="horizon"><div id="horizon-disc"></div></div>
+    <div id="loading">
+      <div class="title">AIR COMBAT</div>
+      <div class="spinner"></div>
+      <div>Wczytywanie…</div>
+    </div>
+    <div id="webgl-error">
+      <div class="head">Grafika 3D niedostępna</div>
+      <div>
+        Przeglądarka utraciła kontekst WebGL albo go nie obsługuje.<br />
+        Sprawdź, czy włączona jest akceleracja sprzętowa, i odśwież stronę.
+      </div>
+      <button onclick="location.reload()">Odśwież</button>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

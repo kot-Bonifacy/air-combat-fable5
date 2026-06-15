@@ -1,0 +1,11 @@
+# Patterny względem KORZENIA repo (build context = ..). BuildKit czyta ten plik
+# obok Dockerfile'a. Cel: nie wysyłać do demona node_modules (kolizja Windows↔Linux)
+# ani artefaktów builda i historii gita.
+**/node_modules
+**/dist
+**/build
+.git
+**/.env
+**/*.local
+# narzędzia/skrypty dev spoza obrazu
+tmp-*

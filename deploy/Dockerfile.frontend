@@ -1,0 +1,37 @@
+# Faza 7 — statyczne demo single-player (frontend bez backendu).
+# Build context = KORZEŃ repo (patrz docker-compose.yml: `context: ..`), bo monorepo
+# npm workspaces wymaga manifestów z korzenia + pakietu `shared` obok `client`.
+
+# --- etap build: kompilacja klienta (Vite) ---
+FROM node:20-alpine AS build
+WORKDIR /app
+
+# Manifesty najpierw — warstwa instalacji cache'uje się, póki nie zmienią się zależności.
+# WSZYSTKIE workspace'y muszą mieć package.json, inaczej instalacja odmówi (package-lock
+# odwołuje się do każdego workspace'a, także serwera, którego tu nie budujemy).
+COPY package.json package-lock.json ./
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/client/package.json packages/client/package.json
+COPY packages/server/package.json packages/server/package.json
+# `npm install`, NIE `npm ci`: package-lock.json jest generowany na Windows i nie
+# zawiera natywnych bindingów dla linux-musl (alpine), przez co `npm ci` przerywa na
+# „Missing: @emnapi/core … from lock file". `npm install` rekoncyliuje brakujące
+# optional deps na bieżącej platformie; wersje pozostałych pakietów wciąż pinuje lock.
+RUN npm install --no-audit --no-fund
+
+# Źródła klienta + współdzielona fizyka + assety (model glTF serwowany z assets/).
+COPY tsconfig.base.json ./
+COPY packages/shared packages/shared
+COPY packages/client packages/client
+COPY assets assets
+
+# `vite build`, NIE `npm run build` z korzenia (tamto dokłada serwer + tsc — lekcja
+# z Tetrisa). Skrypt klienta to czysty `vite build`; odpalamy z katalogu klienta,
+# żeby Vite miał właściwy root i wypluł wynik do packages/client/dist.
+WORKDIR /app/packages/client
+RUN npx vite build
+
+# --- etap runtime: statyczny serwer plików ---
+FROM nginx:alpine
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/packages/client/dist /usr/share/nginx/html

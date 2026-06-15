@@ -179,6 +179,54 @@ const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   trudny: 'Trudny',
 };
 
+/** Klucz localStorage: czy gracz widział już ekran sterowania (pokaz tylko za 1. razem). */
+const HELP_SEEN_KEY = 'ac_help_seen';
+
+/** Czy ekran sterowania był już pokazany (localStorage bywa niedostępny — wtedy „tak"). */
+function helpSeen(): boolean {
+  try {
+    return localStorage.getItem(HELP_SEEN_KEY) === '1';
+  } catch {
+    return true; // tryb prywatny: nie zapętlaj pokazu, ale i nie wymuszaj go za każdym razem
+  }
+}
+
+function markHelpSeen(): void {
+  try {
+    localStorage.setItem(HELP_SEEN_KEY, '1');
+  } catch {
+    // brak localStorage — trudno; help i tak dostępny pod przyciskiem
+  }
+}
+
+/** Wiersze sterowania: [akcja, klawisz(e)]. Źródło prawdy = input.ts + obsługa w main.ts. */
+const CONTROL_ROWS: readonly (readonly [string, string])[] = [
+  ['Celowanie / lot', 'Mysz (kliknij w ekran)'],
+  ['Ogień', 'LPM  •  Spacja'],
+  ['Nos w górę / w dół', 'S / ↓   •   W / ↑'],
+  ['Przechylenie L / P', 'A / ←   •   D / →'],
+  ['Ster kierunku L / P', 'Q   •   E'],
+  ['Gaz +  /  −', 'L.Shift  /  L.Ctrl'],
+  ['Kamera (pościg / orbita)', 'C'],
+  ['Respawn (poligon)', 'R'],
+  ['Tabela wyników', 'Tab (po zestrzeleniu)'],
+];
+
+/** Atrybucja modelu 3D (kryterium fazy 7: uznanie autorstwa widoczne w grze). */
+function modelAttribution(): HTMLElement {
+  const el = document.createElement('div');
+  el.style.cssText = 'font:11px/1.4 monospace;color:#5f7488;margin-top:20px;max-width:34em;';
+  el.append(document.createTextNode('Model: „Supermarine Spitfire Mk.IIa" — '));
+  const a = document.createElement('a');
+  a.textContent = 'barking_dogo';
+  a.href = 'https://sketchfab.com/barking_dogo';
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.style.color = '#6a93b8';
+  el.append(a, document.createTextNode(' (Sketchfab) — licencja CC-BY 4.0'));
+  return el;
+}
+
 /** Maksymalny rozmiar drużyny: oba zespoły razem ≤ gracz + MAX_BOTS samolotów. */
 const MAX_PER_TEAM = Math.floor((MAX_BOTS + 1) / 2);
 
@@ -241,6 +289,13 @@ export class GameMenu {
 
   /** Ekran startowy: tytuł, wybór trudności, tryby walki (FFA/drużynowy). */
   showStart(): void {
+    // Pierwsze uruchomienie w tej przeglądarce: najpierw ekran sterowania (kryterium
+    // fazy 7 — osoba bez instrukcji ustnej ma dać radę). Potem zawsze pod „Sterowanie".
+    if (!helpSeen()) {
+      markHelpSeen();
+      this.showHelp();
+      return;
+    }
     this.root.style.display = 'flex';
     this.panel.replaceChildren();
     this.panel.style.background = 'rgba(8,16,26,0.92)'; // przywróć po przezroczystym ekranie wyniku
@@ -303,6 +358,62 @@ export class GameMenu {
     hint.textContent = 'Po starcie kliknij w ekran, by przejąć sterowanie myszą.';
     hint.style.cssText = 'font:12px monospace;color:#778;margin-top:18px;';
     this.panel.append(hint);
+
+    const helpBtn = document.createElement('button');
+    helpBtn.textContent = 'Sterowanie';
+    styleButton(helpBtn);
+    helpBtn.style.cssText += 'margin-top:10px;';
+    helpBtn.addEventListener('click', () => this.showHelp());
+    this.panel.append(helpBtn);
+
+    this.panel.append(modelAttribution());
+  }
+
+  /** Ekran „jak grać": lista sterowania + cel gry. „Zaczynamy" wraca do menu startowego. */
+  showHelp(): void {
+    this.root.style.display = 'flex';
+    this.panel.replaceChildren();
+    this.panel.style.background = 'rgba(8,16,26,0.92)';
+
+    const title = document.createElement('div');
+    title.textContent = 'JAK GRAĆ';
+    title.style.cssText = 'font:700 24px/1.2 monospace;color:#ffd24a;margin-bottom:4px;';
+    const sub = document.createElement('div');
+    sub.textContent = 'Spitfire Mk IA — pościgowa kamera, celowanie myszą';
+    sub.style.cssText = 'font:13px monospace;color:#9ab;margin-bottom:18px;';
+    this.panel.append(title, sub);
+
+    const table = document.createElement('table');
+    table.style.cssText = 'border-collapse:collapse;font:14px monospace;color:#cde;';
+    for (const [action, keys] of CONTROL_ROWS) {
+      const tr = document.createElement('tr');
+      const a = document.createElement('td');
+      a.textContent = action;
+      a.style.cssText = 'text-align:right;padding:4px 16px;color:#9ab;';
+      const k = document.createElement('td');
+      k.textContent = keys;
+      k.style.cssText = 'text-align:left;padding:4px 16px;color:#eaf3ff;font-weight:600;';
+      tr.append(a, k);
+      table.append(tr);
+    }
+    this.panel.append(table);
+
+    const goal = document.createElement('div');
+    const zoneMin = Math.round(ZONE_CAPTURE_SECONDS / 60);
+    goal.textContent =
+      `Cel: utrzymaj STREFĘ nad górą przez ${String(zoneMin)} min albo wybij wrogów. ` +
+      `Uważaj na ziemię i przeciągnięcie przy ostrym zakręcie.`;
+    goal.style.cssText = 'font:12px/1.5 monospace;color:#9ab;margin:18px 0 4px;max-width:34em;';
+    this.panel.append(goal);
+
+    const start = document.createElement('button');
+    start.textContent = '▶ Zaczynamy';
+    styleButton(start);
+    start.style.cssText += 'font-size:18px;margin-top:18px;background:rgba(60,110,70,0.95);';
+    start.addEventListener('click', () => this.showStart());
+    this.panel.append(start);
+
+    this.panel.append(modelAttribution());
   }
 
   /** Wiersz trybu: opis + stepper liczby + przycisk startu. */
