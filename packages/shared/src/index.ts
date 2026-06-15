@@ -35,3 +35,4 @@ export * from './ai/lead';
 export * from './ai/difficulty';
 export * from './ai/fsm';
 export * from './ai/bot';
+export * from './net/protocol';

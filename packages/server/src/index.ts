@@ -1,37 +1,21 @@
-import { WebSocketServer } from 'ws';
 import { pino } from 'pino';
 import { PORT } from '@air-combat/shared';
+import { createGameServer } from './server';
+
+// Punkt wejścia serwera gry (faza 8): autorytatywna symulacja + protokół binarny.
+// Cienki wrapper — całość logiki w server.ts/game-room.ts/connection.ts.
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
-const wss = new WebSocketServer({ port: PORT });
+const server = createGameServer(PORT, { log });
 
-wss.on('listening', () => {
-  log.info({ port: PORT }, 'serwer WS nasłuchuje');
+void server.ready.then((port) => {
+  log.info({ port }, 'serwer gry nasłuchuje (protokół binarny fazy 8)');
 });
 
-wss.on('connection', (socket, request) => {
-  const remote = request.socket.remoteAddress;
-  log.info({ remote }, 'klient połączony');
-
-  socket.on('message', (data, isBinary) => {
-    if (isBinary) {
-      log.warn({ remote }, 'odrzucono ramkę binarną (protokół binarny od fazy 8)');
-      return;
-    }
-    const text = data.toString();
-    if (text === 'ping') {
-      socket.send('pong');
-    } else {
-      log.warn({ remote, text: text.slice(0, 64) }, 'nieznana wiadomość');
-    }
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    log.info({ signal }, 'zamykanie serwera');
+    void server.close().then(() => process.exit(0));
   });
-
-  socket.on('close', () => {
-    log.info({ remote }, 'klient rozłączony');
-  });
-
-  socket.on('error', (err) => {
-    log.error({ remote, err }, 'błąd socketu');
-  });
-});
+}

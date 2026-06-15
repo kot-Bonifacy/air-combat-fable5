@@ -7,9 +7,10 @@ export default defineConfig({
   publicDir: resolve(__dirname, '../../assets'),
   build: {
     rollupOptions: {
-      // dwie strony: gra (/) i wykresy rejestratora (/telemetry)
+      // strony: gra offline (/), tryb online faza 8 (/online), wykresy rejestratora (/telemetry)
       input: {
         main: resolve(__dirname, 'index.html'),
+        online: resolve(__dirname, 'online.html'),
         telemetry: resolve(__dirname, 'telemetry.html'),
       },
     },

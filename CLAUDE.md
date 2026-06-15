@@ -8,9 +8,11 @@
 
 ## Status faz
 
-Fazy ukończone: 0–7. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
-`https://dogfight.tatanga.eu` (port 8087). Następna: Faza 8 — multiplayer cz.1 (protokół binarny
-DataView w `shared/net` + serwer autorytatywny 60 Hz, jeszcze bez predykcji).
+Fazy ukończone: 0–8. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
+`https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
+w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
++ snapshoty 30 Hz, klient online `online.html`/`online-main.ts`/`net-client.ts` (bez predykcji,
+bez walki). Następna: Faza 9 — multiplayer cz.2 (predykcja + reconciliation + interpolacja).
 
 ## Stack (skrót)
 
