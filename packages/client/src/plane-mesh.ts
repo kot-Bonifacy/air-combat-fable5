@@ -72,6 +72,12 @@ const PROP_BLUR_START_REV_S = 12;
 const PROP_BLUR_FULL_REV_S = 24;
 /** Minimalna nieprzezroczystość łopat przy pełnych obrotach (iluzja rozmycia). */
 const PROP_BLADE_MIN_OPACITY = 0.2;
+/**
+ * Stała czasowa dochodzenia obrotów śmigła do wartości docelowej [s] — bezwładność
+ * wirnika. Po zestrzeleniu (silnik martwy → cel 0) śmigło wytraca obroty i wreszcie
+ * staje, zamiast zniknąć skokowo; łopaty „wyostrzają się" z tarczy w miarę zwalniania.
+ */
+const PROP_SPIN_TAU_S = 1.1;
 
 const DEG_TO_RAD = Math.PI / 180;
 const TAU = Math.PI * 2;
@@ -80,8 +86,11 @@ const TAU = Math.PI * 2;
 export interface PlaneModel {
   /** Obiekt do dodania na scenę; fizyka ustawia jego position/quaternion. */
   object: Group;
-  /** Wołać co klatkę: kręci śmigłem proporcjonalnie do gazu (0..1). */
-  update(dtS: number, throttle01: number): void;
+  /**
+   * Wołać co klatkę: kręci śmigłem proporcjonalnie do gazu (0..1).
+   * `engineRunning=false` (zestrzelony wrak) → śmigło wytraca obroty aż do zera.
+   */
+  update(dtS: number, throttle01: number, engineRunning?: boolean): void;
 }
 
 /**
@@ -327,16 +336,25 @@ export function createPlaneMesh(targetWingspanM: number): PlaneModel {
   const refs: ModelRefs = { prop: null, propAxis: new Vector3(0, 0, 1), bladeMats: [] };
   void loadSpitfireModel(group, placeholder, targetWingspanM, refs);
 
+  // Bieżące obroty śmigła [obr./s] — dochodzą do celu z bezwładnością (PROP_SPIN_TAU_S),
+  // żeby zestrzelony silnik wytracał obroty płynnie, a nie zatrzymywał się skokowo.
+  let currentRevPerS = PROP_IDLE_REV_S;
+
   return {
     object: group,
-    update(dtS, throttle01) {
+    update(dtS, throttle01, engineRunning = true) {
       if (!refs.prop) return;
-      const revPerS = PROP_IDLE_REV_S + throttle01 * (PROP_FULL_REV_S - PROP_IDLE_REV_S);
-      refs.prop.rotateOnAxis(refs.propAxis, revPerS * TAU * dtS);
+      const targetRevPerS = engineRunning
+        ? PROP_IDLE_REV_S + throttle01 * (PROP_FULL_REV_S - PROP_IDLE_REV_S)
+        : 0;
+      // wygładzanie wykładnicze (niezależne od dt) — rdzeń wirnika dobiega do celu
+      const k = 1 - Math.exp(-dtS / PROP_SPIN_TAU_S);
+      currentRevPerS += (targetRevPerS - currentRevPerS) * k;
+      refs.prop.rotateOnAxis(refs.propAxis, currentRevPerS * TAU * dtS);
       // iluzja rozmycia: im szybciej, tym bardziej przezroczyste łopaty — szybkie
       // i półprzezroczyste zlewają się w tarczę zamiast strobić ostrymi pozycjami
       const blur = clamp01(
-        (revPerS - PROP_BLUR_START_REV_S) / (PROP_BLUR_FULL_REV_S - PROP_BLUR_START_REV_S),
+        (currentRevPerS - PROP_BLUR_START_REV_S) / (PROP_BLUR_FULL_REV_S - PROP_BLUR_START_REV_S),
       );
       const opacity = 1 - blur * (1 - PROP_BLADE_MIN_OPACITY);
       for (const m of refs.bladeMats) m.opacity = opacity;

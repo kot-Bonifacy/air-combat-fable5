@@ -15,7 +15,6 @@ import {
   Bot,
   BulletPool,
   FixedStepLoop,
-  GRAVITY_MS2,
   MATCH_LIVES,
   MAX_BOTS,
   MS_TO_KMH,
@@ -24,18 +23,22 @@ import {
   RESPAWN_DELAY_S,
   SPITFIRE_MK1,
   applyDamage,
+  buildScoreboard,
   createControlDeflections,
   createTerrain,
   distanceToArenaEdgeM,
+  factionsInPlay,
   getForward,
   getRight,
   getUp,
   lookaheadSurfaceM,
-  matchOutcome,
   pilotStep,
+  planesCollide,
   resetHealth,
   segmentSphereHit,
   selectNearestTarget,
+  SPOT_RANGE_M,
+  stepWreck,
   sumForces,
   surfaceHeightM,
   totalAmmo,
@@ -51,15 +54,27 @@ import {
   type MatchMember,
   type PilotTickResult,
   type PlaneState,
+  type ScoreInput,
   type ZoneOccupant,
 } from '@air-combat/shared';
 import { BulletTracers } from './bullet-tracers';
-import { Combatant, BEACON_HIDDEN } from './combatant';
+import { Combatant } from './combatant';
 import { EnemyMarker } from './enemy-marker';
-import { GameMenu, type GameModeChoice } from './menu';
+import {
+  GameMenu,
+  type GameModeChoice,
+  type ResultData,
+  type ResultPilotRow,
+  type ResultTeamRow,
+} from './menu';
+import { StandingsOverlay } from './standings-overlay';
+import { RosterOverlay, type RosterRow } from './roster-overlay';
 import { ChaseCamera } from './chase-camera';
 import { ZoneBar, type ZoneBarState } from './zone-bar';
 import { Explosions } from './explosion';
+import { SmokeTrails, WRECK_TIER, damageSmokeTier, type SmokeTier } from './smoke';
+import { DownedOverlay } from './downed-overlay';
+import { GreyoutOverlay } from './greyout-overlay';
 import { FlightRecorder } from './flight-recorder';
 import { ForceArrows } from './force-arrows';
 import { Hud } from './hud';
@@ -93,14 +108,26 @@ const TEAM_SEPARATION_M = EDGE_SPAWN_RADIUS_M;
 const TEAM_ROW_SPACING_M = 450;
 /** Schodkowanie wysokości spawnu — unika natychmiastowego nakładania sylwetek [m]. */
 const SPAWN_ALT_STAGGER_M = 120;
-/** Kolory beaconów/markerów: wróg czerwony, sojusznik zielony. */
+/** Kolory markerów HUD: wróg czerwony, sojusznik zielony. */
 const FOE_COLOR = 0xff3020;
 const FRIEND_COLOR = 0x33dd66;
+/** Kolor gracza w tabeli wyników (złoty) — odróżnia „Ty" od zielonych sojuszników. */
+const PLAYER_COLOR = 0xffd24a;
+/**
+ * Unikatowe kolory frakcji w FFA (każdy bot to osobna frakcja). Indeks = faction−1
+ * (boty mają frakcje 1..MAX_BOTS; gracz = 0 → PLAYER_COLOR). Dobrane na rozróżnialność
+ * i z dala od złota gracza i zieleni „sojusznika" z trybu drużynowego.
+ */
+const FFA_FACTION_COLORS = [0xff3b30, 0xff8c1a, 0xff4fd8, 0x32d0ff, 0xa56bff, 0xff6ea0];
 /** Obniżony tick do wizualnej weryfikacji interpolacji (F4). */
 const SLOW_PHYSICS_HZ = 10;
-const DEG_TO_RAD = Math.PI / 180;
 /** Dystanse próbkowania terenu przed botem (omijanie grani). */
 const GROUND_LOOKAHEAD_M = [300, 600, 1000, 1500];
+/** Skala małego błysku w chwili zestrzelenia w powietrzu (duży wybuch dopiero przy ziemi). */
+const AIR_KILL_FLASH_SCALE = 0.4;
+/** O ile cofnąć punkt emisji dymu ZA samolot (wzdłuż -nos) [m] — smuga wychodzi
+ * zza ogona, nie ze środka kadłuba; z rozrzutem profilu daje ~2-4 m od maszyny. */
+const SMOKE_BACK_OFFSET_M = 3;
 
 const FORWARD_Z = new Vector3(0, 0, 1);
 const BACKWARD_Z = new Vector3(0, 0, -1);
@@ -162,18 +189,28 @@ let gameMode: GameMode = 'menu';
 let matchMode: MatchMode = 'ffa';
 let modeLabel = '';
 let matchOver = false;
-let playerKills = 0;
 let difficulty: DifficultyLevel = 'normalny';
 /** Id obserwowanego uczestnika po eliminacji gracza; null = wybór automatyczny (pierwszy żywy). */
 let spectatorTargetId: number | null = null;
+/**
+ * Stan gracza po zestrzeleniu w powietrzu:
+ * - 'none'       — żyje (gra normalnie),
+ * - 'wreck'      — spadający wrak: steruje nim z klawiatury, overlay oferuje akcje;
+ *                  koniec meczu z tytułu jego porażki jest WSTRZYMANY, aż wybierze,
+ * - 'spectating' — wybrał tryb obserwatora (ogląda sojuszników).
+ */
+type PlayerDeath = 'none' | 'wreck' | 'spectating';
+let playerDeath: PlayerDeath = 'none';
 
-/** Bufor uczestników dla matchOutcome (Combatant spełnia MatchMember). */
+/** Bufor uczestników dla factionsInPlay (Combatant spełnia MatchMember). */
 const matchMembers: MatchMember[] = [];
 /** Bufor kandydatów na cel (czyszczony per wywołanie — zero alokacji). */
 const candidateScratch: PlaneState[] = [];
 /** Bufor obserwowalnych uczestników dla cyklicznego przełączania widoku (zero alokacji). */
 const spectatorScratch: Combatant[] = [];
 const scratchWrapDelta = new Vector3();
+const scratchSmokeDir = new Vector3();
+const scratchSmokePos = new Vector3();
 const spawnScratchPos = new Vector3();
 const spawnScratchDir = new Vector3();
 
@@ -241,9 +278,10 @@ renderer.domElement.addEventListener('contextmenu', (event) => {
 // pointer lock i NIE strzela (triggerHeld bramkuje LPM na mouseAim.locked).
 renderer.domElement.addEventListener('mousedown', (event) => {
   if (event.button !== 0) return;
-  // po eliminacji LPM przełącza obserwowany samolot zamiast strzelać (wrak nie strzela)
+  // w trybie obserwatora LPM przełącza obserwowany samolot; strzela tylko żywy gracz
+  // (sterowany wrak ma wolny kursor do klikania overlay — nie strzela)
   if (isSpectating()) cycleSpectatorTarget(1);
-  else triggerMouse = true;
+  else if (state.life === 'alive') triggerMouse = true;
 });
 window.addEventListener('mouseup', (event) => {
   if (event.button === 0) triggerMouse = false;
@@ -280,12 +318,21 @@ function spawnCombatant(c: Combatant, pos: Vector3, heading: Vector3): void {
   c.state.lifeTimerS = 0;
   c.fire.ammoRemaining = AMMO_MAX;
   c.fire.cooldownS = 0;
+  c.smokeAccumS = 0;
+  c.damagedBy.clear(); // nowe życie → czysta lista napastników (kredyt asyst)
   resetHealth(c.health);
+  // świeży pilot: pełna rezerwa tolerancji G, brak zaciemnienia (G-LOC)
+  c.sim.gLoadMachine.reset();
+  c.sim.gLoadEffects.reserve = 1;
+  c.sim.gLoadEffects.blackoutFactor = 0;
   c.bot?.reset(c.state);
   if (c.isPlayer) {
     keyboard.throttle = 0.8;
     control.reset(c.state);
     chaseCamera.reset();
+    playerDeath = 'none';
+    // po (re)spawnie wrak nie blokuje już myszy — celowanie wraca, gdy kamera pościgowa
+    mouseAim.enabled = cameraMode === 'pościgowa';
   }
   c.syncPrev();
   c.mesh.visible = true;
@@ -324,6 +371,7 @@ function physicsStep(dtS: number): void {
 
   if (gameMode === 'combat') {
     resolveCombatHits();
+    resolvePlaneCollisions();
     updateZone(dtS);
   }
 }
@@ -341,6 +389,7 @@ function updateZone(dtS: number): void {
     const o = zoneOccupantScratch[n++];
     if (!o) break;
     o.faction = c.faction;
+    // tylko żywe samoloty trzymają strefę — spadający wrak ('dying') jej NIE kontestuje
     o.alive = c.state.life === 'alive';
     o.xM = c.state.position.x;
     o.zM = c.state.position.z;
@@ -401,9 +450,29 @@ function stepPlayer(dtS: number): void {
     const fired = updateFire(fireControl, plane.armament, state, player.id, combatRng, pool, triggerHeld(), dtS);
     if (fired > 0) pendingMuzzleFlash = true;
 
-    if (updateLifecycle(state, terrain, dtS) === 'crashed') onCombatantDeath(player, null);
+    if (updateLifecycle(state, terrain, dtS) === 'crashed') onCombatantDeath(player, null, 'ground');
+  } else if (state.life === 'dying') {
+    // spadający wrak gracza: silnik martwy (stepWreck wymusza throttle 0), lotki pełne,
+    // ster wysokości osłabiony. Sterowanie WYŁĄCZNIE z klawiatury (mouseEnabled=false) —
+    // kursor jest wolny, by kliknąć overlay (Tryb obserwatora / Zakończ misję).
+    keyboard.update(dtS);
+    deflections.pitchUp = keyboard.pitchDeflection;
+    deflections.rollRight = keyboard.rollDeflection;
+    deflections.yawRight = keyboard.yawDeflection;
+    control.update(state, plane, deflections, dtS, demands, false);
+    lastTick = stepWreck(sim, plane, demands, dtS);
+    if (wrapToArena(state.position, scratchWrapDelta)) {
+      player.prevPos.add(scratchWrapDelta);
+      chaseCamera.translate(scratchWrapDelta);
+    }
+    if (import.meta.env.DEV) validatePlaneState(state, 'wrak gracza');
+    // wrak wciąż może strzelać — TYLKO Spacją (kursor wolny do nakładki, więc bez LPM);
+    // celuje się nosem, sterując wrakiem z klawiatury
+    const fired = updateFire(fireControl, plane.armament, state, player.id, combatRng, pool, triggerKey, dtS);
+    if (fired > 0) pendingMuzzleFlash = true;
+    if (updateLifecycle(state, terrain, dtS) === 'wreckImpact') onWreckImpact(player);
   } else {
-    // wrak: respawn tylko gdy zostały życia (przy MATCH_LIVES=1 — brak; podgląd do końca)
+    // dead/respawning: respawn tylko gdy zostały życia (przy MATCH_LIVES=1 — brak; podgląd do końca)
     if (player.livesLeft > 0 && updateLifecycle(state, terrain, dtS) === 'respawnReady') {
       respawnCombatant(player);
     }
@@ -426,14 +495,23 @@ function stepBot(c: Combatant, dtS: number): void {
       c.state.velocity.z,
       GROUND_LOOKAHEAD_M,
     );
-    const target = selectNearestTarget(c.state.position, enemyCandidates(c));
+    const target = selectNearestTarget(c.state.position, enemyCandidates(c), SPOT_RANGE_M);
     const out = bot.update(c.state, plane, target, { surfaceHeightM: surf }, dtS, c.demands);
     c.state.throttle = out.throttle;
     pilotStep(c.sim, plane, c.demands, dtS);
     if (wrapToArena(c.state.position, scratchWrapDelta)) c.prevPos.add(scratchWrapDelta);
     if (import.meta.env.DEV) validatePlaneState(c.state, 'tick bota');
     updateFire(c.fire, plane.armament, c.state, c.id, c.rng, pool, out.fire, dtS);
-    if (updateLifecycle(c.state, terrain, dtS) === 'crashed') onCombatantDeath(c, null);
+    if (updateLifecycle(c.state, terrain, dtS) === 'crashed') onCombatantDeath(c, null, 'ground');
+  } else if (c.state.life === 'dying') {
+    // wrak bota spada balistycznie — bez AI; zerowe żądania = czysty opad (zero roll/yaw)
+    c.demands.nDemandG = 1;
+    c.demands.rollRateRadS = 0;
+    c.demands.yawRateRadS = 0;
+    stepWreck(c.sim, plane, c.demands, dtS);
+    if (wrapToArena(c.state.position, scratchWrapDelta)) c.prevPos.add(scratchWrapDelta);
+    if (import.meta.env.DEV) validatePlaneState(c.state, 'wrak bota');
+    if (updateLifecycle(c.state, terrain, dtS) === 'wreckImpact') onWreckImpact(c);
   } else if (c.livesLeft > 0 && updateLifecycle(c.state, terrain, dtS) === 'respawnReady') {
     respawnCombatant(c);
   }
@@ -451,8 +529,45 @@ function resolveCombatHits(): void {
       if (!segmentSphereHit(b.prevPosition, b.position, c.state.position, plane.hitRadiusM)) continue;
       const res = applyDamage(c.health, b.damage);
       b.active = false;
-      if (res === 'destroyed') onCombatantDeath(c, b.ownerId);
+      // zapamiętaj napastnika u ofiary — kredyt asysty, jeśli ofiara zginie później
+      // (filtr wróg/zabójca w onCombatantDeath). Zabójca też tu trafia, ale go wykluczamy.
+      c.damagedBy.add(b.ownerId);
+      if (res === 'destroyed') onCombatantDeath(c, b.ownerId, 'air');
       else if (res === 'absorbed') onNonLethalHit(b.ownerId);
+      break;
+    }
+  }
+}
+
+/**
+ * Zderzenia samolot↔samolot (faza 7): para żywych płatowców, których sfery kolizji
+ * (collisionRadiusM) zetkną się w trakcie ticku, ulega NATYCHMIASTOWEMU zniszczeniu
+ * — oba bez zaliczenia (jak „rozbicie" o ziemię). Friendly fire jest ON, więc
+ * zderzają się też maszyny tej samej frakcji. Test zamiatany (planesCollide) łapie
+ * lot czołowy mimo dużej prędkości zbliżania. Pary liczone raz (i<j); gdy `a`
+ * zginie, przerywamy pętlę wewnętrzną — martwy płatowiec nie zderza się dalej.
+ */
+function resolvePlaneCollisions(): void {
+  for (let i = 0; i < combatants.length; i++) {
+    const a = combatants[i];
+    if (!a || !a.active || a.state.life !== 'alive') continue;
+    for (let j = i + 1; j < combatants.length; j++) {
+      const b = combatants[j];
+      if (!b || !b.active || b.state.life !== 'alive') continue;
+      if (
+        !planesCollide(
+          a.prevPos,
+          a.state.position,
+          plane.collisionRadiusM,
+          b.prevPos,
+          b.state.position,
+          plane.collisionRadiusM,
+        )
+      ) {
+        continue;
+      }
+      onCombatantDeath(a, null, 'air');
+      onCombatantDeath(b, null, 'air');
       break;
     }
   }
@@ -463,12 +578,32 @@ function onNonLethalHit(ownerId: number): void {
   if (ownerId === player.id && !hitMarkerKill) hitMarkerTimerS = HIT_MARKER_S;
 }
 
-/** Śmierć uczestnika (pocisk lub rozbicie): wybuch, −1 życie, kill feed, sprawdzenie meczu. */
-function onCombatantDeath(victim: Combatant, killerId: number | null): void {
-  explosions.spawn(victim.state.position);
-  victim.mesh.visible = false;
-  victim.state.life = 'dead';
-  victim.state.lifeTimerS = 0;
+/**
+ * Śmierć uczestnika. `cause`:
+ * - 'air'    — zestrzelenie w POWIETRZU (pocisk/kolizja): samolot staje się spadającym
+ *              wrakiem ('dying') — silnik gaśnie, śmigło staje, ciągnie dym; mały błysk
+ *              teraz, duży wybuch dopiero przy uderzeniu w ziemię (onWreckImpact),
+ * - 'ground' — rozbicie o teren: natychmiastowy duży wybuch i 'dead'.
+ * Buchalteria (−1 życie, kill feed, kredyt, sprawdzenie meczu) jest wspólna i robiona
+ * TERAZ, w chwili zestrzelenia (strzelec zasłużył wtedy) — uderzenie wraku nic nie liczy.
+ */
+function onCombatantDeath(
+  victim: Combatant,
+  killerId: number | null,
+  cause: 'air' | 'ground',
+): void {
+  if (cause === 'air') {
+    explosions.spawn(victim.state.position, AIR_KILL_FLASH_SCALE); // mały błysk w locie
+    victim.state.life = 'dying'; // mesh zostaje widoczny — render() pokazuje spadający wrak
+    victim.state.lifeTimerS = 0;
+    victim.smokeAccumS = 0;
+    if (victim === player) enterPlayerWreck();
+  } else {
+    explosions.spawn(victim.state.position); // pełny wybuch o ziemię
+    victim.mesh.visible = false;
+    victim.state.life = 'dead';
+    victim.state.lifeTimerS = 0;
+  }
   victim.livesLeft = Math.max(0, victim.livesLeft - 1);
 
   const killer = killerId === null ? null : combatantById(killerId);
@@ -480,41 +615,206 @@ function onCombatantDeath(victim: Combatant, killerId: number | null): void {
     pushKillFeed(`✕ ${killer.name} → ${victim.name}`);
   }
 
-  // licznik/feedback gracza tylko za zestrzelenie WROGA (teamkill nie nagradzany)
-  if (killer && killer.id === player.id && victim.faction !== player.faction) {
-    playerKills++;
-    hitMarkerTimerS = HIT_MARKER_KILL_S;
-    hitMarkerKill = true;
+  // kredyt za zestrzelenie WROGA dowolnemu strzelcowi (teamkill/samobójstwo bez punktu);
+  // marker trafienia tylko dla gracza
+  if (killer && killer.faction !== victim.faction) {
+    killer.kills++;
+    if (killer.id === player.id) {
+      hitMarkerTimerS = HIT_MARKER_KILL_S;
+      hitMarkerKill = true;
+    }
   }
 
+  // asysty: każdy WRÓG (≠ frakcja ofiary), który wcześniej ją trafił, dostaje asystę —
+  // poza zabójcą (ten ma już zestrzelenie). Dotyczy też śmierci bez zabójcy (kolizja,
+  // rozbicie o ziemię): killerId = null, więc wszyscy wcześniejsi napastnicy-wrogowie liczą się.
+  for (const attackerId of victim.damagedBy) {
+    if (attackerId === killerId) continue;
+    const attacker = combatantById(attackerId);
+    if (attacker && attacker !== victim && attacker.faction !== victim.faction) attacker.assists++;
+  }
+  victim.damagedBy.clear();
+
   checkMatchEnd();
+}
+
+/** Gracz zestrzelony w powietrzu: tryb spadającego wraku + overlay decyzji. */
+function enterPlayerWreck(): void {
+  playerDeath = 'wreck';
+  // zwolnij pointer lock i wyłącz celowanie myszą — kursor wolny do kliknięcia overlay;
+  // wrakiem steruje się klawiaturą (WSAD/QE)
+  mouseAim.enabled = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+/** Wrak ('dying') uderzył w ziemię: duży wybuch i znika. Buchalteria była już zrobiona. */
+function onWreckImpact(c: Combatant): void {
+  explosions.spawn(c.state.position); // duży wybuch przy ziemi
+  c.mesh.visible = false;
+  // life jest już 'dead' (ustawione w updateLifecycle); overlay gracza zostaje do decyzji
 }
 
 function checkMatchEnd(): void {
   if (gameMode !== 'combat' || matchOver) return;
   matchMembers.length = 0;
   for (const c of combatants) if (c.active) matchMembers.push(c);
-  const outcome = matchOutcome(player.faction, matchMembers);
-  if (outcome === 'ongoing') return;
-  const won = outcome === 'won';
-  endMatch(won, won ? 'wrogowie wyeliminowani' : 'zostałeś wyeliminowany');
+  const inPlay = factionsInPlay(matchMembers);
+  // Mecz rozstrzygnięty GLOBALNIE dopiero, gdy została ≤1 frakcja z życiami → ekran wyniku.
+  // Gracz wygrywa, jeśli to jego frakcja jest tą ostatnią.
+  if (inPlay.size <= 1) {
+    const won = inPlay.has(player.faction);
+    endMatch(won, won ? 'wrogowie wyeliminowani' : 'zostałeś wyeliminowany');
+    return;
+  }
+  // ≥2 frakcje wciąż walczą. Jeśli frakcja gracza gra dalej — nic (mecz w toku). Jeśli
+  // gracz wypadł (FFA: każdy sam za siebie), mecz toczy się dla pozostałych: gracz może
+  // oglądać (obserwator) i podglądać tabelę wyników; o swoim wyjściu decyduje sam.
 }
 
 function endMatch(playerWon: boolean, reason: string): void {
   matchOver = true;
+  playerDeath = 'none';
+  downedOverlay.hide();
+  standingsOverlay.hide();
+  // mecz zamraża fizykę (playing=false) → spadające wraki nie dolecą do ziemi;
+  // „domknij" każdy wybuchem, żeby ekran nie zastygał z wrakiem wiszącym w powietrzu
+  for (const c of combatants) {
+    if (c.active && c.state.life === 'dying') {
+      explosions.spawn(c.state.position);
+      c.state.life = 'dead';
+      c.mesh.visible = false;
+    }
+  }
   if (document.pointerLockElement) document.exitPointerLock();
-  const summary = `${modeLabel}   •   ${reason}   •   zestrzelenia: ${String(playerKills)}   [${difficulty}]`;
-  menu.showResult(playerWon, summary);
+  menu.showResult(buildResultData(playerWon, reason));
+}
+
+/** #rrggbb z liczby koloru Three (markery/beacony są liczbami). */
+function cssColor(hex: number): string {
+  return `#${hex.toString(16).padStart(6, '0')}`;
+}
+
+/**
+ * Kolor frakcji (liczba Three) — JEDNO źródło dla markera HUD i kropki w tabeli:
+ * gracz złoty; w FFA każda frakcja z palety (unikatowo); w drużynowym sojusznik zielony,
+ * wróg czerwony (względem frakcji gracza).
+ */
+function displayColorHex(isPlayer: boolean, faction: number): number {
+  if (isPlayer) return PLAYER_COLOR;
+  if (matchMode === 'ffa') {
+    return FFA_FACTION_COLORS[(faction - 1) % FFA_FACTION_COLORS.length] ?? FOE_COLOR;
+  }
+  return faction === player.faction ? FRIEND_COLOR : FOE_COLOR;
+}
+
+/** Kolor kropki pilota w tabeli wyników (CSS). */
+function pilotColor(isPlayer: boolean, faction: number): string {
+  return cssColor(displayColorHex(isPlayer, faction));
+}
+
+/** Sekundy strefy → „m:ss"; poniżej 1 s pokazujemy „—" (frakcja nigdy nie weszła wyłącznie). */
+function formatZoneTime(seconds: number): string {
+  if (seconds < 1) return '—';
+  const s = Math.floor(seconds);
+  return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** Wiersze tabeli (piloci + drużyny) z aktywnych uczestników + akumulatora strefy. */
+function buildScoreRows(): { pilots: ResultPilotRow[]; teams: ResultTeamRow[] } {
+  const inputs: ScoreInput[] = [];
+  for (const c of combatants) {
+    if (!c.active) continue;
+    inputs.push({
+      id: c.id,
+      name: c.name,
+      faction: c.faction,
+      isPlayer: c.isPlayer,
+      kills: c.kills,
+      assists: c.assists,
+    });
+  }
+  const board = buildScoreboard(inputs, zone.secondsByFaction);
+
+  const pilots: ResultPilotRow[] = board.pilots.map((p) => ({
+    rank: p.rank,
+    name: p.name,
+    color: pilotColor(p.isPlayer, p.faction),
+    kills: p.kills,
+    assists: p.assists,
+    zoneLabel: formatZoneTime(p.zoneSeconds),
+    points: Math.round(p.points),
+    isPlayer: p.isPlayer,
+  }));
+
+  // wynik drużyn tylko w trybie drużynowym (w FFA frakcja == pilot → redundancja)
+  const teams: ResultTeamRow[] =
+    matchMode === 'team'
+      ? board.teams.map((t) => ({
+          name: t.isPlayerTeam ? 'Twoja drużyna' : 'Wrogowie',
+          color: cssColor(t.isPlayerTeam ? FRIEND_COLOR : FOE_COLOR),
+          kills: t.kills,
+          assists: t.assists,
+          zoneLabel: formatZoneTime(t.zoneSeconds),
+          points: Math.round(t.points),
+          isPlayerTeam: t.isPlayerTeam,
+        }))
+      : [];
+
+  return { pilots, teams };
+}
+
+/** Pełne dane ekranu wyniku (werdykt + wiersze) — terminalny ekran po końcu meczu. */
+function buildResultData(playerWon: boolean, reason: string): ResultData {
+  const { pilots, teams } = buildScoreRows();
+  return { playerWon, headline: reason, modeLabel, difficulty, pilots, teams };
+}
+
+/** Czy gracz jest wyeliminowany, a mecz wciąż trwa — wtedy przełącza tabelę ↔ obserwatora. */
+function canToggleStandings(): boolean {
+  return gameMode === 'combat' && !matchOver && playerDeath !== 'none';
+}
+
+/** Otwiera żywą tabelę wyników (dane bieżące); mecz toczy się dalej pod spodem. */
+function openStandings(): void {
+  if (!canToggleStandings()) return;
+  const { pilots, teams } = buildScoreRows();
+  standingsOverlay.show(pilots, teams);
+}
+
+function closeStandings(): void {
+  standingsOverlay.hide();
+}
+
+/** Tab w stanie zestrzelenia: przełącza między żywą tabelą a widokiem obserwatora/wraku. */
+function toggleStandings(): void {
+  if (standingsOverlay.isOpen) closeStandings();
+  else openStandings();
+}
+
+/** Gracz (wrak) wybiera tryb obserwatora — ogląda żyjących sojuszników. */
+function choosePlayerSpectate(): void {
+  if (playerDeath !== 'wreck') return;
+  playerDeath = 'spectating';
+  spectatorTargetId = firstSpectatable()?.id ?? null;
+  downedOverlay.hide();
+}
+
+/** Gracz (wrak) kończy misję — był zestrzelony, więc to porażka. */
+function choosePlayerEndMission(): void {
+  if (playerDeath !== 'wreck') return;
+  endMatch(false, 'zestrzelony — koniec misji');
 }
 
 // --- start meczu / ustawienia trybów ---
 
 function startMatch(choice: GameModeChoice): void {
   matchOver = false;
-  playerKills = 0;
   hitMarkerKill = false;
   hitMarkerTimerS = 0;
   spectatorTargetId = null;
+  playerDeath = 'none';
+  downedOverlay.hide();
+  standingsOverlay.hide();
   for (const b of pool.bullets) b.active = false; // brak smug z poprzedniego meczu
   for (const c of botSlots) c.deactivate();
   zone.reset();
@@ -535,7 +835,7 @@ function setupFfa(botCount: number): void {
   matchMode = 'ffa';
   modeLabel = `FFA 1v${String(botCount)}`;
   const used: Combatant[] = [player];
-  player.configure({ faction: 0, lives: MATCH_LIVES, name: 'Ty', bot: null, beaconColor: BEACON_HIDDEN });
+  player.configure({ faction: 0, lives: MATCH_LIVES, name: 'Ty', bot: null });
   for (let i = 0; i < botCount; i++) {
     const c = botSlots[i];
     if (!c) break;
@@ -544,7 +844,6 @@ function setupFfa(botCount: number): void {
       lives: MATCH_LIVES,
       name: `Bot ${String(i + 1)}`,
       bot: makeBot(0xb0b1e + i),
-      beaconColor: FOE_COLOR,
     });
     used.push(c);
   }
@@ -558,7 +857,7 @@ function setupTeam(perTeam: number): void {
   let slot = 0;
 
   const teamA: Combatant[] = [player];
-  player.configure({ faction: 0, lives: MATCH_LIVES, name: 'Ty', bot: null, beaconColor: BEACON_HIDDEN });
+  player.configure({ faction: 0, lives: MATCH_LIVES, name: 'Ty', bot: null });
   for (let i = 1; i < perTeam; i++) {
     const c = botSlots[slot++];
     if (!c) break;
@@ -567,7 +866,6 @@ function setupTeam(perTeam: number): void {
       lives: MATCH_LIVES,
       name: `Sojusznik ${String(i)}`,
       bot: makeBot(0xa11 + slot),
-      beaconColor: FRIEND_COLOR,
     });
     teamA.push(c);
   }
@@ -581,7 +879,6 @@ function setupTeam(perTeam: number): void {
       lives: MATCH_LIVES,
       name: `Wróg ${String(i + 1)}`,
       bot: makeBot(0xe44 + slot),
-      beaconColor: FOE_COLOR,
     });
     teamB.push(c);
   }
@@ -632,6 +929,7 @@ scene.add(player.mesh);
 const terrain = createTerrain();
 const world = createWorld(scene, terrain);
 const explosions = new Explosions(scene);
+const smoke = new SmokeTrails(scene);
 const tracers = new BulletTracers(scene, BULLET_POOL_CAPACITY);
 const muzzleFlash = new MuzzleFlash(scene, plane.armament.muzzles);
 
@@ -654,6 +952,7 @@ function requireEl(id: string): HTMLElement {
 }
 
 const hud = new Hud(requireEl('hud'), requireEl('stall-warning'), requireEl('horizon-disc'));
+const roster = new RosterOverlay();
 const reticleEl = requireEl('reticle');
 const noseMarkerEl = requireEl('nose-marker');
 const alertEl = requireEl('arena-alert');
@@ -663,6 +962,19 @@ const killFeedEl = requireEl('kill-feed');
 const markers = Array.from({ length: MAX_BOTS }, () => new EnemyMarker(document.body));
 // pasek przejmowania strefy (główny cel) — u góry ekranu, tylko w trybie walki
 const zoneBar = new ZoneBar(document.body);
+// wygaszanie obrazu przy przeciążeniu (G-LOC) — tylko dla widoku gracza w locie
+const greyoutOverlay = new GreyoutOverlay();
+// nakładka decyzji po zestrzeleniu (tryb obserwatora / zakończ misję) — u dołu
+const downedOverlay = new DownedOverlay(
+  () => choosePlayerSpectate(),
+  () => openStandings(),
+  () => choosePlayerEndMission(),
+);
+// żywa tabela wyników (mecz trwa) — „Wróć" chowa, „Zakończ misję" kończy terminalnie
+const standingsOverlay = new StandingsOverlay(
+  () => closeStandings(),
+  () => choosePlayerEndMission(),
+);
 
 function resize(): void {
   const { clientWidth, clientHeight } = app as HTMLElement;
@@ -675,11 +987,10 @@ resize();
 
 // --- sterowanie debug ---
 
-let arrowsVisible = true;
 window.addEventListener('keydown', (event) => {
   if (event.key === 'F3') {
     event.preventDefault(); // F3 = "znajdź" w przeglądarce
-    arrowsVisible = arrows.toggle();
+    arrows.toggle();
   } else if (event.key === 'F4') {
     event.preventDefault();
     physicsHz = physicsHz === PHYSICS_HZ ? SLOW_PHYSICS_HZ : PHYSICS_HZ;
@@ -687,9 +998,10 @@ window.addEventListener('keydown', (event) => {
   } else if (event.code === 'KeyC') {
     cameraMode = cameraMode === 'pościgowa' ? 'orbitalna' : 'pościgowa';
     if (cameraMode === 'pościgowa') {
-      // powrót do pościgowej: mysz znów może celować (pointer lock przez klik)
+      // powrót do pościgowej: mysz znów może celować (pointer lock przez klik) — ale tylko
+      // gdy gracz żyje; wrak/obserwator trzymają kursor wolny (sterowanie/przełączanie LPM)
       chaseCamera.reset();
-      mouseAim.enabled = true;
+      mouseAim.enabled = playerDeath === 'none';
     } else {
       // orbitalna = rozglądanie się myszą; lot tylko z klawiatury. Zwolnij pointer
       // lock (kursor wraca do przeciągania orbity) i zablokuj ponowne celowanie.
@@ -698,16 +1010,20 @@ window.addEventListener('keydown', (event) => {
     }
   } else if (event.key === 'r' || event.key === 'R') {
     if (player.state.life === 'alive' || gameMode === 'menu') respawnCombatant(player);
+  } else if (event.code === 'Tab') {
+    // tylko gdy gracz zestrzelony, a mecz trwa: przełącz żywą tabelę ↔ obserwatora
+    if (canToggleStandings()) {
+      event.preventDefault(); // Tab domyślnie przenosi fokus DOM
+      toggleStandings();
+    }
   }
 });
 
 // --- tryb obserwatora po eliminacji (przełączanie widoku LPM) ---
 
-/** Czy gracz jest wyeliminowany i ogląda walkę (mecz wciąż trwa). */
+/** Czy gracz wybrał tryb obserwatora po zestrzeleniu (mecz wciąż trwa). */
 function isSpectating(): boolean {
-  return (
-    gameMode === 'combat' && !matchOver && player.state.life !== 'alive' && player.livesLeft <= 0
-  );
+  return gameMode === 'combat' && !matchOver && playerDeath === 'spectating';
 }
 
 /** Czy gracz ma w tym meczu sojuszników (slot tej samej frakcji) — decyduje o zakresie obserwacji. */
@@ -741,6 +1057,15 @@ function spectatableCount(): number {
   return n;
 }
 
+/**
+ * Czy jest kogo obserwować (warunek przycisku „Tryb obserwatora"). Zakres ustala
+ * isSpectatable: w drużynowym tylko żywi sojusznicy, w FFA dowolny pozostały samolot
+ * — dzięki temu zestrzelony gracz FFA też może oglądać dalszą walkę.
+ */
+function canSpectate(): boolean {
+  return spectatableCount() > 0;
+}
+
 /** Przełącza obserwowany samolot na następny obserwowalny (cyklicznie); dir=-1 = wstecz. */
 function cycleSpectatorTarget(dir: 1 | -1): void {
   if (!isSpectating()) return;
@@ -759,6 +1084,9 @@ function cycleSpectatorTarget(dir: 1 | -1): void {
  * lub brak wyboru — pierwszy obserwowalny), inaczej gracz.
  */
 function currentViewCombatant(): Combatant {
+  // dopóki gracz steruje wrakiem (i nie przeszedł w obserwatora) — kamera trzyma się go,
+  // żeby widział własny upadek i mógł nim kierować, a po rozbiciu — miejsce katastrofy
+  if (playerDeath === 'wreck') return player;
   if (player.state.life === 'alive' || player.livesLeft > 0) return player;
   const chosen = spectatorTargetId === null ? null : combatantById(spectatorTargetId);
   if (chosen && isSpectatable(chosen)) return chosen;
@@ -768,36 +1096,34 @@ function currentViewCombatant(): Combatant {
 }
 
 /** Linie wyniku w HUD dla bieżącego trybu walki. */
+// Linie walki w HUD: obecnie tylko HP gracza. Zestrzelenia i stan „w powietrzu"
+// przeniesione na listę samolotów (roster) — tu byłyby redundancją.
 function combatScoreLines(): string[] {
-  const hp = `HP    ${String(Math.max(0, Math.round(playerHealth.hp)))} / ${String(plane.hpPool)}`;
-  if (matchMode === 'ffa') {
-    let enemiesAlive = 0;
-    for (const c of combatants) {
-      if (!c.active || c.faction === player.faction) continue;
-      if (c.state.life === 'alive') enemiesAlive++;
-    }
-    return [
-      `FFA   zestrzelenia ${String(playerKills)}`,
-      `WROGOWIE w powietrzu ${String(enemiesAlive)}`,
-      hp,
-    ];
-  }
-  let aAlive = 0;
-  let bAlive = 0;
-  for (const c of combatants) {
-    if (!c.active) continue;
-    if (c.faction === player.faction) {
-      if (c.state.life === 'alive') aAlive++;
-    } else if (c.state.life === 'alive') {
-      bAlive++;
-    }
-  }
-  return [
-    `DRUŻYNY   Ty ${String(aAlive)} : ${String(bAlive)} Wróg (w powietrzu)   zestrzelenia ${String(playerKills)}`,
-    hp,
-  ];
+  return [`HP    ${String(Math.max(0, Math.round(playerHealth.hp)))} / ${String(plane.hpPool)}`];
 }
 
+
+/**
+ * Wiersze listy samolotów (lewy górny róg). Stała kolejność slotów (gracz, potem
+ * boty) → lista nie skacze, gdy ktoś ginie. Status binarny: „stracony" dopiero gdy
+ * pilot wyczerpał życia i nie żyje ani nie spada (wrak/respawn = wciąż „w walce").
+ */
+function rosterRows(): RosterRow[] {
+  const rows: RosterRow[] = [];
+  for (const c of combatants) {
+    if (!c.active) continue;
+    const lost =
+      c.livesLeft <= 0 && c.state.life !== 'alive' && c.state.life !== 'dying';
+    rows.push({
+      name: c.name,
+      kills: c.kills,
+      colorCss: pilotColor(c.isPlayer, c.faction),
+      isPlayer: c.isPlayer,
+      isLost: lost,
+    });
+  }
+  return rows;
+}
 
 // --- pętla renderu: stały krok fizyki + interpolacja stanem prev/curr ---
 
@@ -808,7 +1134,7 @@ let lastTimeMs: number | undefined;
 
 /** Statyczne tło pod menu: gracz nad oceanem (fizyka stoi w gameMode 'menu'). */
 function setupMenuBackground(): void {
-  player.configure({ faction: 0, lives: 1, name: 'Ty', bot: null, beaconColor: BEACON_HIDDEN });
+  player.configure({ faction: 0, lives: 1, name: 'Ty', bot: null });
   spawnCombatant(player, spawnScratchPos.set(0, SPAWN_ALTITUDE_M, SPAWN_Z_M), FORWARD_Z);
 }
 
@@ -837,12 +1163,42 @@ renderer.setAnimationLoop((timeMs) => {
     orbit.update(viewMesh.position);
   }
 
+  // wygaszanie obrazu przy przeciążeniu (G-LOC) — tylko gdy patrzymy z własnego,
+  // żywego samolotu; obserwacja cudzego / wrak / menu = czysty obraz
+  greyoutOverlay.update(
+    viewC === player && lastTick && player.state.life === 'alive' ? lastTick.gLoad.blackoutFactor : 0,
+  );
+
   // kamera nigdy pod powierzchnią (kraksa na zboczu wbijała ją w teren)
   const cameraFloorM = surfaceHeightM(terrain, camera.position.x, camera.position.z) + 3;
   if (camera.position.y < cameraFloorM) camera.position.y = cameraFloorM;
 
   world.update(camera.position);
   explosions.update(frameDtS);
+
+  // dym: spadające wraki ciągną gęstą czarną smugę; trafione, ale żywe maszyny dymią
+  // słabiej i jaśniej im więcej HP (biały→szary→ciemny), nic poniżej progu uszkodzeń.
+  // Punkt emisji cofnięty ZA samolot (mesh już zinterpolowany w render()), żeby smuga
+  // wychodziła zza ogona, nie ze środka kadłuba. update() starzeje kłęby po zniknięciu.
+  for (const c of combatants) {
+    if (!c.active) continue;
+    let tier: SmokeTier | null = null;
+    if (c.state.life === 'dying') tier = WRECK_TIER;
+    else if (c.state.life === 'alive') tier = damageSmokeTier(c.health.hp, c.health.maxHp);
+    if (tier === null) {
+      c.smokeAccumS = 0; // mało/nieuszkodzony — nie kumuluj długu czasowego do kolejnego trafienia
+      continue;
+    }
+    c.smokeAccumS += frameDtS;
+    if (c.smokeAccumS < tier.intervalS) continue;
+    getForward(c.mesh.quaternion, scratchSmokeDir).multiplyScalar(-SMOKE_BACK_OFFSET_M);
+    scratchSmokePos.copy(c.mesh.position).add(scratchSmokeDir);
+    while (c.smokeAccumS >= tier.intervalS) {
+      c.smokeAccumS -= tier.intervalS;
+      smoke.emit(scratchSmokePos, tier.profile);
+    }
+  }
+  smoke.update(frameDtS);
 
   // smugacze (interpolacja prev→curr alfą) + błysk luf na każdej oddanej salwie gracza
   tracers.update(pool.bullets, alpha);
@@ -900,15 +1256,24 @@ renderer.setAnimationLoop((timeMs) => {
   const w = (app as HTMLElement).clientWidth;
   const h = (app as HTMLElement).clientHeight;
 
-  // markery samolotów: wszyscy żywi uczestnicy poza graczem (wróg czerwony, sojusznik zielony)
+  // markery HUD samolotów: TYLKO w zasięgu wykrycia (≤ SPOT_RANGE_M). Dalej widać
+  // goły mesh — gracz musi wypatrzyć wroga na horyzoncie, zamiast lecieć na gotowy znacznik.
   if (gameMode === 'combat') {
+    const spotSqM = SPOT_RANGE_M * SPOT_RANGE_M;
     let mi = 0;
     for (const c of combatants) {
-      if (mi >= markers.length) break;
-      if (!c.active || c === player || c.state.life !== 'alive') continue;
-      const marker = markers[mi++];
-      if (!marker) break;
-      marker.setFoe(c.faction !== player.faction);
+      const spotted =
+        c.active &&
+        c !== player &&
+        c.state.life === 'alive' &&
+        c.mesh.position.distanceToSquared(viewMesh.position) <= spotSqM;
+      if (!spotted || mi >= markers.length) continue;
+      const marker = markers[mi];
+      if (!marker) continue;
+      mi++;
+      // FFA: unikatowy kolor frakcji; drużynowy: czerwony wróg / zielony sojusznik
+      if (matchMode === 'ffa') marker.setColorHex(displayColorHex(false, c.faction));
+      else marker.setFoe(c.faction !== player.faction);
       marker.update(c.mesh.position, viewMesh.position, camera, w, h);
     }
     for (; mi < markers.length; mi++) markers[mi]?.hide();
@@ -924,6 +1289,14 @@ renderer.setAnimationLoop((timeMs) => {
     zoneBar.setVisible(false);
   }
 
+  // nakładka decyzji po zestrzeleniu (steruj wrakiem / obserwator / tabela / koniec misji);
+  // chowana, gdy otwarta jest pełnoekranowa tabela wyników (nie nakładać dwóch nakładek)
+  if (gameMode === 'combat' && !matchOver && playerDeath === 'wreck' && !standingsOverlay.isOpen) {
+    downedOverlay.show(canSpectate());
+  } else {
+    downedOverlay.hide();
+  }
+
   const reticlePos =
     mouseAim.locked && state.life === 'alive'
       ? mouseAim.reticleScreenPos(player.mesh.position, camera, w, h)
@@ -937,7 +1310,8 @@ renderer.setAnimationLoop((timeMs) => {
   }
   getForward(state.orientation, scratchFwd);
   const nosePos = projectDirToScreen(scratchFwd, player.mesh.position, camera, w, h);
-  if (nosePos && mouseAim.locked && state.life === 'alive') {
+  // znacznik nosa: celownik żywego gracza (mysz) ORAZ wraku (kieruje ogniem ze Spacji)
+  if (nosePos && (state.life === 'dying' || (mouseAim.locked && state.life === 'alive'))) {
     noseMarkerEl.style.display = 'block';
     noseMarkerEl.style.left = `${nosePos.x.toFixed(0)}px`;
     noseMarkerEl.style.top = `${nosePos.y.toFixed(0)}px`;
@@ -947,12 +1321,13 @@ renderer.setAnimationLoop((timeMs) => {
 
   // alert pełnoekranowy: rozbicie/eliminacja > ostrzeżenie o granicy
   const edgeM = distanceToArenaEdgeM(state.position.x, state.position.z);
-  if (state.life !== 'alive') {
-    if (gameMode === 'combat' && player.livesLeft <= 0) {
+  if (playerDeath === 'wreck') {
+    // komunikat i akcje są w nakładce u dołu — środek ekranu czysty do sterowania wrakiem
+    alertEl.style.opacity = '0';
+  } else if (state.life !== 'alive') {
+    if (playerDeath === 'spectating') {
       alertEl.textContent =
-        spectatableCount() > 1
-          ? 'WYELIMINOWANY — obserwujesz   [LPM] zmień samolot'
-          : 'WYELIMINOWANY — obserwujesz';
+        spectatableCount() > 1 ? 'OBSERWUJESZ   [LPM] zmień samolot' : 'OBSERWUJESZ';
     } else {
       const leftS = Math.max(0, RESPAWN_DELAY_S - state.lifeTimerS);
       alertEl.textContent = `ROZBICIE — respawn za ${leftS.toFixed(1)} s`;
@@ -968,8 +1343,6 @@ renderer.setAnimationLoop((timeMs) => {
   }
 
   const tas = state.velocity.length();
-  const energyMj =
-    (0.5 * plane.massKg * tas * tas + plane.massKg * GRAVITY_MS2 * state.position.y) / 1e6;
   getUp(state.orientation, scratchUp);
   getRight(state.orientation, scratchRight);
   hud.update({
@@ -979,8 +1352,8 @@ renderer.setAnimationLoop((timeMs) => {
     throttle01: state.throttle,
     nG: state.loadFactor,
     nAvailG: lastTick ? lastTick.nAvailG : 0,
-    alphaDeg: lastTick ? lastTick.lift.alphaImpliedRad / DEG_TO_RAD : 0,
-    energyMj,
+    gLimitG: lastTick ? lastTick.gLoad.gLimitG : 0,
+    blackoutFactor: viewC === player && lastTick ? lastTick.gLoad.blackoutFactor : 0,
     stallPhase: lastTick ? lastTick.stall.phase : 'normal',
     buffetIntensity: viewC === player ? buffet : 0,
     bankRad: Math.atan2(-scratchRight.y, scratchUp.y),
@@ -993,16 +1366,11 @@ renderer.setAnimationLoop((timeMs) => {
       ...(gameMode === 'combat' ? combatScoreLines() : []),
       ...(viewC !== player ? [`OBSERWUJESZ: ${viewC.name}`] : []),
       `fps   ${String(fpsValue).padStart(3)}   pociski ${String(pool.activeCount).padStart(3)}`,
-      isSpectating()
-        ? `TRYB OBSERWATORA${spectatableCount() > 1 ? '   [LPM] następny samolot' : ''}   [C] zmień kamerę`
-        : cameraMode === 'orbitalna'
-          ? 'KAMERA ORBITALNA: przeciągnij myszą = rozglądanie   lot: WSAD/QE   gaz: LShift/LCtrl   Spacja: OGIEŃ   [C] powrót'
-          : mouseAim.locked
-            ? 'mysz: celuj   LPM/Spacja: OGIEŃ   WSAD/QE: stery   LShift/LCtrl: gaz   [Esc] zwolnij'
-            : 'KLIKNIJ, by sterować myszą (pointer lock)   LPM/Spacja: ogień   WSAD/QE: stery',
-      `[C] kamera: ${cameraMode}   [F3] siły: ${arrowsVisible ? 'ON' : 'OFF'}   [F4] tick ${String(physicsHz)} Hz${physicsHz !== PHYSICS_HZ ? ' ← SPOWOLNIONY' : ''}   [R] reset`,
     ],
   });
+
+  if (gameMode === 'combat') roster.update(rosterRows());
+  else roster.hide();
 
   renderer.render(scene, camera);
 });

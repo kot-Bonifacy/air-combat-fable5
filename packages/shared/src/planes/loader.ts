@@ -44,9 +44,46 @@ export interface PlaneConfig {
   hpPool: number;
   /** Promień sfery trafień płatowca [m] (model jednosferowy MVP; strefy → faza 17). */
   hitRadiusM: number;
+  /**
+   * Promień sfery KOLIZJI płatowiec↔płatowiec [m]. Dwa samoloty zderzają się, gdy
+   * odległość ich środków spadnie poniżej sumy promieni (dwa Spitfire'y: 3+3 = 6 m).
+   * Osobny od hitRadiusM (sfera trafień pociskami) — fizyczny obrys kadłuba jest
+   * ciaśniejszy niż kula, w którą „liczą się" pociski.
+   */
+  collisionRadiusM: number;
   stall: StallConfig;
+  gTolerance: GToleranceConfig;
   instructor: InstructorConfig;
   armament: Armament;
+  wreck: WreckConfig;
+}
+
+/** Parametry tolerancji przeciążenia pilota / G-LOC (physics/g-load.ts). */
+export interface GToleranceConfig {
+  /** Próg [G], powyżej którego ubywa rezerwy i zaczyna się szarzenie; poniżej rezerwa wraca. */
+  onsetG: number;
+  /** Budżet [G·s nadwyżki ponad onsetG] na pełne wyczerpanie rezerwy (mniejszy = szybsze zaciemnienie). */
+  toleranceGS: number;
+  /** Tempo odbudowy rezerwy poniżej onsetG [1/s] (wzrok wraca po odpuszczeniu). */
+  recoveryRatePerS: number;
+  /** Poziom rezerwy [0..1], od którego (w dół) narasta zaciemnienie obrazu. */
+  greyoutReserve: number;
+}
+
+/** Parametry zachowania zestrzelonego wraku (zniszczenie w powietrzu). */
+export interface WreckConfig {
+  /**
+   * Bazowe przeciążenie wraku bez inputu pilota [G]. MUSI być < 1, inaczej wrak
+   * utrzymywałby lot poziomy (szybowanie) zamiast opadać. 0 = brak siły nośnej
+   * (czysty opad balistyczny + opór), ~0.35 = łagodny, narastający opad.
+   */
+  baseLoadG: number;
+  /**
+   * Sterowność wysokości spadającego wraku [0..1]: ułamek, o jaki ster wysokości
+   * gracza odchyla żądane n od baseLoadG. 0 = ster wysokości martwy (gracz nie
+   * wyprowadza), 1 = pełny. Lotki działają zawsze w pełni (niezależnie od tej wartości).
+   */
+  pitchAuthority: number;
 }
 
 /** Parametry uzbrojenia strzeleckiego (faza 5, docs/phases/faza-05.md). */
@@ -115,7 +152,7 @@ export interface InstructorConfig {
 
 type NumericKey = Exclude<
   keyof PlaneConfig,
-  'name' | 'rollRateCurve' | 'stall' | 'instructor' | 'armament'
+  'name' | 'rollRateCurve' | 'stall' | 'gTolerance' | 'instructor' | 'armament' | 'wreck'
 >;
 
 /** Pola skalarne uzbrojenia (bez `muzzles`, walidowanego osobno). */
@@ -143,6 +180,7 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   sideslipMaxAccelG: [0.05, 2],
   hpPool: [1, 100_000],
   hitRadiusM: [1, 50],
+  collisionRadiusM: [0.5, 30],
 };
 
 const ARMAMENT_RANGES: Record<ArmamentNumericKey, readonly [min: number, max: number]> = {
@@ -164,6 +202,18 @@ const STALL_RANGES: Record<keyof StallConfig, readonly [min: number, max: number
   wingDropRateDegS: [1, 180],
 };
 
+const G_TOLERANCE_RANGES: Record<keyof GToleranceConfig, readonly [min: number, max: number]> = {
+  onsetG: [1, 12],
+  toleranceGS: [0.5, 60],
+  recoveryRatePerS: [0.01, 5],
+  greyoutReserve: [0, 1],
+};
+
+const WRECK_RANGES: Record<keyof WreckConfig, readonly [min: number, max: number]> = {
+  baseLoadG: [0, 1],
+  pitchAuthority: [0, 1],
+};
+
 const INSTRUCTOR_RANGES: Record<keyof InstructorConfig, readonly [min: number, max: number]> = {
   aggressivenessRoll: [0.1, 30],
   aggressivenessPitch: [0.1, 30],
@@ -178,8 +228,10 @@ const KNOWN_KEYS = new Set<string>([
   'name',
   'rollRateCurve',
   'stall',
+  'gTolerance',
   'instructor',
   'armament',
+  'wreck',
   ...Object.keys(NUMERIC_RANGES),
 ]);
 
@@ -205,7 +257,7 @@ function checkNumericFields(
 
 function checkSection(
   obj: Record<string, unknown>,
-  key: 'stall' | 'instructor',
+  key: 'stall' | 'gTolerance' | 'instructor' | 'wreck',
   ranges: Record<string, readonly [number, number]>,
   problems: string[],
 ): void {
@@ -303,7 +355,9 @@ export function loadPlaneConfig(raw: unknown, source = 'konfiguracja samolotu'):
   checkNumericFields(obj, NUMERIC_RANGES, '', problems);
   checkRollRateCurve(obj, problems);
   checkSection(obj, 'stall', STALL_RANGES, problems);
+  checkSection(obj, 'gTolerance', G_TOLERANCE_RANGES, problems);
   checkSection(obj, 'instructor', INSTRUCTOR_RANGES, problems);
+  checkSection(obj, 'wreck', WRECK_RANGES, problems);
   checkArmament(obj, problems);
 
   const nMin = obj['nMinG'];

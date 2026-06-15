@@ -137,6 +137,28 @@ Każda siła ma własną funkcję `(state, plane) => Vector3` i własną strzał
   trzymanie ciągnięcia utrzymuje przeciągnięcie (mush), bo n siedzi na n_avail.
 - Pełny korkociąg: backlog (faza 17 ma uproszczony po utracie skrzydła).
 
+### 6.6 Tolerancja przeciążenia pilota (G-LOC, decyzja 2026-06-14)
+- Problem: koperta (6.1) ogranicza n tylko strukturalnie (`n_max`) i aerodynamicznie
+  (`n_avail`). Bez limitu fizjologicznego dało się TRZYMAĆ `n_max` (8 G) dowolnie długo —
+  „max zawracanie" (klawisz S + przechylenie) było za mocne, a utrata energii (poprawna!)
+  go nie dyscyplinowała (weryfikacja: trzymane 8 G dawało 360° w ~9 s).
+- Model (`physics/g-load.ts`, maszyna obok `StallMachine`): pilot Bitwy o Anglię bez
+  kombinezonu szarzeje ~4 G, a UTRZYMYWANIE wysokiego G prowadzi do utraty wzroku.
+  Trzymamy malejącą **rezerwę** [0..1]:
+  - SUFIT dodatniego n = `onsetG + reserve·(n_max − onsetG)` — świeża rezerwa → `n_max`
+    (zakręt INSTANTANEOUS zachowany), pusta → `onsetG`.
+  - Rezerwa ZAWSZE częściowo wraca (`recoveryRatePerS`), a nadwyżka G ją zżera
+    (`(n − onsetG)/toleranceGS`). Równowaga przy trzymanym wysokim G to TRWAŁE CZĘŚCIOWE
+    szarzenie (sufit ≈ `onsetG + recoveryRatePerS·toleranceGS`, dla Spitfire ~5 G),
+    NIE pełna ślepota — uniknięty artefakt „czerni na zawsze" przy suficie zatrzaśniętym
+    na `onsetG`.
+  - `blackoutFactor` 0..1 (narasta poniżej `greyoutReserve`) steruje wygaszaniem obrazu
+    w kliencie (tunel, krycie capowane < 1).
+- Limit dotyczy TYLKO dodatniego G (ciągnięcie = zakręt); ujemne G (redout przy pchaniu)
+  — backlog. Wpięty w `pilotStep` PO kopercie, PRZED siłą nośną; działa na gracza I boty.
+- Złote testy osiągów (zakręt ustalony ~2.7 G, wznoszenie, V_max) są pod `onsetG` →
+  nietknięte. Regresja: `playerMaxTurnTest` (chwilowe ~8 G, utrzymywane ≤ ~5 G + greyout).
+
 ## 7. Instruktor (mouse-aim, wzorzec War Thunder)
 
 Warstwa między inputem a kopertą. Gracz myszą wskazuje punkt na sferze wokół samolotu;
@@ -180,6 +202,7 @@ instruktor zamienia to na `n_demand`, `rollRate_demand`, `yaw_demand`:
 | `sideslipDampingS` | wygaszanie ślizgu | 0.5 |
 | `sideslipMaxAccelG` | limit siły bocznej kadłuba | 0.3 |
 | `stall.*` | buffet/lotki/wing drop (bez wymuszania nosa) | rozdz. 6.5 |
+| `gTolerance.*` | tolerancja przeciążenia pilota / G-LOC (onsetG 4, toleranceGS 6, recoveryRatePerS 0.17, greyoutReserve 0.7 → sufit ~5 G) | rozdz. 6.6 |
 | `instructor.*` | parametry mouse-aim (aggressivenessPitch w G/rad!) | rozdz. 7 |
 
 Wartości startowe = punkt wyjścia do strojenia, nie dogmat. **Żadna z tych liczb nie może

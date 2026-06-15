@@ -26,6 +26,7 @@
   "sideslipMaxAccelG": 0.3,
   "hpPool": 120,
   "hitRadiusM": 6,
+  "collisionRadiusM": 3,
   "armament": {
     "muzzleVelocityMs": 744,
     "convergenceM": 200,
@@ -53,6 +54,12 @@
     "wingDropDelayS": 1.0,
     "wingDropRateDegS": 40
   },
+  "gTolerance": {
+    "onsetG": 4.0,
+    "toleranceGS": 6.0,
+    "recoveryRatePerS": 0.17,
+    "greyoutReserve": 0.7
+  },
   "instructor": {
     "aggressivenessRoll": 7.0,
     "aggressivenessPitch": 5.0,
@@ -61,5 +68,9 @@
     "smoothingTauS": 0.08,
     "yawGain": 0.5,
     "maxYawRateDegS": 10
+  },
+  "wreck": {
+    "baseLoadG": 0.35,
+    "pitchAuthority": 0.3
   }
 }

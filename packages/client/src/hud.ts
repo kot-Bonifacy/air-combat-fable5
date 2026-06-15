@@ -7,8 +7,10 @@ export interface HudData {
   throttle01: number;
   nG: number;
   nAvailG: number;
-  alphaDeg: number;
-  energyMj: number;
+  /** Sufit dodatniego G od tolerancji pilota (G-LOC); < nAvailG, gdy zmęczenie G gryzie. */
+  gLimitG: number;
+  /** Intensywność zaciemnienia 0..1 (greyout) — do ostrzeżenia tekstowego. */
+  blackoutFactor: number;
   stallPhase: StallPhase;
   buffetIntensity: number;
   /** Przechylenie [rad], + w prawo (do sztucznego horyzontu). */
@@ -44,17 +46,15 @@ export class Hud {
   }
 
   update(data: HudData): void {
-    const stallText =
-      data.stallPhase === 'stalled'
-        ? '   *** PRZECIĄGNIĘCIE — ODDAJ DRĄŻEK ***'
-        : data.stallPhase === 'buffet'
-          ? '   ! BUFFET !'
-          : '';
+    // sufit od pilota (G-LOC) pokazujemy tylko, gdy realnie ogranicza poniżej fizyki
+    const gLocText =
+      data.gLimitG < data.nAvailG - 0.1 && data.blackoutFactor > 0.02
+        ? `   G-LOC ${data.gLimitG.toFixed(1)} G`
+        : '';
     this.textEl.textContent = [
       `IAS   ${data.iasKmh.toFixed(0).padStart(4)} km/h   TAS ${data.tasKmh.toFixed(0).padStart(4)} km/h`,
       `alt   ${data.altM.toFixed(0).padStart(5)} m     gaz ${(data.throttle01 * 100).toFixed(0).padStart(3)}%`,
-      `n     ${data.nG.toFixed(1).padStart(5)} G     (dostępne ${data.nAvailG.toFixed(1)} G)`,
-      `α     ${data.alphaDeg.toFixed(1).padStart(5)}°     E ${data.energyMj.toFixed(1)} MJ${stallText}`,
+      `n     ${data.nG.toFixed(1).padStart(5)} G${gLocText}`,
       `ster  ${data.controlMode}`,
       `amun. ${String(data.ammo).padStart(4)} / ${String(data.ammoMax)}${
         data.ammo === 0
@@ -75,6 +75,11 @@ export class Hud {
       this.warningEl.textContent = 'BUFFET';
       this.warningEl.className = 'buffet';
       this.warningEl.style.opacity = String(0.35 + 0.65 * data.buffetIntensity);
+    } else if (data.blackoutFactor > 0.05) {
+      // szarzenie od przeciążenia (G-LOC) — stall ma priorytet (inny reżim prędkości)
+      this.warningEl.textContent = 'SZARZENIE — ODPUŚĆ G';
+      this.warningEl.className = 'buffet';
+      this.warningEl.style.opacity = String(0.35 + 0.6 * data.blackoutFactor);
     } else {
       this.warningEl.textContent = '';
       this.warningEl.style.opacity = '0';

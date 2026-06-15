@@ -64,13 +64,19 @@ function clamp(x: number, lo: number, hi: number): number {
   return x < lo ? lo : x > hi ? hi : x;
 }
 
-/** Wybiera najbliższy żywy cel z listy kandydatów (wołający wyklucza siebie/sojuszników). */
+/**
+ * Wybiera najbliższy żywy cel z listy kandydatów (wołający wyklucza siebie/sojuszników).
+ * `maxRangeM` ogranicza wykrycie do zasięgu „spotting" (SPOT_RANGE_M): cel dalej jest
+ * dla bota niewidoczny — twardy próg bez histerezy, więc za granicą bot wraca do patrolu
+ * (symetrycznie do markera/beacona gracza). Domyślnie bez limitu (testy, zgodność wstecz).
+ */
 export function selectNearestTarget(
   selfPos: Vector3,
   candidates: readonly PlaneState[],
+  maxRangeM = Infinity,
 ): PlaneState | null {
   let best: PlaneState | null = null;
-  let bestD = Infinity;
+  let bestD = maxRangeM * maxRangeM; // start = kwadrat zasięgu → cele poza nim od razu odpadają
   for (const c of candidates) {
     if (c.life !== 'alive') continue;
     const d = toroidalDistanceSqM(selfPos, c.position); // torus: cel za szwem nie „znika"

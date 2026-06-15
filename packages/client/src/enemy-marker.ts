@@ -22,6 +22,8 @@ export class EnemyMarker {
   private readonly arrow: HTMLElement;
   private readonly label: HTMLElement;
   private foe = true;
+  /** Dowolny kolor (FFA: unikatowy per frakcja); null = paleta foe/friend (drużynowy). */
+  private colorCss: string | null = null;
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement('div');
@@ -37,16 +39,29 @@ export class EnemyMarker {
 
   /** Przełącza kolor markera: foe=true wróg (czerwony), false sojusznik (zielony). */
   setFoe(foe: boolean): void {
-    if (foe === this.foe) return;
+    if (foe === this.foe && this.colorCss === null) return;
     this.foe = foe;
+    this.colorCss = null; // wróć do palety foe/friend (slot mógł być wcześniej w FFA)
     this.applyPalette();
+  }
+
+  /** Ustawia unikatowy kolor markera (FFA: per frakcja). Nadpisuje paletę foe/friend. */
+  setColorHex(hex: number): void {
+    const css = `#${hex.toString(16).padStart(6, '0')}`;
+    if (css === this.colorCss) return;
+    this.colorCss = css;
+    this.applyColor(css, css);
   }
 
   private applyPalette(): void {
     const p = this.foe ? FOE_PALETTE : FRIEND_PALETTE;
-    this.arrow.style.cssText = `font:18px/1 monospace;color:${p.arrow};text-shadow:0 0 6px rgba(0,0,0,0.7);`;
+    this.applyColor(p.arrow, p.label);
+  }
+
+  private applyColor(arrow: string, label: string): void {
+    this.arrow.style.cssText = `font:18px/1 monospace;color:${arrow};text-shadow:0 0 6px rgba(0,0,0,0.7);`;
     this.label.style.cssText =
-      `font:bold 12px/1.2 monospace;color:${p.label};text-shadow:0 0 4px rgba(0,0,0,0.9);`;
+      `font:bold 12px/1.2 monospace;color:${label};text-shadow:0 0 4px rgba(0,0,0,0.9);`;
   }
 
   hide(): void {

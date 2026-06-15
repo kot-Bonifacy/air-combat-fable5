@@ -29,6 +29,7 @@ function validRaw(): Record<string, unknown> {
     sideslipMaxAccelG: 0.3,
     hpPool: 120,
     hitRadiusM: 6,
+    collisionRadiusM: 3,
     armament: {
       muzzleVelocityMs: 744,
       convergenceM: 200,
@@ -50,6 +51,12 @@ function validRaw(): Record<string, unknown> {
       wingDropDelayS: 1.0,
       wingDropRateDegS: 40,
     },
+    gTolerance: {
+      onsetG: 4,
+      toleranceGS: 6,
+      recoveryRatePerS: 0.35,
+      greyoutReserve: 0.6,
+    },
     instructor: {
       aggressivenessRoll: 5.0,
       aggressivenessPitch: 2.5,
@@ -58,6 +65,10 @@ function validRaw(): Record<string, unknown> {
       smoothingTauS: 0.12,
       yawGain: 0.5,
       maxYawRateDegS: 8,
+    },
+    wreck: {
+      baseLoadG: 0.35,
+      pitchAuthority: 0.25,
     },
   };
 }

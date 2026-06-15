@@ -37,6 +37,25 @@ describe('cykl życia: kolizja → dead → respawnReady (faza 4)', () => {
     expect(state.life).toBe('dead');
   });
 
+  it('wrak (dying) nad terenem → none, nadal spada, lifeTimerS rośnie', () => {
+    const state = createPlaneState();
+    state.life = 'dying';
+    state.position.set(0, terrain.heightAt(0, 0) + 200, 0);
+    expect(updateLifecycle(state, terrain, FIXED_DT_S)).toBe('none');
+    expect(state.life).toBe('dying');
+    expect(state.lifeTimerS).toBeCloseTo(FIXED_DT_S, 10);
+  });
+
+  it('wrak (dying) dotyka ziemi → wreckImpact i przechodzi w dead (timer reset)', () => {
+    const state = createPlaneState();
+    state.life = 'dying';
+    state.lifeTimerS = 5; // spadał już chwilę
+    state.position.set(8000, CRASH_MARGIN_M - 0.5, 8000);
+    expect(updateLifecycle(state, terrain, FIXED_DT_S)).toBe('wreckImpact');
+    expect(state.life).toBe('dead');
+    expect(state.lifeTimerS).toBe(0);
+  });
+
   it('po RESPAWN_DELAY_S w dead → respawnReady i czeka w respawning', () => {
     const state = createPlaneState();
     state.position.set(8000, 0, 8000);

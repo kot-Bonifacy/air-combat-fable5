@@ -506,6 +506,93 @@ export function playerImmelmannTest(
   };
 }
 
+export interface PlayerMaxTurnResult {
+  /** Najwyższe chwilowe n w pierwszych ~1.5 s (zakręt instantaneous) [G]. */
+  peakNG: number;
+  /** Średnie n z ostatniej sekundy zakrętu — sufit po zmęczeniu G [G]. */
+  settledNG: number;
+  /** Najniższa rezerwa fizjologiczna w trakcie [0..1]. */
+  minReserve: number;
+  /** Najwyższe zaciemnienie obrazu [0..1]. */
+  peakBlackout: number;
+  /** Czas pełnego zakrętu 360° [s]. */
+  turnTimeS: number;
+  /** Spadek IAS od początku do końca okrążenia [km/h] (może być < 0 przy zniżaniu). */
+  iasDropKmh: number;
+}
+
+/**
+ * „Max zawracanie" gracza: rozpędzony lot → przechył lotkami do bankDeg →
+ * wyśrodkowanie lotek i TRZYMANIE pełnego ciągnięcia (klawisz S = nMaxG) aż do
+ * 360°. Regresja decyzji o G-LOC (2026-06-14): chwilowe G ma sięgać ~nMaxG,
+ * ale UTRZYMYWANE — opaść poniżej (sufit od rezerwy pilota), z narastającym
+ * zaciemnieniem. Bez limitu trzymanie S dawało stałe nMaxG i zbyt mocny zakręt.
+ */
+export function playerMaxTurnTest(
+  plane: PlaneConfig,
+  entryIasKmh = 450,
+  bankTargetDeg = 80,
+  altitudeM = 1000,
+): PlayerMaxTurnResult {
+  const tasMs = iasToTasMs(entryIasKmh / MS_TO_KMH, altitudeM);
+  const pilot = new VirtualPilot(plane, 23);
+  pilot.setLevelFlight(altitudeM, tasMs, pilot.trimThrottleForLevel(altitudeM, tasMs));
+  for (let i = 0; i < PHYSICS_HZ; i++) pilot.tick(FIXED_DT_S, 'playerMaxTurnTest/ustalenie');
+  pilot.state.throttle = 1;
+
+  const state = pilot.state;
+  const bankRadOf = (): number =>
+    Math.acos(Math.min(1, Math.max(-1, getUp(state.orientation, scratchUp).y)));
+
+  // przechył lotkami do zadanego banku
+  pilot.deflections.rollRight = 1;
+  let guard = 10 * PHYSICS_HZ;
+  while (bankRadOf() < bankTargetDeg * DEG_TO_RAD && guard-- > 0) {
+    pilot.tick(FIXED_DT_S, 'playerMaxTurnTest/przechył');
+  }
+  pilot.deflections.rollRight = 0;
+  pilot.deflections.pitchUp = 1; // trzymaj S — pełne ciągnięcie
+
+  const ias0 = state.iasMs;
+  let accumRad = 0;
+  let prevHeading = headingRad(state.velocity);
+  let ticks = 0;
+  let peakNG = 0;
+  let minReserve = 1;
+  let peakBlackout = 0;
+  let settledSumNG = 0;
+  let settledTicks = 0;
+  const peakWindowTicks = Math.round(1.5 * PHYSICS_HZ);
+
+  guard = 40 * PHYSICS_HZ;
+  while (Math.abs(accumRad) < 2 * Math.PI && guard-- > 0) {
+    const tick = pilot.tick(FIXED_DT_S, 'playerMaxTurnTest/ciągnięcie');
+    const h = headingRad(state.velocity);
+    accumRad += wrapPiRad(h - prevHeading);
+    prevHeading = h;
+    ticks++;
+    if (ticks <= peakWindowTicks) peakNG = Math.max(peakNG, state.loadFactor);
+    minReserve = Math.min(minReserve, tick.gLoad.reserve);
+    peakBlackout = Math.max(peakBlackout, tick.gLoad.blackoutFactor);
+  }
+  // ostatnia sekunda = sufit ustalony
+  pilot.deflections.pitchUp = 1;
+  for (let i = 0; i < PHYSICS_HZ; i++) {
+    pilot.tick(FIXED_DT_S, 'playerMaxTurnTest/sufit');
+    settledSumNG += state.loadFactor;
+    settledTicks++;
+  }
+
+  return {
+    peakNG,
+    settledNG: settledSumNG / settledTicks,
+    minReserve,
+    peakBlackout,
+    turnTimeS: ticks * FIXED_DT_S,
+    iasDropKmh: (ias0 - state.iasMs) * MS_TO_KMH,
+  };
+}
+
 export interface PlayerStallRecoveryResult {
   /** Czy szarpnięcie wywołało pełne przeciągnięcie. */
   sawStall: boolean;

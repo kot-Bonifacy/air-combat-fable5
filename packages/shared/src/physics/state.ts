@@ -11,8 +11,16 @@ export interface AngularRates {
   yaw: number;
 }
 
-/** Cykl życia (faza 4): respawning = czeka, aż autorytet ustawi spawn i 'alive'. */
-export type LifePhase = 'alive' | 'dead' | 'respawning';
+/**
+ * Cykl życia samolotu:
+ * - alive      — leci, fizyka i walka pełne;
+ * - dying       — zestrzelony w POWIETRZU: spadający wrak (silnik martwy, ster
+ *                 ograniczony); fizyka biegnie, ale maszyna nie liczy się już do
+ *                 walki (nie celują w nią, nie zderza się, nie strzela);
+ * - dead        — rozbity o ziemię (też po uderzeniu wraku): fizyka stoi;
+ * - respawning  — czeka, aż autorytet ustawi spawn i 'alive' (faza 4).
+ */
+export type LifePhase = 'alive' | 'dying' | 'dead' | 'respawning';
 
 /** Stan symulowanego obiektu (w fazie 1: sześcian testowy; od fazy 2: samolot). */
 export interface PlaneState {

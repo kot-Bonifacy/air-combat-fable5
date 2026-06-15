@@ -18,15 +18,22 @@
       }
       #hud {
         position: fixed;
-        bottom: 8px;
-        left: 8px;
-        font: 13px/1.5 monospace;
-        color: #cde;
-        background: rgba(0, 0, 0, 0.55);
-        padding: 6px 10px;
-        border-radius: 4px;
+        top: 50%;
+        left: 14px;
+        transform: translateY(-50%);
+        font: 600 22px/1.35 monospace;
+        color: #eaf3ff;
+        background: transparent;
+        padding: 0;
         white-space: pre;
         pointer-events: none;
+        /* tło w pełni przezroczyste → obrys + cień, by tekst był czytelny nad jasnym niebem */
+        text-shadow:
+          -1px -1px 0 #000,
+          1px -1px 0 #000,
+          -1px 1px 0 #000,
+          1px 1px 0 #000,
+          0 0 6px rgba(0, 0, 0, 0.9);
       }
       #net-status {
         position: fixed;

@@ -17,6 +17,162 @@ export type GameModeChoice =
   | { mode: 'ffa'; difficulty: DifficultyLevel; botCount: number }
   | { mode: 'team'; difficulty: DifficultyLevel; perTeam: number };
 
+/** Wiersz pilota w tabeli wyników (gotowy do renderu — kolor i etykiety policzone w kliencie). */
+export interface ResultPilotRow {
+  rank: number;
+  name: string;
+  /** Kolor CSS kropki = kolor drużyny (gracz złoty, sojusznik zielony, wróg czerwony). */
+  color: string;
+  kills: number;
+  /** Asysty: trafienia wrogów, którzy zginęli później. */
+  assists: number;
+  /** Czas w strefie „m:ss" albo „—". */
+  zoneLabel: string;
+  points: number;
+  isPlayer: boolean;
+}
+
+/** Wiersz drużyny (tylko tryb drużynowy — strefa policzona raz). */
+export interface ResultTeamRow {
+  name: string;
+  color: string;
+  kills: number;
+  assists: number;
+  zoneLabel: string;
+  points: number;
+  isPlayerTeam: boolean;
+}
+
+/** Komplet danych ekranu wyniku przekazywany z gry do menu. */
+export interface ResultData {
+  playerWon: boolean;
+  /** Powód zakończenia, np. „przejąłeś strefę". */
+  headline: string;
+  modeLabel: string;
+  difficulty: string;
+  pilots: ResultPilotRow[];
+  /** Pusta w FFA; w drużynowym 2 wiersze. */
+  teams: ResultTeamRow[];
+}
+
+/** Komórka tabeli wyników o zadanym wyrównaniu. */
+function resultCell(text: string, align: 'left' | 'center' | 'right'): HTMLTableCellElement {
+  const c = document.createElement('td');
+  c.textContent = text;
+  c.style.cssText = `text-align:${align};padding:5px 14px;white-space:nowrap;`;
+  return c;
+}
+
+/** Wiersz nagłówka tabeli z par (tekst, wyrównanie). */
+function resultHeader(cols: readonly (readonly [string, 'left' | 'center' | 'right'])[]): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+  for (const [txt, align] of cols) {
+    const th = document.createElement('th');
+    th.textContent = txt;
+    th.style.cssText =
+      `text-align:${align};padding:5px 14px;color:#89a;font-weight:600;` +
+      'border-bottom:1px solid #2c4a66;';
+    tr.append(th);
+  }
+  return tr;
+}
+
+/** Komórka „nazwa" z kropką w kolorze drużyny + tekstem. */
+function nameCell(name: string, color: string, emphasize: boolean): HTMLTableCellElement {
+  const td = document.createElement('td');
+  td.style.cssText =
+    'text-align:left;padding:5px 14px;white-space:nowrap;' + (emphasize ? 'font-weight:700;color:#fff;' : '');
+  const dot = document.createElement('span');
+  dot.style.cssText =
+    'display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:8px;' +
+    `background:${color};box-shadow:0 0 6px ${color};`;
+  td.append(dot, document.createTextNode(name));
+  return td;
+}
+
+/** Komórka „punkty" — pogrubiona, złota. */
+function pointsCell(points: number): HTMLTableCellElement {
+  const td = resultCell(String(points), 'right');
+  td.style.cssText += 'font-weight:700;color:#ffd24a;';
+  return td;
+}
+
+/** Tytuł sekcji wyniku drużyn (wspólny: ekran końcowy i żywa nakładka). */
+export function teamTableTitle(): HTMLElement {
+  const el = document.createElement('div');
+  el.textContent = 'WYNIK DRUŻYN';
+  el.style.cssText = 'font:600 13px monospace;color:#89a;letter-spacing:1px;margin:18px 0 2px;';
+  return el;
+}
+
+/** Tabela pilotów: #, pilot (kropka drużyny), zestrzelenia, asysty, strefa, punkty. */
+export function renderPilotScoreTable(rows: readonly ResultPilotRow[]): HTMLElement {
+  const table = document.createElement('table');
+  table.style.cssText = 'border-collapse:collapse;min-width:30em;font:14px monospace;color:#cde;';
+  table.append(
+    resultHeader([
+      ['#', 'center'],
+      ['Pilot', 'left'],
+      ['Zestrz.', 'center'],
+      ['Asysty', 'center'],
+      ['Strefa', 'center'],
+      ['Punkty', 'right'],
+    ]),
+  );
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    if (r.isPlayer) tr.style.background = 'rgba(255,210,74,0.10)';
+    const rankTd = resultCell(String(r.rank), 'center');
+    rankTd.style.color = '#9ab';
+    const assistTd = resultCell(String(r.assists), 'center');
+    assistTd.style.color = '#9ab';
+    const zoneTd = resultCell(r.zoneLabel, 'center');
+    zoneTd.style.color = '#9ab';
+    tr.append(
+      rankTd,
+      nameCell(r.name, r.color, r.isPlayer),
+      resultCell(String(r.kills), 'center'),
+      assistTd,
+      zoneTd,
+      pointsCell(r.points),
+    );
+    table.append(tr);
+  }
+  return table;
+}
+
+/** Tabela drużyn: drużyna (kropka), zestrzelenia, asysty, strefa, punkty (strefa liczona raz). */
+export function renderTeamScoreTable(rows: readonly ResultTeamRow[]): HTMLElement {
+  const table = document.createElement('table');
+  table.style.cssText = 'border-collapse:collapse;min-width:30em;font:14px monospace;color:#cde;';
+  table.append(
+    resultHeader([
+      ['Drużyna', 'left'],
+      ['Zestrz.', 'center'],
+      ['Asysty', 'center'],
+      ['Strefa', 'center'],
+      ['Punkty', 'right'],
+    ]),
+  );
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    if (r.isPlayerTeam) tr.style.background = 'rgba(255,210,74,0.08)';
+    const assistTd = resultCell(String(r.assists), 'center');
+    assistTd.style.color = '#9ab';
+    const zoneTd = resultCell(r.zoneLabel, 'center');
+    zoneTd.style.color = '#9ab';
+    tr.append(
+      nameCell(r.name, r.color, r.isPlayerTeam),
+      resultCell(String(r.kills), 'center'),
+      assistTd,
+      zoneTd,
+      pointsCell(r.points),
+    );
+    table.append(tr);
+  }
+  return table;
+}
+
 const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   latwy: 'Łatwy',
   normalny: 'Normalny',
@@ -87,6 +243,7 @@ export class GameMenu {
   showStart(): void {
     this.root.style.display = 'flex';
     this.panel.replaceChildren();
+    this.panel.style.background = 'rgba(8,16,26,0.92)'; // przywróć po przezroczystym ekranie wyniku
 
     const title = document.createElement('div');
     title.textContent = 'AIR COMBAT — Bitwa o Anglię';
@@ -188,26 +345,36 @@ export class GameMenu {
     }
   }
 
-  /** Ekran wyniku meczu: werdykt + wiersz podsumowania. */
-  showResult(playerWon: boolean, summary: string): void {
+  /** Ekran wyniku meczu: werdykt + półprzezroczysta tabela (per pilot, plus drużyny). */
+  showResult(data: ResultData): void {
     this.root.style.display = 'flex';
     this.panel.replaceChildren();
+    // bardziej przezroczysty panel: tabela wyników „nakłada się" na zastygłą scenę
+    this.panel.style.background = 'rgba(8,16,26,0.80)';
 
     const verdict = document.createElement('div');
-    verdict.textContent = playerWon ? 'ZWYCIĘSTWO' : 'PORAŻKA';
+    verdict.textContent = data.playerWon ? 'ZWYCIĘSTWO' : 'PORAŻKA';
     verdict.style.cssText =
-      `font:700 34px/1.2 monospace;margin-bottom:10px;color:${playerWon ? '#7ef08a' : '#ff6a4a'};` +
-      `text-shadow:0 0 14px ${playerWon ? 'rgba(120,255,140,0.6)' : 'rgba(255,90,60,0.6)'};`;
-    const score = document.createElement('div');
-    score.textContent = summary;
-    score.style.cssText = 'font:600 16px monospace;color:#cde;margin-bottom:24px;';
-    this.panel.append(verdict, score);
+      `font:700 34px/1.2 monospace;margin-bottom:4px;color:${data.playerWon ? '#7ef08a' : '#ff6a4a'};` +
+      `text-shadow:0 0 14px ${data.playerWon ? 'rgba(120,255,140,0.6)' : 'rgba(255,90,60,0.6)'};`;
+
+    const sub = document.createElement('div');
+    sub.textContent = `${data.modeLabel}   •   ${data.headline}   •   [${data.difficulty}]`;
+    sub.style.cssText = 'font:13px monospace;color:#9ab;margin-bottom:18px;';
+    this.panel.append(verdict, sub);
+
+    this.panel.append(renderPilotScoreTable(data.pilots));
+
+    if (data.teams.length > 0) {
+      this.panel.append(teamTableTitle(), renderTeamScoreTable(data.teams));
+    }
 
     const back = document.createElement('button');
     back.textContent = 'Menu';
     styleButton(back);
-    back.style.fontSize = '18px';
+    back.style.cssText += 'font-size:18px;margin-top:22px;';
     back.addEventListener('click', () => this.showStart());
     this.panel.append(back);
   }
+
 }

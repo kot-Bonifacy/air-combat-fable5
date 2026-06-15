@@ -71,6 +71,18 @@ export const MRAD_TO_RAD = 1e-3;
 /** Liczba zestrzeleń kończąca pojedynek 1v1 (punkty do N, z respawnami). */
 export const MATCH_SCORE_TO_WIN = 3;
 
+// --- wykrywanie wrogów / „spotting" (faza 7) ---
+
+/**
+ * Zasięg wizualnego wykrycia wroga [m]. Bliżej niż to: gracz dostaje marker HUD,
+ * a bot pozyskuje cel. Dalej widać WYŁĄCZNIE goły mesh
+ * (mała sylwetka na horyzoncie) — gracz i bot muszą najpierw wypatrzyć przeciwnika,
+ * zamiast lecieć na gotowy znacznik od początku meczu. Próg twardy (bez histerezy):
+ * za granicą bot natychmiast gubi cel. Jedna reguła dla gracza i botów (mgła zaczyna
+ * się dopiero od 2,5 km, więc do 2 km cel jest w pełni czysty — patrz world.ts).
+ */
+export const SPOT_RANGE_M = 2_000;
+
 // --- tryby multi (faza 7: FFA i drużynowy) ---
 
 /**
@@ -94,7 +106,7 @@ export const ZONE_CENTER_X_M = 0;
 export const ZONE_CENTER_Z_M = 0;
 
 /** Promień strefy kontroli [m] — POZIOMY walec bez limitu wysokości (liczy się nad górą). */
-export const ZONE_RADIUS_M = 2_000;
+export const ZONE_RADIUS_M = 3_000;
 
 /**
  * Sekundy WYŁĄCZNEJ kontroli (jedna frakcja sama w strefie) potrzebne do przejęcia
@@ -109,3 +121,22 @@ export const ZONE_CAPTURE_SECONDS = 180;
  * „patrolu" botów: bez pilnego celu ciążą ku temu punktowi (kontestują strefę).
  */
 export const ZONE_LOITER_ALT_M = 2_000;
+
+// --- punktacja tabeli wyników (faza 7) ---
+
+/** Punkty za zestrzelenie WROGA w tabeli końcowej. Teamkill/samobójstwo = 0 pkt. */
+export const KILL_POINTS = 100;
+
+/**
+ * Punkty za ASYSTĘ: wcześniejsze trafienie WROGA, który ginie później (dobity przez
+ * innego, kolizja albo rozbicie o ziemię). Zabójca dostaje zestrzelenie, nie asystę;
+ * trafienie sojusznika nie liczy się (jak teamkill). Połowa wartości zestrzelenia.
+ */
+export const ASSIST_POINTS = 50;
+
+/**
+ * Punkty za każdą sekundę WYŁĄCZNEJ kontroli strefy (akumulowane per frakcja).
+ * Pełne przejęcie (ZONE_CAPTURE_SECONDS = 180 s) = 180 pkt ≈ 1,8 zestrzelenia —
+ * walka i strefa mniej więcej równoważne (decyzja briefingu 2026-06-14).
+ */
+export const ZONE_POINTS_PER_SECOND = 1;

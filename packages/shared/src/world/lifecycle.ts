@@ -7,7 +7,11 @@ import type { Terrain } from './terrain';
 // startu i life='alive'. Maszyna tylko sygnalizuje — NIE teleportuje samolotu,
 // bo o miejscu respawnu decyduje autorytet.
 
-export type LifeEvent = 'none' | 'crashed' | 'respawnReady';
+// 'wreckImpact' = spadający wrak (life 'dying', po zestrzeleniu w powietrzu) dotknął
+// powierzchni → przechodzi w 'dead'. Inne niż 'crashed' (żywy samolot rozbija się
+// o ziemię), bo zliczenie zabójstwa/meczu nastąpiło już w chwili zestrzelenia — przy
+// uderzeniu wraku robimy TYLKO duży wybuch, bez ponownej buchalterii.
+export type LifeEvent = 'none' | 'crashed' | 'wreckImpact' | 'respawnReady';
 
 /** Wysokość powierzchni pod punktem (x,z) [m]: teren albo poziom morza. */
 export function surfaceHeightM(terrain: Terrain, xM: number, zM: number): number {
@@ -51,6 +55,17 @@ export function updateLifecycle(state: PlaneState, terrain: Terrain, dtS: number
       state.life = 'dead';
       state.lifeTimerS = 0;
       return 'crashed';
+    }
+    return 'none';
+  }
+  if (state.life === 'dying') {
+    // Wrak spada z włączoną fizyką (caller liczy stepWreck), aż dotknie powierzchni.
+    state.lifeTimerS += dtS; // czas spadania (diagnostyka/UI); resetowany przy uderzeniu
+    const { x, y, z } = state.position;
+    if (y <= surfaceHeightM(terrain, x, z) + CRASH_MARGIN_M) {
+      state.life = 'dead';
+      state.lifeTimerS = 0;
+      return 'wreckImpact';
     }
     return 'none';
   }

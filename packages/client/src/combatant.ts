@@ -1,4 +1,4 @@
-import { Group, Mesh, MeshBasicMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
+import { Group, Quaternion, Vector3 } from 'three';
 import {
   Bot,
   createFireControl,
@@ -17,22 +17,17 @@ import { createPlaneMesh, type PlaneModel } from './plane-mesh';
 
 // Jeden uczestnik walki (gracz albo bot): fizyka + walka + cykl życia + wizual
 // w jednym obiekcie (faza 7: tryby multi). Slot alokowany RAZ przy starcie
-// (mesh/model glTF, beacon, bufory) i przestawiany `configure()` na początku
+// (mesh/model glTF, bufory) i przestawiany `configure()` na początku
 // meczu — zmiana trybu/liczby botów nie reparsuje modelu ani nie wycieka meshami
 // (wzorzec „alokuj raz", jak pojedynczy enemyMesh w fazie 6).
 
-/** Ukryty beacon (gracz nie potrzebuje znacznika nad własnym samolotem). */
-export const BEACON_HIDDEN = -1;
-
-/** Konfiguracja uczestnika na dany mecz (frakcja, życia, sterowanie, kolor). */
+/** Konfiguracja uczestnika na dany mecz (frakcja, życia, sterowanie). */
 export interface CombatantConfig {
   faction: number;
   lives: number;
   name: string;
   /** null = gracz (sterowanie z klawiatury/myszy); Bot = sojusznik/przeciwnik. */
   bot: Bot | null;
-  /** Kolor beacona nad samolotem; BEACON_HIDDEN = bez beacona (gracz). */
-  beaconColor: number;
 }
 
 export class Combatant {
@@ -44,8 +39,6 @@ export class Combatant {
   readonly rng: () => number;
   readonly model: PlaneModel;
   readonly mesh: Group;
-  private readonly beacon: Mesh;
-  private readonly beaconMat: MeshBasicMaterial;
 
   /** Stan poprzedni — źródło interpolacji renderu (przesuwany przy zawinięciu torusa). */
   readonly prevPos = new Vector3();
@@ -57,10 +50,21 @@ export class Combatant {
 
   faction = 0;
   livesLeft = 0;
+  /** Zestrzelenia WROGÓW w bieżącym meczu (kredyt; teamkill/samobójstwo nie liczą się). */
+  kills = 0;
+  /** Asysty: trafienia WROGÓW, którzy zginęli później (dobici przez innego/kolizja/ziemia). */
+  assists = 0;
+  /**
+   * Id strzelców, którzy trafili TĘ maszynę w bieżącym życiu — źródło kredytu asyst,
+   * gdy zginie (filtr „wróg, nie zabójca" rozstrzyga caller). Czyszczone przy (re)spawnie.
+   */
+  readonly damagedBy = new Set<number>();
   name = '';
   bot: Bot | null = null;
   /** false = slot nieużywany w bieżącym meczu (pomijany w pętlach). */
   active = false;
+  /** Akumulator czasu między kłębami dymu [s] — wrak ('dying') i trafiona, żywa maszyna. */
+  smokeAccumS = 0;
 
   constructor(
     /** Stabilny identyfikator = ownerId pocisków (kill credit). Gracz = 0. */
@@ -78,11 +82,6 @@ export class Combatant {
     this.rng = createRng(seed ^ 0x9e37);
     this.model = createPlaneMesh(wingspanM);
     this.mesh = this.model.object;
-    this.beaconMat = new MeshBasicMaterial({ color: 0xffffff });
-    this.beacon = new Mesh(new SphereGeometry(1.6, 12, 10), this.beaconMat);
-    this.beacon.position.set(0, 4, 0);
-    this.beacon.visible = false;
-    this.mesh.add(this.beacon);
     this.mesh.visible = false;
   }
 
@@ -90,19 +89,16 @@ export class Combatant {
     return this.sim.state;
   }
 
-  /** Ustawia slot na bieżący mecz (frakcja/życia/bot/kolor beacona). */
+  /** Ustawia slot na bieżący mecz (frakcja/życia/bot). */
   configure(cfg: CombatantConfig): void {
     this.faction = cfg.faction;
     this.livesLeft = cfg.lives;
+    this.kills = 0;
+    this.assists = 0;
+    this.damagedBy.clear();
     this.name = cfg.name;
     this.bot = cfg.bot;
     this.active = true;
-    if (cfg.beaconColor === BEACON_HIDDEN) {
-      this.beacon.visible = false;
-    } else {
-      this.beaconMat.color.setHex(cfg.beaconColor);
-      this.beacon.visible = true;
-    }
   }
 
   deactivate(): void {
@@ -123,11 +119,14 @@ export class Combatant {
    * jest spójny z graczem.
    */
   render(alpha: number, frameDtS: number): void {
-    const visible = this.active && this.state.life === 'alive';
+    const phase = this.state.life;
+    // wrak ('dying') zostaje widoczny i spada — chowamy dopiero po uderzeniu o ziemię ('dead')
+    const visible = this.active && (phase === 'alive' || phase === 'dying');
     this.mesh.visible = visible;
     if (!visible) return;
     this.mesh.position.lerpVectors(this.prevPos, this.state.position, alpha);
     this.mesh.quaternion.slerpQuaternions(this.prevOrient, this.state.orientation, alpha);
-    this.model.update(frameDtS, this.state.throttle);
+    // wrak ma martwy silnik → śmigło wytraca obroty i staje
+    this.model.update(frameDtS, this.state.throttle, phase === 'alive');
   }
 }

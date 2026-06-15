@@ -37,7 +37,12 @@ export class Explosions {
     this.scene = scene;
   }
 
-  spawn(positionM: Vector3): void {
+  /**
+   * Wybuch w punkcie. `scale` skaluje zasięg rozlotu i rozmiar cząstek:
+   * 1 = pełny wybuch (rozbicie o ziemię), ~0.35 = mały błysk/iskry w chwili
+   * zestrzelenia w powietrzu (potem samolot leci dalej jako dymiący wrak).
+   */
+  spawn(positionM: Vector3, scale = 1): void {
     const positions = new Float32Array(PARTICLE_COUNT * 3);
     const velocities = new Float32Array(PARTICLE_COUNT * 3);
     for (let i = 0; i < PARTICLE_COUNT; i++) {
@@ -49,16 +54,16 @@ export class Explosions {
       const theta = Math.random() * 2 * Math.PI;
       const cosPhi = Math.random() * 2 - 1;
       const sinPhi = Math.sqrt(1 - cosPhi * cosPhi);
-      const speed = MIN_SPEED_MS + Math.random() * (MAX_SPEED_MS - MIN_SPEED_MS);
+      const speed = (MIN_SPEED_MS + Math.random() * (MAX_SPEED_MS - MIN_SPEED_MS)) * scale;
       velocities[i3] = Math.cos(theta) * sinPhi * speed;
-      velocities[i3 + 1] = cosPhi * speed + UP_BIAS_MS;
+      velocities[i3 + 1] = cosPhi * speed + UP_BIAS_MS * scale;
       velocities[i3 + 2] = Math.sin(theta) * sinPhi * speed;
     }
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new BufferAttribute(positions, 3));
     const material = new PointsMaterial({
       color: COLOR_START.clone(),
-      size: 6,
+      size: 6 * scale,
       transparent: true,
       blending: AdditiveBlending,
       depthWrite: false,

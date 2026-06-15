@@ -4,6 +4,7 @@ import {
   playerDiveTest,
   playerImmelmannTest,
   playerLoopTest,
+  playerMaxTurnTest,
   playerRollTest,
   playerSplitSTest,
   playerStallRecoveryTest,
@@ -99,6 +100,22 @@ describe('manewry gracza — Spitfire Mk IA przez pełny pipeline myszy/klawiatu
     expect(r.maxAimPitchDeg).toBeGreaterThan(90);
     // ...i po domknięciu wrócił do normalnej połówki (renormalizacja działa)
     expect(r.finalAimPitchCos).toBeGreaterThanOrEqual(0);
+  });
+
+  it('max zawracanie (trzymanie S + bank): G-LOC tnie utrzymywane G, chwilowe zachowane', () => {
+    const r = playerMaxTurnTest(SPITFIRE_MK1, 450, 80);
+    // chwilowy zakręt zachowany: szarpnięcie sięga blisko strukturalnego nMaxG
+    expect(r.peakNG).toBeGreaterThan(6);
+    expect(r.peakNG).toBeLessThanOrEqual(SPITFIRE_MK1.nMaxG + 0.01);
+    // sufit po zmęczeniu G wyraźnie poniżej nMaxG (przed G-LOC trzymał stałe 8 G)
+    expect(r.settledNG).toBeLessThan(6);
+    expect(r.settledNG).toBeGreaterThan(SPITFIRE_MK1.gTolerance.onsetG - 0.1);
+    // zaciemnienie zaangażowane, ale to NIE pełna ślepota (model zawsze-regenerujący)
+    expect(r.peakBlackout).toBeGreaterThan(0.3);
+    expect(r.peakBlackout).toBeLessThan(1);
+    expect(r.minReserve).toBeGreaterThan(0);
+    // przy 450 km/h trzymany max zakręt jest teraz wolniejszy niż instantaneous 8 G (~9 s)
+    expect(r.turnTimeS).toBeGreaterThan(11);
   });
 
   it('przeciągnięcie z wyprowadzeniem: szarpnięcie → stall + wing drop → klasyczna procedura działa', () => {
