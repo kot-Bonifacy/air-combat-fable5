@@ -424,7 +424,7 @@ function updateZone(dtS: number): void {
   zoneOccupied = tick.occupied;
   if (tick.captured !== null) {
     const playerWon = tick.captured === player.faction;
-    endMatch(playerWon, playerWon ? 'przejąłeś strefę' : 'wróg przejął strefę');
+    endMatch(playerWon, playerWon ? 'za przejęcie strefy' : 'wróg przejął strefę');
   }
 }
 
@@ -688,7 +688,7 @@ function checkMatchEnd(): void {
   // Gracz wygrywa, jeśli to jego frakcja jest tą ostatnią.
   if (inPlay.size <= 1) {
     const won = inPlay.has(player.faction);
-    endMatch(won, won ? 'wrogowie wyeliminowani' : 'zostałeś wyeliminowany');
+    endMatch(won, won ? 'za wyeliminowanie wrogów' : 'zostałeś wyeliminowany');
     return;
   }
   // ≥2 frakcje wciąż walczą. Jeśli frakcja gracza gra dalej — nic (mecz w toku). Jeśli

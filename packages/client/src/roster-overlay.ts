@@ -55,7 +55,6 @@ export class RosterOverlay {
       el.textContent = `${row.name.padEnd(NAME_PAD)} ✕${String(row.kills).padStart(2)}   ${status}`;
       el.style.color = row.isLost ? '#7d8794' : row.colorCss;
       el.style.opacity = row.isLost ? '0.55' : '1';
-      el.style.textDecoration = row.isLost ? 'line-through' : 'none';
       el.style.fontWeight = row.isPlayer ? '800' : '600';
     }
 

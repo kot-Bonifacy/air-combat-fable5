@@ -466,13 +466,21 @@ export class GameMenu {
     const verdict = document.createElement('div');
     verdict.textContent = data.playerWon ? 'ZWYCIĘSTWO' : 'PORAŻKA';
     verdict.style.cssText =
-      `font:700 34px/1.2 monospace;margin-bottom:4px;color:${data.playerWon ? '#7ef08a' : '#ff6a4a'};` +
+      `font:700 34px/1.2 monospace;margin-bottom:2px;color:${data.playerWon ? '#7ef08a' : '#ff6a4a'};` +
       `text-shadow:0 0 14px ${data.playerWon ? 'rgba(120,255,140,0.6)' : 'rgba(255,90,60,0.6)'};`;
 
+    // Wyraźny powód rozstrzygnięcia tuż pod werdyktem (np. „za przejęcie strefy") —
+    // gracz ma od razu wiedzieć, ZA CO przyznano zwycięstwo, a nie wyławiać tego z szarej linijki.
+    const reason = document.createElement('div');
+    reason.textContent = data.headline;
+    reason.style.cssText =
+      'font:700 17px/1.3 monospace;margin-bottom:8px;letter-spacing:1px;' +
+      `color:${data.playerWon ? '#bff5c6' : '#ffb3a3'};`;
+
     const sub = document.createElement('div');
-    sub.textContent = `${data.modeLabel}   •   ${data.headline}   •   [${data.difficulty}]`;
+    sub.textContent = `${data.modeLabel}   •   [${data.difficulty}]`;
     sub.style.cssText = 'font:13px monospace;color:#9ab;margin-bottom:18px;';
-    this.panel.append(verdict, sub);
+    this.panel.append(verdict, reason, sub);
 
     this.panel.append(renderPilotScoreTable(data.pilots));
 
