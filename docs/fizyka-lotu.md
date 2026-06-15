@@ -182,6 +182,14 @@ instruktor zamienia to na `n_demand`, `rollRate_demand`, `yaw_demand`:
 
 ## 9. Parametry samolotu — schema JSON (`shared/src/planes/*.json`)
 
+> **Aktualizacja 2026-06-15 — konwersja na Mk IIa.** Wysyłana konfiguracja to
+> `spitfire-mk2.json` (Spitfire Mk IIa, Merlin XII, +12 lb). Płatowiec, lotki,
+> aerodynamika i uzbrojenie (8× .303) identyczne jak Mk IA — zmiany względem
+> tabeli niżej: `massKg` 2744 → **2799** (6172 lb, cięższy zespół napędowy),
+> `name` → „Spitfire Mk IIa". `enginePowerW`/`fullThrottleHeightM` bez zmian:
+> pik mocy Merlin XII przy +12 lb ≈ Merlin III. Tabela poniżej = baseline
+> kalibracji Mk IA z fazy 3.
+
 | Pole | Znaczenie | Spitfire Mk IA, +12 lb (po kalibracji fazy 3) |
 |---|---|---|
 | `massKg` | masa | 2744 (6050 lb, próby N.3171) |
@@ -215,6 +223,13 @@ Wartości przybliżone, wystarczające do gry; tolerancja ±8% o ile nie podano 
 Spitfire w konfiguracji Bitwy o Anglię: 100 oktanów, +12 lb boost (decyzja z 2026-06-11 —
 „dynamika myśliwca"; źródła: próby N.3171 A&AEE 1940, RAE 06.1940, Collar 1940,
 Morgan & Morris BA 1640). Kolumna Bf 109 E-3 do rewizji źródłowej w fazie 14.
+
+> **Aktualizacja 2026-06-15 — cele dla Mk IIa.** Złote testy
+> (`testing/maneuvers.test.ts`) celują teraz w Mk IIa: V_max **~574 km/h
+> (357 mph @ 17k ft, spec. Mk II)** mierzone na 5182 m, V przeciągnięcia
+> **~118 km/h** (skala do 6172 lb), wznoszenie ~17 m/s (+12 lb; katalog.
+> 2995 ft/min przy niższym ratingu). Pozostałe metryki bez zmian (ten sam
+> płatowiec). Tabela Mk IA poniżej zachowana jako baseline.
 
 | Metryka | Spitfire Mk IA (+12 lb) | Bf 109 E-3 (faza 14) |
 |---|---|---|

@@ -7,7 +7,7 @@ import { segmentSphereHit } from '../combat/hit';
 import { createRng } from '../math/rng';
 import { createPilotDemands } from '../instructor/instructor';
 import { createSimPlane, pilotStep } from '../physics/pilot-step';
-import { SPITFIRE_MK1 } from '../planes/loader';
+import { SPITFIRE_MK2 } from '../planes/loader';
 import { Bot } from './bot';
 import { BOT_CONFIG, type DifficultyLevel } from './difficulty';
 
@@ -26,7 +26,7 @@ const FWD = new Vector3(0, 0, 1);
 
 /** Liczba trafień, które atakujący o danej trudności zadaje celowi w SIM_S sekund. */
 function runGunnery(level: DifficultyLevel): number {
-  const plane = SPITFIRE_MK1;
+  const plane = SPITFIRE_MK2;
   const omega = TARGET_SPEED_MS / TARGET_RADIUS_M;
 
   // cel: skryptowany lot po okręgu (środek w (−R,0,0), start w origin)

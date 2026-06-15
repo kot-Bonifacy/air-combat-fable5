@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { FIXED_DT_S } from '../constants';
 import { createRng } from '../math/rng';
-import { SPITFIRE_MK1 } from '../planes/loader';
+import { SPITFIRE_MK2 } from '../planes/loader';
 import { StallMachine, createStallEffects } from './stall';
 
-const plane = SPITFIRE_MK1;
+const plane = SPITFIRE_MK2;
 
 function machineAt(seed = 42): { machine: StallMachine; effects: ReturnType<typeof createStallEffects> } {
   return { machine: new StallMachine(seed), effects: createStallEffects() };

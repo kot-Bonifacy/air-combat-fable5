@@ -304,7 +304,7 @@ export class GameMenu {
     title.textContent = 'AIR COMBAT — Bitwa o Anglię';
     title.style.cssText = 'font:700 24px/1.2 monospace;color:#ffd24a;margin-bottom:6px;';
     const subtitle = document.createElement('div');
-    subtitle.textContent = 'Spitfire Mk IA';
+    subtitle.textContent = 'Spitfire Mk IIa';
     subtitle.style.cssText = 'font:14px monospace;color:#9ab;margin-bottom:22px;';
     this.panel.append(title, subtitle);
 
@@ -379,7 +379,7 @@ export class GameMenu {
     title.textContent = 'JAK GRAĆ';
     title.style.cssText = 'font:700 24px/1.2 monospace;color:#ffd24a;margin-bottom:4px;';
     const sub = document.createElement('div');
-    sub.textContent = 'Spitfire Mk IA — pościgowa kamera, celowanie myszą';
+    sub.textContent = 'Spitfire Mk IIa — pościgowa kamera, celowanie myszą';
     sub.style.cssText = 'font:13px monospace;color:#9ab;margin-bottom:18px;';
     this.panel.append(title, sub);
 

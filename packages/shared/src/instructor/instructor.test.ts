@@ -5,10 +5,10 @@ import { getForward } from '../math/frame';
 import { maxRollRateRadS } from '../physics/envelope';
 import { createSimPlane, pilotStep } from '../physics/pilot-step';
 import { validatePlaneState } from '../physics/nan-guard';
-import { SPITFIRE_MK1 } from '../planes/loader';
+import { SPITFIRE_MK2 } from '../planes/loader';
 import { Instructor, createPilotDemands } from './instructor';
 
-const plane = SPITFIRE_MK1;
+const plane = SPITFIRE_MK2;
 const DEG = Math.PI / 180;
 
 /** Samolot w locie poziomym +Z na zadanej IAS≈TAS (niska wysokość). */

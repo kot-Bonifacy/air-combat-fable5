@@ -3,7 +3,7 @@ import { Vector3 } from 'three';
 import { planesCollide } from './collision';
 
 // Promień kolizji jednego płatowca; suma dwóch = 6 m (jak collisionRadiusM w
-// spitfire-mk1.json: 3 + 3). Próg zderzenia = odległość środków < rA + rB.
+// spitfire-mk2.json: 3 + 3). Próg zderzenia = odległość środków < rA + rB.
 const R = 3;
 
 describe('planesCollide — zderzenie samolot↔samolot', () => {

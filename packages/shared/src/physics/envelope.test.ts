@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { FIXED_DT_S, GRAVITY_MS2, SEA_LEVEL_AIR_DENSITY_KGM3 } from '../constants';
-import { SPITFIRE_MK1 } from '../planes/loader';
+import { SPITFIRE_MK2 } from '../planes/loader';
 import { airDensityKgM3, dynamicPressurePa } from './atmosphere';
 import {
   clampLoadFactorG,
@@ -12,7 +12,7 @@ import {
 } from './envelope';
 import { createPlaneState, type AngularRates } from './state';
 
-const plane = SPITFIRE_MK1;
+const plane = SPITFIRE_MK2;
 const DEG = Math.PI / 180;
 const X_AXIS = new Vector3(1, 0, 0);
 const Y_AXIS = new Vector3(0, 1, 0);

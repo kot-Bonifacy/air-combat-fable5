@@ -4,7 +4,7 @@ import { ARENA_SIZE_M, FIXED_DT_S } from '../constants';
 import { createSimPlane, pilotStep, type SimPlane } from '../physics/pilot-step';
 import { createPilotDemands } from '../instructor/instructor';
 import { validatePlaneState } from '../physics/nan-guard';
-import { SPITFIRE_MK1 } from '../planes/loader';
+import { SPITFIRE_MK2 } from '../planes/loader';
 import { wrapToArena } from '../world/arena';
 import { createTerrain, type Terrain } from '../world/terrain';
 import { lookaheadSurfaceM, surfaceHeightM, updateLifecycle } from '../world/lifecycle';
@@ -75,9 +75,9 @@ describe('symulacja 4 botów (flight safety)', () => {
         const target = selectNearestTarget(a.sim.state.position, others.map((o) => o.sim.state));
 
         const env = { surfaceHeightM: surfaceAhead(terrain, a.sim.state) };
-        const out = a.bot.update(a.sim.state, SPITFIRE_MK1, target, env, FIXED_DT_S, demands);
+        const out = a.bot.update(a.sim.state, SPITFIRE_MK2, target, env, FIXED_DT_S, demands);
         a.sim.state.throttle = out.throttle;
-        pilotStep(a.sim, SPITFIRE_MK1, demands, FIXED_DT_S);
+        pilotStep(a.sim, SPITFIRE_MK2, demands, FIXED_DT_S);
         wrapToArena(a.sim.state.position, wrapDelta); // świat-torus jak po stronie klienta
         validatePlaneState(a.sim.state, `bot tick ${String(tick)}`);
 

@@ -2,7 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { FIXED_DT_S } from '../constants';
 import { createRng } from '../math/rng';
-import { SPITFIRE_MK1 } from '../planes/loader';
+import { SPITFIRE_MK2 } from '../planes/loader';
 import { BulletPool } from './ballistics';
 import { createFireControl, updateFire, type FiringPlatform } from './fire';
 import { segmentSphereHit } from './hit';
@@ -19,7 +19,7 @@ function platformAtOrigin(): FiringPlatform {
 
 describe('walka end-to-end: strzał → tor → trafienie → HP → zniszczenie', () => {
   it('seria w nieruchomy cel na dystansie konwergencji niszczy go', () => {
-    const arm = SPITFIRE_MK1.armament;
+    const arm = SPITFIRE_MK2.armament;
     const platform = platformAtOrigin(); // nos w +Z (orientacja identyczności)
     const pool = new BulletPool(2000);
     const fc = createFireControl(arm);
@@ -49,7 +49,7 @@ describe('walka end-to-end: strzał → tor → trafienie → HP → zniszczenie
   });
 
   it('bez trzymania spustu nic nie leci i amunicja stoi', () => {
-    const arm = SPITFIRE_MK1.armament;
+    const arm = SPITFIRE_MK2.armament;
     const platform = platformAtOrigin();
     const pool = new BulletPool(64);
     const fc = createFireControl(arm);

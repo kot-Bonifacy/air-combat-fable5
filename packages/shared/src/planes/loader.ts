@@ -1,5 +1,5 @@
 import { PlaneConfigError } from '../errors';
-import spitfireMk1Raw from './spitfire-mk1.json';
+import spitfireMk2Raw from './spitfire-mk2.json';
 
 /**
  * Parametry samolotu — schemat z docs/fizyka-lotu.md rozdz. 9.
@@ -376,8 +376,8 @@ export function loadPlaneConfig(raw: unknown, source = 'konfiguracja samolotu'):
   return obj as unknown as PlaneConfig;
 }
 
-/** Spitfire Mk I — walidowany przy imporcie modułu (fail fast). */
-export const SPITFIRE_MK1: PlaneConfig = loadPlaneConfig(spitfireMk1Raw, 'spitfire-mk1.json');
+/** Spitfire Mk IIa — walidowany przy imporcie modułu (fail fast). */
+export const SPITFIRE_MK2: PlaneConfig = loadPlaneConfig(spitfireMk2Raw, 'spitfire-mk2.json');
 
 /** Współczynnik oporu indukowanego K = 1/(π·e·AR) z biegunowej Cd = Cd0 + K·Cl². */
 export function inducedDragFactor(plane: PlaneConfig): number {

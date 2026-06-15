@@ -2,7 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { FIXED_DT_S } from '../constants';
 import { createRng } from '../math/rng';
-import { SPITFIRE_MK1, type Armament } from '../planes/loader';
+import { SPITFIRE_MK2, type Armament } from '../planes/loader';
 import { BulletPool } from './ballistics';
 import {
   aimDirectionBody,
@@ -168,8 +168,8 @@ describe('smugacze i bilans obrażeń', () => {
   });
 
   it('Spitfire .303: słabe działka — zestrzelenie wymaga długiej serii', () => {
-    const arm = SPITFIRE_MK1.armament;
-    const bulletsToKill = Math.ceil(SPITFIRE_MK1.hpPool / arm.damagePerHit);
+    const arm = SPITFIRE_MK2.armament;
+    const bulletsToKill = Math.ceil(SPITFIRE_MK2.hpPool / arm.damagePerHit);
     const bulletsPerSecond = (arm.fireRateRpmPerGun / 60) * arm.muzzles.length;
     const ttkPerfectS = bulletsToKill / bulletsPerSecond; // 100% trafień (dolne ograniczenie)
     const ttk30pctS = ttkPerfectS / 0.3; // realistyczna celność ~30%

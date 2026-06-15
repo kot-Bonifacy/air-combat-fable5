@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SPITFIRE_MK1 } from '../planes/loader';
+import { SPITFIRE_MK2 } from '../planes/loader';
 import {
   playerDiveTest,
   playerImmelmannTest,
@@ -22,7 +22,7 @@ const VNE_KMH = 724; // 450 mph IAS — limit płatowca Mk I/II/V z Pilot's Note
 
 describe('manewry gracza — Spitfire Mk IA przez pełny pipeline myszy/klawiatury', () => {
   it('beczka @ 350 km/h (rolling 180–300 mph): czas z krzywej koperty, tor stabilny', () => {
-    const r = playerRollTest(SPITFIRE_MK1, 350);
+    const r = playerRollTest(SPITFIRE_MK2, 350);
     // czas 360° zgodny z krzywą rollRate(IAS) ±25% (IAS pływa w trakcie beczki)
     expect(r.rollTimeS).toBeGreaterThan(r.envelopeTimeS * 0.8);
     expect(r.rollTimeS).toBeLessThan(r.envelopeTimeS * 1.25);
@@ -34,7 +34,7 @@ describe('manewry gracza — Spitfire Mk IA przez pełny pipeline myszy/klawiatu
   });
 
   it('pętla myszą @ 483 km/h (looping ~300 mph): domyka się w pionowej płaszczyźnie', () => {
-    const r = playerLoopTest(SPITFIRE_MK1);
+    const r = playerLoopTest(SPITFIRE_MK2);
     // czas i wysokość z fizyki (H≈2R przy ciągnięciu do 8 G): szerokie okna;
     // zmierzone 2026-06-13: ~9.7 s, +388 m, apex ~307 km/h IAS
     expect(r.loopTimeS).toBeGreaterThan(8);
@@ -43,7 +43,7 @@ describe('manewry gracza — Spitfire Mk IA przez pełny pipeline myszy/klawiatu
     expect(r.altitudeGainM).toBeLessThan(1000);
     // pilot dawkuje G wg HUD (clRatio 0.85) — przeciągnięcie = regresja modelu
     expect(r.everStalled).toBe(false);
-    expect(r.maxNG).toBeLessThanOrEqual(SPITFIRE_MK1.nMaxG + 0.01);
+    expect(r.maxNG).toBeLessThanOrEqual(SPITFIRE_MK2.nMaxG + 0.01);
     // nad szczytem wolno (balistycznie), ale nie zero — pętla, nie przewrót
     expect(r.minIasKmh).toBeGreaterThan(60);
     // pętla ma zostać w swojej pionowej płaszczyźnie i skończyć się po wyjściowym kursie
@@ -53,11 +53,11 @@ describe('manewry gracza — Spitfire Mk IA przez pełny pipeline myszy/klawiatu
   });
 
   it('nurkowanie z wyprowadzeniem (limit 450 mph IAS): pchnięcie bez przewrotu, G w kopercie', () => {
-    const r = playerDiveTest(SPITFIRE_MK1);
+    const r = playerDiveTest(SPITFIRE_MK2);
     // stożek pushover instruktora: cel pod nosem = pchnięcie, NIE beczka na plecy
     expect(r.pushoverMinUpY).toBeGreaterThan(0.5);
-    expect(r.minNG).toBeGreaterThanOrEqual(SPITFIRE_MK1.nMinG - 0.01);
-    expect(r.maxNG).toBeLessThanOrEqual(SPITFIRE_MK1.nMaxG + 0.01);
+    expect(r.minNG).toBeGreaterThanOrEqual(SPITFIRE_MK2.nMinG - 0.01);
+    expect(r.maxNG).toBeLessThanOrEqual(SPITFIRE_MK2.nMaxG + 0.01);
     // rozpędzenie realistyczne i poniżej limitu płatowca z Pilot's Notes
     expect(r.maxIasKmh).toBeGreaterThan(500);
     expect(r.maxIasKmh).toBeLessThan(VNE_KMH);
@@ -71,7 +71,7 @@ describe('manewry gracza — Spitfire Mk IA przez pełny pipeline myszy/klawiatu
   });
 
   it('split-S @ 400 km/h: półbeczka klawiaturą + dociągnięcie myszą, przejęcie bez szarpnięcia', () => {
-    const r = playerSplitSTest(SPITFIRE_MK1);
+    const r = playerSplitSTest(SPITFIRE_MK2);
     // po półbeczce naprawdę na plecach
     expect(r.invertedUpY).toBeLessThan(-0.7);
     // przejęcie klawiatura→mysz: żądanie n bez skoku (cel postawiony na nosie)
@@ -81,13 +81,13 @@ describe('manewry gracza — Spitfire Mk IA przez pełny pipeline myszy/klawiatu
     expect(r.altitudeLossM).toBeGreaterThan(250);
     expect(r.altitudeLossM).toBeLessThan(1000);
     expect(r.exitUpY).toBeGreaterThan(0.6);
-    expect(r.maxNG).toBeLessThanOrEqual(SPITFIRE_MK1.nMaxG + 0.01);
+    expect(r.maxNG).toBeLessThanOrEqual(SPITFIRE_MK2.nMaxG + 0.01);
     expect(r.maxIasKmh).toBeLessThan(VNE_KMH);
     expect(r.everStalled).toBe(false);
   });
 
   it('immelmann @ 530 km/h (half roll off loop 320–350 mph): przez pion + renormalizacja myszy', () => {
-    const r = playerImmelmannTest(SPITFIRE_MK1);
+    const r = playerImmelmannTest(SPITFIRE_MK2);
     // odwrócenie kursu z zyskiem wysokości (zamiana prędkości na wysokość)
     expect(Math.abs(r.exitHeadingDriftDeg)).toBeGreaterThan(150);
     expect(r.altitudeGainM).toBeGreaterThan(200);
@@ -103,13 +103,13 @@ describe('manewry gracza — Spitfire Mk IA przez pełny pipeline myszy/klawiatu
   });
 
   it('max zawracanie (trzymanie S + bank): G-LOC tnie utrzymywane G, chwilowe zachowane', () => {
-    const r = playerMaxTurnTest(SPITFIRE_MK1, 450, 80);
+    const r = playerMaxTurnTest(SPITFIRE_MK2, 450, 80);
     // chwilowy zakręt zachowany: szarpnięcie sięga blisko strukturalnego nMaxG
     expect(r.peakNG).toBeGreaterThan(6);
-    expect(r.peakNG).toBeLessThanOrEqual(SPITFIRE_MK1.nMaxG + 0.01);
+    expect(r.peakNG).toBeLessThanOrEqual(SPITFIRE_MK2.nMaxG + 0.01);
     // sufit po zmęczeniu G wyraźnie poniżej nMaxG (przed G-LOC trzymał stałe 8 G)
     expect(r.settledNG).toBeLessThan(6);
-    expect(r.settledNG).toBeGreaterThan(SPITFIRE_MK1.gTolerance.onsetG - 0.1);
+    expect(r.settledNG).toBeGreaterThan(SPITFIRE_MK2.gTolerance.onsetG - 0.1);
     // zaciemnienie zaangażowane, ale to NIE pełna ślepota (model zawsze-regenerujący)
     expect(r.peakBlackout).toBeGreaterThan(0.3);
     expect(r.peakBlackout).toBeLessThan(1);
@@ -119,7 +119,7 @@ describe('manewry gracza — Spitfire Mk IA przez pełny pipeline myszy/klawiatu
   });
 
   it('przeciągnięcie z wyprowadzeniem: szarpnięcie → stall + wing drop → klasyczna procedura działa', () => {
-    const r = playerStallRecoveryTest(SPITFIRE_MK1);
+    const r = playerStallRecoveryTest(SPITFIRE_MK2);
     expect(r.sawStall).toBe(true);
     // wing drop po przetrzymaniu > wingDropDelayS: skrzydło naprawdę poszło
     expect(r.maxBankDeg).toBeGreaterThan(8);

@@ -21,7 +21,7 @@ import {
   PHYSICS_HZ,
   PilotControl,
   RESPAWN_DELAY_S,
-  SPITFIRE_MK1,
+  SPITFIRE_MK2,
   applyDamage,
   buildScoreboard,
   createControlDeflections,
@@ -132,7 +132,7 @@ const SMOKE_BACK_OFFSET_M = 3;
 const FORWARD_Z = new Vector3(0, 0, 1);
 const BACKWARD_Z = new Vector3(0, 0, -1);
 
-const plane = SPITFIRE_MK1;
+const plane = SPITFIRE_MK2;
 // rozpiętość skrzydeł [m] z parametrów fizyki: b = √(AR · S) — bez literału w kodzie
 const wingspanM = Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
 

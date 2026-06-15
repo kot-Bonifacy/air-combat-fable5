@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PlaneConfigError } from '../errors';
-import { SPITFIRE_MK1, inducedDragFactor, loadPlaneConfig } from './loader';
+import { SPITFIRE_MK2, inducedDragFactor, loadPlaneConfig } from './loader';
 
 function validRaw(): Record<string, unknown> {
   return {
@@ -81,9 +81,9 @@ describe('loader konfiguracji samolotu', () => {
     expect(config.enginePowerW).toBe(768000);
   });
 
-  it('SPITFIRE_MK1 ładuje się z JSON (walidacja przy imporcie)', () => {
-    expect(SPITFIRE_MK1.name).toBe('Spitfire Mk IA (BoB, +12 lb boost)');
-    expect(SPITFIRE_MK1.wingAreaM2).toBeGreaterThan(0);
+  it('SPITFIRE_MK2 ładuje się z JSON (walidacja przy imporcie)', () => {
+    expect(SPITFIRE_MK2.name).toBe('Spitfire Mk IIa (Merlin XII, +12 lb boost)');
+    expect(SPITFIRE_MK2.wingAreaM2).toBeGreaterThan(0);
   });
 
   it('brak wymaganego pola → PlaneConfigError z nazwą pola', () => {

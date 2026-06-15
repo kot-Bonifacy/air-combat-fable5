@@ -7,7 +7,7 @@ pobrać ręcznie (Sketchfab wymaga zalogowania), a potem rozpakować tutaj.
 
 - **Spitfire Mk.IIa** — autor `barking_dogo`
 - Licencja: **CC-BY 4.0** (wymaga atrybucji — wpis już jest w `assets/LICENSES.md`)
-- ~41,8k trójkątów, wariant zgodny z fizyką (`shared/src/planes/spitfire-mk1.json`)
+- ~41,8k trójkątów, wariant zgodny z fizyką (`shared/src/planes/spitfire-mk2.json`)
 - URL: https://sketchfab.com/3d-models/supermarine-spitfire-mkiia-a49be5ab6d624e75b55231948a31b1b3
 
 ## Jak wgrać
