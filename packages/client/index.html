@@ -21,19 +21,17 @@
         top: 50%;
         left: 14px;
         transform: translateY(-50%);
-        font: 600 22px/1.35 monospace;
+        font: 400 18px/1.4 monospace;
         color: #eaf3ff;
         background: transparent;
         padding: 0;
         white-space: pre;
         pointer-events: none;
-        /* tło w pełni przezroczyste → obrys + cień, by tekst był czytelny nad jasnym niebem */
+        /* tło przezroczyste → miękki cień (zamiast twardego obrysu), by tekst był
+           czytelny nad jasnym niebem bez „arcade'owego" konturu */
         text-shadow:
-          -1px -1px 0 #000,
-          1px -1px 0 #000,
-          -1px 1px 0 #000,
-          1px 1px 0 #000,
-          0 0 6px rgba(0, 0, 0, 0.9);
+          0 1px 2px rgba(0, 0, 0, 0.9),
+          0 0 6px rgba(0, 0, 0, 0.75);
       }
       #net-status {
         position: fixed;

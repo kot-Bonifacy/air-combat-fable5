@@ -30,6 +30,16 @@ const LOW_AMMO_RATIO = 0.15;
 
 const PITCH_PX_PER_RAD = 120;
 
+/** Szerokość kolumny etykiety [znaki] — mieści najdłuższą („pociski") z zapasem; wartości
+ *  zaczynają się w tej samej kolumnie dla każdego wiersza (monospace, white-space: pre). */
+const LABEL_W = 8;
+
+/** Wiersz HUD: etykieta (stała szerokość) + wartość wyrównana do LEWEJ + jednostka.
+ *  Lewy brzeg wartości jest wspólny dla wszystkich wierszy — także tekstowych (np. „mysz”). */
+export function hudRow(label: string, value: string, unit = ''): string {
+  return `${label.padEnd(LABEL_W)}${value}${unit ? ` ${unit}` : ''}`;
+}
+
 /**
  * HUD gracza (faza 3): IAS, wysokość, throttle, G, ostrzeżenie przeciągnięcia,
  * sztuczny horyzont. Czysty DOM/CSS — bez zależności od renderera.
@@ -51,18 +61,20 @@ export class Hud {
       data.gLimitG < data.nAvailG - 0.1 && data.blackoutFactor > 0.02
         ? `   G-LOC ${data.gLimitG.toFixed(1)} G`
         : '';
+    const ammoWarn =
+      data.ammo === 0
+        ? '   *** PUSTE ***'
+        : data.ammo <= data.ammoMax * LOW_AMMO_RATIO
+          ? '   ! mało !'
+          : '';
     this.textEl.textContent = [
-      `IAS   ${data.iasKmh.toFixed(0).padStart(4)} km/h   TAS ${data.tasKmh.toFixed(0).padStart(4)} km/h`,
-      `alt   ${data.altM.toFixed(0).padStart(5)} m     gaz ${(data.throttle01 * 100).toFixed(0).padStart(3)}%`,
-      `n     ${data.nG.toFixed(1).padStart(5)} G${gLocText}`,
-      `ster  ${data.controlMode}`,
-      `amun. ${String(data.ammo).padStart(4)} / ${String(data.ammoMax)}${
-        data.ammo === 0
-          ? '   *** PUSTE ***'
-          : data.ammo <= data.ammoMax * LOW_AMMO_RATIO
-            ? '   ! mało !'
-            : ''
-      }`,
+      hudRow('IAS', data.iasKmh.toFixed(0), 'km/h'),
+      hudRow('TAS', data.tasKmh.toFixed(0), 'km/h'),
+      hudRow('alt', data.altM.toFixed(0), 'm'),
+      hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%'),
+      hudRow('n', data.nG.toFixed(1), 'G') + gLocText,
+      hudRow('ster', data.controlMode),
+      hudRow('amun.', String(data.ammo), `/ ${String(data.ammoMax)}`) + ammoWarn,
       ...data.extraLines,
     ].join('\n');
 

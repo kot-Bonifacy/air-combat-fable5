@@ -77,7 +77,7 @@ import { DownedOverlay } from './downed-overlay';
 import { GreyoutOverlay } from './greyout-overlay';
 import { FlightRecorder } from './flight-recorder';
 import { ForceArrows } from './force-arrows';
-import { Hud } from './hud';
+import { Hud, hudRow } from './hud';
 import { KeyboardInput } from './input';
 import { MouseAim, projectDirToScreen } from './mouse-aim';
 import { MuzzleFlash } from './muzzle-flash';
@@ -1124,7 +1124,8 @@ function currentViewCombatant(): Combatant {
 // Linie walki w HUD: obecnie tylko HP gracza. Zestrzelenia i stan „w powietrzu"
 // przeniesione na listę samolotów (roster) — tu byłyby redundancją.
 function combatScoreLines(): string[] {
-  return [`HP    ${String(Math.max(0, Math.round(playerHealth.hp)))} / ${String(plane.hpPool)}`];
+  const hp = String(Math.max(0, Math.round(playerHealth.hp)));
+  return [hudRow('HP', hp, `/ ${String(plane.hpPool)}`)];
 }
 
 
@@ -1142,6 +1143,7 @@ function rosterRows(): RosterRow[] {
     rows.push({
       name: c.name,
       kills: c.kills,
+      assists: c.assists,
       colorCss: pilotColor(c.isPlayer, c.faction),
       isPlayer: c.isPlayer,
       isLost: lost,
@@ -1390,7 +1392,8 @@ renderer.setAnimationLoop((timeMs) => {
       '',
       ...(gameMode === 'combat' ? combatScoreLines() : []),
       ...(viewC !== player ? [`OBSERWUJESZ: ${viewC.name}`] : []),
-      `fps   ${String(fpsValue).padStart(3)}   pociski ${String(pool.activeCount).padStart(3)}`,
+      hudRow('fps', String(fpsValue)),
+      hudRow('pociski', String(pool.activeCount)),
     ],
   });
 

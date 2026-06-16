@@ -21,16 +21,14 @@
         top: 50%;
         left: 14px;
         transform: translateY(-50%);
-        font: 600 18px/1.4 monospace;
+        font: 400 18px/1.4 monospace;
         color: #eaf3ff;
         white-space: pre;
         pointer-events: none;
+        /* spójnie z offline: miękki cień zamiast twardego obrysu */
         text-shadow:
-          -1px -1px 0 #000,
-          1px -1px 0 #000,
-          -1px 1px 0 #000,
-          1px 1px 0 #000,
-          0 0 6px rgba(0, 0, 0, 0.9);
+          0 1px 2px rgba(0, 0, 0, 0.9),
+          0 0 6px rgba(0, 0, 0, 0.75);
       }
       /* nakładka stanu połączenia: łączenie / błąd / rozłączono */
       #conn-overlay {
