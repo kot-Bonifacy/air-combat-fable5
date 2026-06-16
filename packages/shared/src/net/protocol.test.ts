@@ -12,6 +12,9 @@ import {
   decodeSnapshot,
   encodeInputToBytes,
   encodeSnapshot,
+  isValidRoomCode,
+  sanitizeNick,
+  MAX_NICK_LENGTH,
   lifePhaseFromCode,
   lifePhaseToCode,
   parseControlMessage,
@@ -187,14 +190,53 @@ describe('kody fazy życia', () => {
 });
 
 describe('wiadomości kontrolne (JSON)', () => {
-  it('parsuje hello/welcome/error/event', () => {
+  it('parsuje hello/welcome/error oraz wiadomości lobby', () => {
     expect(parseControlMessage(JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION }))?.t).toBe('hello');
     expect(parseControlMessage(JSON.stringify({ t: 'welcome', playerId: 2 }))?.t).toBe('welcome');
     expect(parseControlMessage(JSON.stringify({ t: 'error', code: 'version' }))?.t).toBe('error');
+    expect(parseControlMessage(JSON.stringify({ t: 'createRoom' }))?.t).toBe('createRoom');
+    expect(parseControlMessage(JSON.stringify({ t: 'joinRoom', code: 'ABCD' }))?.t).toBe('joinRoom');
+    expect(parseControlMessage(JSON.stringify({ t: 'roomJoined', code: 'ABCD' }))?.t).toBe('roomJoined');
+    expect(parseControlMessage(JSON.stringify({ t: 'matchStarted' }))?.t).toBe('matchStarted');
   });
 
   it('zwraca null dla nie-JSON i nieznanego typu', () => {
     expect(parseControlMessage('ping')).toBeNull();
     expect(parseControlMessage(JSON.stringify({ t: 'cokolwiek' }))).toBeNull();
+  });
+});
+
+describe('sanitizeNick', () => {
+  it('przepuszcza litery, cyfry i bezpieczne znaki, w tym diakrytyki', () => {
+    expect(sanitizeNick('Błękitny_1')).toBe('Błękitny_1');
+    expect(sanitizeNick('  Ace  Pilot ')).toBe('Ace Pilot');
+  });
+
+  it('usuwa HTML/znaki spoza whitelisty (ochrona przed XSS)', () => {
+    expect(sanitizeNick('<b>Ace</b>')).toBe('bAceb');
+    expect(sanitizeNick('a<b>c&d')).toBe('abcd');
+    expect(sanitizeNick('"><img>')).toBe('img');
+  });
+
+  it('przycina do MAX_NICK_LENGTH i daje fallback dla pustego', () => {
+    expect(sanitizeNick('x'.repeat(40))).toHaveLength(MAX_NICK_LENGTH);
+    expect(sanitizeNick('')).toBe('Pilot');
+    expect(sanitizeNick('<<<>>>')).toBe('Pilot');
+    expect(sanitizeNick(42)).toBe('Pilot');
+  });
+});
+
+describe('isValidRoomCode', () => {
+  it('akceptuje kody z alfabetu o właściwej długości', () => {
+    expect(isValidRoomCode('ABCD')).toBe(true);
+    expect(isValidRoomCode('Z239')).toBe(true);
+  });
+
+  it('odrzuca złą długość, małe litery i znaki spoza alfabetu (O/0/I/1)', () => {
+    expect(isValidRoomCode('ABC')).toBe(false);
+    expect(isValidRoomCode('abcd')).toBe(false);
+    expect(isValidRoomCode('AO0I')).toBe(false);
+    expect(isValidRoomCode('AB1D')).toBe(false);
+    expect(isValidRoomCode(null)).toBe(false);
   });
 });

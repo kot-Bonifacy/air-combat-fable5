@@ -4,31 +4,47 @@ import {
   decodeSnapshot,
   encodeInput,
   parseControlMessage,
+  type ControlMessage,
   type InputFrame,
+  type RoomJoinedMessage,
+  type RoomListMessage,
+  type RoomUpdateMessage,
   type Snapshot,
+  type WelcomeMessage,
 } from '@air-combat/shared';
 import { defaultNetConditions, rollDelayMs, type NetConditionsConfig } from './net-conditions';
 
-// Klient sieciowy trybu online. Handshake JSON + binarny INPUT/SNAPSHOT (faza 8) PLUS
-// (faza 9) wbudowany symulator warunków sieci: opóźnia/odrzuca wychodzące INPUT
-// i przychodzące SNAPSHOT wg `conditions`. RTT mierzymy od MOMENTU WYWOŁANIA sendInput
-// (przed sztucznym opóźnieniem) do przetworzenia acka — dzięki temu ping w overlay
-// odzwierciedla symulowany lag. Zdekodowane snapshoty trafiają do `onSnapshot`
-// (predykcja + interpolacja); `latestSnapshot` trzyma najnowszy po serverTick (HUD).
+// Klient sieciowy trybu online. Transport: handshake JSON + lobby JSON (faza 10) +
+// binarny INPUT/SNAPSHOT (faza 8) PLUS wbudowany symulator warunków sieci (faza 9):
+// opóźnia/odrzuca wychodzące INPUT i przychodzące SNAPSHOT wg `conditions`. Wiadomości
+// lobby (welcome/roomList/roomJoined/roomUpdate/matchStarted/error) rozdzielane przez
+// callbacki — wyższa warstwa (online-main) trzyma stan ekranu. RTT mierzymy od momentu
+// wywołania sendInput (przed sztucznym opóźnieniem) do przetworzenia acka.
 
-export type NetStatus = 'connecting' | 'handshaking' | 'online' | 'error' | 'closed';
+export type NetStatus = 'connecting' | 'handshaking' | 'connected' | 'error' | 'closed';
 
 export class NetClient {
   status: NetStatus = 'connecting';
-  /** Czytelny komunikat dla statusu 'error'/'closed' (np. niezgodna wersja). */
+  /** Czytelny komunikat dla statusu 'error'/'closed'. */
   statusMessage = '';
+  /** Id TEGO gracza w bieżącym pokoju (z roomJoined.youId); null poza pokojem. */
   localPlayerId: number | null = null;
+  /** Token sesji z welcome — wyższa warstwa zapisuje go w localStorage (reconnect). */
+  sessionToken: string | null = null;
   rttMs = 0;
   latestSnapshot: Snapshot | undefined;
   /** Symulator warunków sieci (dev) — mutowany przez panel; domyślnie wyłączony. */
   readonly conditions: NetConditionsConfig = defaultNetConditions();
+
   /** Wywoływane dla KAŻDEGO zdekodowanego snapshotu (po symulowanym opóźnieniu). */
   onSnapshot: ((snap: Snapshot) => void) | undefined;
+  onWelcome: ((msg: WelcomeMessage) => void) | undefined;
+  onRoomList: ((msg: RoomListMessage) => void) | undefined;
+  onRoomJoined: ((msg: RoomJoinedMessage) => void) | undefined;
+  onRoomUpdate: ((msg: RoomUpdateMessage) => void) | undefined;
+  onMatchStarted: (() => void) | undefined;
+  /** Błąd lobby (badCode/full/notHost/…) — NIE zamyka połączenia, klient zostaje w lobby. */
+  onLobbyError: ((code: string, message: string) => void) | undefined;
 
   private readonly ws: WebSocket;
   private readonly inputBuf = new Uint8Array(INPUT_BYTES);
@@ -39,13 +55,16 @@ export class NetClient {
   constructor(
     url: string,
     private readonly nick = 'pilot',
+    private readonly resumeToken: string | null = null,
   ) {
     this.ws = new WebSocket(url);
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.addEventListener('open', () => {
       this.status = 'handshaking';
-      this.ws.send(JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, nick: this.nick }));
+      const hello: Record<string, unknown> = { t: 'hello', v: PROTOCOL_VERSION, nick: this.nick };
+      if (this.resumeToken) hello.token = this.resumeToken;
+      this.ws.send(JSON.stringify(hello));
     });
     this.ws.addEventListener('message', (event: MessageEvent) => this.onMessage(event));
     this.ws.addEventListener('error', () => {
@@ -55,7 +74,6 @@ export class NetClient {
       }
     });
     this.ws.addEventListener('close', () => {
-      // 'error' (np. odrzucona wersja) ma pierwszeństwo nad zwykłym 'closed'
       if (this.status !== 'error') {
         this.status = 'closed';
         if (!this.statusMessage) this.statusMessage = 'połączenie zamknięte';
@@ -70,8 +88,7 @@ export class NetClient {
       return;
     }
     if (data instanceof ArrayBuffer) {
-      // symulator RX: opóźnij/odrzuć przychodzący snapshot (każda ramka to świeży
-      // ArrayBuffer z ws — można go bezpiecznie przetrzymać do dekodowania po delayu)
+      // symulator RX: opóźnij/odrzuć przychodzący snapshot (każda ramka to świeży ArrayBuffer)
       const delay = rollDelayMs(this.conditions);
       if (delay === null) return; // zgubiony snapshot (symulacja) — gap złapie metryka
       if (delay <= 0) this.handleSnapshot(data);
@@ -82,12 +99,35 @@ export class NetClient {
   private onControl(text: string): void {
     const msg = parseControlMessage(text);
     if (!msg) return;
-    if (msg.t === 'welcome') {
-      this.localPlayerId = msg.playerId;
-      this.status = 'online';
-    } else if (msg.t === 'error') {
-      this.status = 'error';
-      this.statusMessage = msg.message;
+    switch (msg.t) {
+      case 'welcome':
+        this.sessionToken = msg.sessionToken;
+        this.status = 'connected';
+        this.onWelcome?.(msg);
+        break;
+      case 'roomList':
+        this.onRoomList?.(msg);
+        break;
+      case 'roomJoined':
+        this.localPlayerId = msg.youId;
+        this.onRoomJoined?.(msg);
+        break;
+      case 'roomUpdate':
+        this.onRoomUpdate?.(msg);
+        break;
+      case 'matchStarted':
+        this.onMatchStarted?.();
+        break;
+      case 'error':
+        if (msg.code === 'version') {
+          this.status = 'error';
+          this.statusMessage = msg.message;
+        } else {
+          this.onLobbyError?.(msg.code, msg.message);
+        }
+        break;
+      default:
+        break;
     }
   }
 
@@ -98,7 +138,6 @@ export class NetClient {
     } catch {
       return; // uszkodzony snapshot — pomiń klatkę
     }
-    // RTT z acka liczony zawsze (nawet dla snapshotu, który po reorderingu jest starszy)
     const sentAt = this.sentTimes.get(snap.ackSeq);
     if (sentAt !== undefined) {
       this.rttMs = Math.round(performance.now() - sentAt);
@@ -106,18 +145,47 @@ export class NetClient {
         if (seq <= snap.ackSeq) this.sentTimes.delete(seq);
       }
     }
-    // predykcja/interpolacja dostają KAŻDY snapshot (interpolator sam sortuje po ticku)
     this.onSnapshot?.(snap);
-    // latestSnapshot = najnowszy po serverTick (jitter może dostarczyć starszy później)
     if (!this.latestSnapshot || tickNewer(snap.serverTick, this.latestSnapshot.serverTick)) {
       this.latestSnapshot = snap;
     }
   }
 
-  /** Wysyła ramkę INPUT (symulator TX: opóźnia/odrzuca). No-op poza 'online'. */
+  // --- akcje lobby (JSON, poza hot pathem) ---
+
+  private sendControl(msg: ControlMessage): void {
+    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  }
+
+  requestRoomList(): void {
+    this.sendControl({ t: 'listRooms' });
+  }
+
+  createRoom(): void {
+    this.sendControl({ t: 'createRoom' });
+  }
+
+  joinRoom(code: string): void {
+    this.sendControl({ t: 'joinRoom', code });
+  }
+
+  quickPlay(): void {
+    this.sendControl({ t: 'quickPlay' });
+  }
+
+  startMatch(): void {
+    this.sendControl({ t: 'startMatch' });
+  }
+
+  leaveRoom(): void {
+    this.sendControl({ t: 'leaveRoom' });
+    this.localPlayerId = null;
+    this.latestSnapshot = undefined;
+  }
+
+  /** Wysyła ramkę INPUT (symulator TX: opóźnia/odrzuca). No-op poza połączeniem. */
   sendInput(frame: InputFrame): void {
-    if (this.status !== 'online' || this.ws.readyState !== WebSocket.OPEN) return;
-    // znacznik czasu wysyłki PRZED symulowanym opóźnieniem → RTT obejmuje lag TX i RX
+    if (this.status !== 'connected' || this.ws.readyState !== WebSocket.OPEN) return;
     this.sentTimes.set(frame.sequence, performance.now());
     const delay = rollDelayMs(this.conditions);
     if (delay === null) return; // zgubiony input (symulacja) — serwer go nie potwierdzi
@@ -126,7 +194,6 @@ export class NetClient {
       this.ws.send(this.inputBuf);
       return;
     }
-    // opóźnienie: kopiujemy bajty (współdzielony bufor zostałby nadpisany przed wysłaniem)
     const copy = new Uint8Array(INPUT_BYTES);
     encodeInput(new DataView(copy.buffer), frame);
     setTimeout(() => {

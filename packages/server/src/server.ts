@@ -3,17 +3,19 @@ import { WebSocketServer } from 'ws';
 import {
   FIXED_DT_S,
   FixedStepLoop,
+  MAX_PLAYERS_PER_ROOM,
   PHYSICS_HZ,
   SNAPSHOT_HZ,
   snapshotByteLength,
 } from '@air-combat/shared';
 import { Connection, type Logger } from './connection';
-import { GameRoom } from './game-room';
+import { Lobby } from './lobby';
 
-// Złożenie serwera fazy 8: WebSocketServer + autorytatywny pokój + pętla czasu.
-// Pętla 60 Hz (fizyka, stały krok) i wysyłka snapshotów 30 Hz. setInterval na 60 Hz
-// dryfuje (pułapka faza-08.md) — krok liczony z RZECZYWISTEGO czasu przez akumulator
-// FixedStepLoop (ten sam co w kliencie), a nie z założonego interwału timera.
+// Złożenie serwera: WebSocketServer + lobby (rejestr pokoi) + pętla czasu. Pętla 60 Hz
+// kroczy fizyką KAŻDEGO pokoju w stanie 'playing' (stały krok przez FixedStepLoop —
+// setInterval na 60 Hz dryfuje, pułapka faza-08.md), wysyłka snapshotów 30 Hz per pokój.
+// Operacje lobby (join/leave/start) idą osobną, tekstową ścieżką w Connection i NIE
+// blokują pętli fizyki (pułapka faza-10.md).
 
 export interface GameServerOptions {
   log?: Logger;
@@ -22,17 +24,15 @@ export interface GameServerOptions {
 
 export interface GameServer {
   readonly wss: WebSocketServer;
-  readonly room: GameRoom;
+  readonly lobby: Lobby;
   /** Rozwiązuje się rzeczywistym portem nasłuchu (przydatne przy port=0 w testach). */
   readonly ready: Promise<number>;
   close(): Promise<void>;
 }
 
 const SNAPSHOT_INTERVAL_S = 1 / SNAPSHOT_HZ;
-/** Co ile sekund logować rozmiar snapshotu (benchmark pasma — kryterium fazy 8). */
-const SNAPSHOT_LOG_INTERVAL_S = 5;
-/** Zapas encji w buforze snapshotu (8 graczy fazy 8 + margines). */
-const SNAPSHOT_CAPACITY = 32;
+/** Bufor snapshotu mieści maksymalny pokój (zero alokacji per tick). */
+const SNAPSHOT_CAPACITY = MAX_PLAYERS_PER_ROOM;
 
 const consoleLogger: Logger = {
   info: (...a) => console.info(...a),
@@ -42,22 +42,20 @@ const consoleLogger: Logger = {
 
 export function createGameServer(port: number, options: GameServerOptions = {}): GameServer {
   const log = options.log ?? consoleLogger;
-  const room = new GameRoom(options.seed, (msg) => log.error({ ctx: 'room' }, msg));
+  const lobby = new Lobby(options.seed, (msg) => log.error({ ctx: 'room' }, msg));
   const wss = new WebSocketServer({ port });
-  const connections = new Set<Connection>();
 
   wss.on('connection', (socket, request) => {
     const remote = request.socket.remoteAddress ?? '?';
-    const conn = new Connection(socket, room, log, remote);
-    connections.add(conn);
-    socket.on('close', () => connections.delete(conn));
+    new Connection(socket, lobby, log, remote);
   });
 
   const snapshotScratch = new Uint8Array(snapshotByteLength(SNAPSHOT_CAPACITY));
-  const loop = new FixedStepLoop(FIXED_DT_S, (dtS) => room.step(dtS));
+  const loop = new FixedStepLoop(FIXED_DT_S, (dtS) => {
+    for (const room of lobby.allRooms()) room.step(dtS);
+  });
   let lastMs = performance.now();
   let snapshotAccumS = 0;
-  let logAccumS = 0;
 
   // timer celuje w krok fizyki; FixedStepLoop dogania/wyrównuje realnym czasem
   const timer = setInterval(() => {
@@ -66,23 +64,13 @@ export function createGameServer(port: number, options: GameServerOptions = {}):
     lastMs = now;
 
     loop.advance(frameDtS);
+    lobby.maintain(Date.now());
 
     snapshotAccumS += frameDtS;
     if (snapshotAccumS >= SNAPSHOT_INTERVAL_S) {
       // nie kumuluj zaległości snapshotów (po przestoju wyślij jeden, nie serię)
       snapshotAccumS %= SNAPSHOT_INTERVAL_S;
-      for (const conn of connections) conn.sendSnapshot(snapshotScratch);
-
-      logAccumS += SNAPSHOT_INTERVAL_S;
-      if (logAccumS >= SNAPSHOT_LOG_INTERVAL_S && room.playerCount > 0) {
-        logAccumS = 0;
-        const count = room.snapshotEntities().length;
-        const bytes = snapshotByteLength(count);
-        log.info(
-          { entities: count, bytes, bytesPerSec: bytes * SNAPSHOT_HZ },
-          'rozmiar snapshotu (benchmark pasma)',
-        );
-      }
+      for (const room of lobby.allRooms()) room.sendSnapshots(snapshotScratch);
     }
   }, 1000 / PHYSICS_HZ);
   // pętla czasu serwera nie powinna trzymać procesu przy życiu sama z siebie (test cleanup)
@@ -95,7 +83,7 @@ export function createGameServer(port: number, options: GameServerOptions = {}):
 
   return {
     wss,
-    room,
+    lobby,
     ready,
     close: () =>
       new Promise<void>((resolve) => {

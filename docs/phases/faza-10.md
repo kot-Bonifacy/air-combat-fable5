@@ -44,6 +44,37 @@ Poza zakresem: matchmaking automatyczny, konta, czat (backlog), boty w pokojach 
 - Kod pokoju: alfabet bez O/0, I/1 (dyktowanie przez Discord)
 - Stan `playing` nie może blokować pętli fizyki na operacje lobby (osobne ścieżki przetwarzania)
 
-## Wynik (uzupełnić po zakończeniu)
+## Wynik (2026-06-16)
 
-—
+Zrealizowane. Serwer przeszedł z pojedynczego globalnego pokoju na **rejestr wielu pokoi**
+(`packages/server/src/lobby.ts`) + maszynę stanów per pokój w `GameRoom`
+(`waiting`/`playing`/`ended`). Kluczowe decyzje i pułapki:
+
+- **Protokół (shared/net):** osobny kanał tekstowy/JSON dla lobby (niezmiennik nr 6).
+  Nowe wiadomości: `listRooms`/`createRoom`/`joinRoom`/`quickPlay`/`startMatch`/`leaveRoom`
+  (klient→serwer) oraz `roomList`/`roomJoined`/`roomUpdate`/`matchStarted` (serwer→klient).
+  `WelcomeMessage` straciło `playerId` (id jest per-pokój → `roomJoined.youId`) i zyskało
+  `sessionToken`. `sanitizeNick` (whitelist `\p{L}\p{N} ._-`, max 16, fallback „Pilot" — XSS!),
+  `isValidRoomCode` (alfabet bez O/0/I/1).
+- **GameRoom:** krok fizyki tylko w `playing` (w `waiting` no-op, `tick` stoi). Pierwszy gracz
+  = host; host migruje przy wyjściu/rozłączeniu (tylko do PODŁĄCZONEGO gracza). Late join w
+  `playing` = `life='dead'` z wyzerowanym timerem → `RESPAWN_DELAY_S`(=3 s) i spawn (MVP, bez
+  czekania na koniec meczu). Pokój zna członków przez interfejs `RoomMember` (przecina cykl
+  importu z Connection) i sam koduje/rozsyła snapshoty per-gracz oraz wiadomości lobby.
+- **Reconnect:** token sesji → mapa `token→kod` w Lobby. Po rozłączeniu slot trzymany
+  (`detachMember`), `lobby.maintain` zwalnia po `RECONNECT_WINDOW_MS`(=60 s) i usuwa pusty
+  pokój — **brak wycieku pokoi** (test: 100 cykli utwórz→rozłącz→wygaśnięcie → 0 pokoi).
+  To UX, nie auth (pułapka: token ≠ bezpieczeństwo kont).
+- **Klient:** **leniwe łączenie** — `NetClient` powstaje przy pierwszej akcji w lobby, więc
+  hello niesie aktualny nick (zmiana nicka po połączeniu = reconnect). Token w localStorage,
+  przy reloadzie próba reconnectu z fallbackiem do lobby po 1,5 s. Render/input/predykcja
+  tylko w fazie `playing`; ekrany lobby to vanilla DOM nad canvasem (`net/lobby-ui.ts`),
+  poczekalnia na tle `dogfight-splash.jpg`. Nicki innych graczy renderowane przez
+  `textContent` (XSS). „Szybka gra" dołącza do otwartego pokoju (preferuje trwający mecz)
+  albo tworzy nowy.
+
+Wszystkie kryteria spełnione w kodzie i testach (maszyna stanów, reconnect, brak wycieku,
+pełny/zły kod). `typecheck` + `test` (335) + `lint` + `build` zielone.
+
+**Do zrobienia ręcznie przed deployem:** wrzucić plik tła `assets/dogfight-splash.jpg`
+(grafika promo „Dogfight") — kod ładuje go z `/dogfight-splash.jpg`.

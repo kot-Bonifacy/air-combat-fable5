@@ -318,39 +318,192 @@ export function decodeSnapshot(view: DataView): Snapshot {
   return { serverTick, ackSeq, entities };
 }
 
-// =========================== HANDSHAKE / EVENTY (JSON, tekst) ===========================
+// =========================== HANDSHAKE / EVENTY / LOBBY (JSON, tekst) ===========================
+//
+// Lobby (faza 10, docs/phases/faza-10.md): kanał tekstowy/JSON poza hot pathem
+// (niezmiennik nr 6). Handshake przyjmuje gracza do LOBBY (nie od razu do gry);
+// dalej gracz tworzy/dołącza do pokoju jawnymi wiadomościami. Render i ramki binarne
+// INPUT/SNAPSHOT ruszają dopiero w stanie pokoju 'playing'.
 
-/** Klient → serwer: zgłoszenie z wersją protokołu i nickiem. */
+/** Maksymalna długość nicka (znaki po sanityzacji). */
+export const MAX_NICK_LENGTH = 16;
+/** Maksymalna liczba graczy w jednym pokoju (budżet snapshotu fazy 8). */
+export const MAX_PLAYERS_PER_ROOM = 8;
+/** Długość kodu pokoju (4 litery — dyktowane przez Discord). */
+export const ROOM_CODE_LENGTH = 4;
+/** Alfabet kodu pokoju bez mylących par O/0 oraz I/1 (pułapka faza-10.md). */
+export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+/** Okno reconnectu po rozłączeniu [ms] — slot gracza czeka na ten sam token sesji. */
+export const RECONNECT_WINDOW_MS = 60_000;
+
+const NICK_FALLBACK = 'Pilot';
+// whitelist znaków nicka: nick trafia do DOM innych graczy → żadnego HTML (XSS!).
+// Litery (też z diakrytykami), cyfry, spacja i kilka bezpiecznych znaków.
+const NICK_ALLOWED = /[\p{L}\p{N} ._-]/u;
+
+/**
+ * Sanityzuje nick z sieci/wejścia: whitelist znaków, zwinięcie spacji, limit długości.
+ * Zwraca NICK_FALLBACK, gdy po oczyszczeniu nic nie zostało. NIGDY nie przepuszcza HTML.
+ */
+export function sanitizeNick(raw: unknown): string {
+  if (typeof raw !== 'string') return NICK_FALLBACK;
+  let out = '';
+  for (const ch of raw.normalize('NFC')) {
+    if (NICK_ALLOWED.test(ch)) out += ch;
+    if (out.length >= MAX_NICK_LENGTH) break;
+  }
+  out = out.replace(/\s+/g, ' ').trim();
+  return out.length > 0 ? out.slice(0, MAX_NICK_LENGTH) : NICK_FALLBACK;
+}
+
+/** Czy `code` to poprawny kod pokoju (wielkie litery z alfabetu, właściwa długość). */
+export function isValidRoomCode(code: unknown): code is string {
+  if (typeof code !== 'string' || code.length !== ROOM_CODE_LENGTH) return false;
+  for (const ch of code) {
+    if (!ROOM_CODE_ALPHABET.includes(ch)) return false;
+  }
+  return true;
+}
+
+/** Stan pokoju: poczekalnia → gra → zakończony mecz. */
+export type RoomState = 'waiting' | 'playing' | 'ended';
+
+/** Skrót pokoju na liście otwartych pokoi. */
+export interface RoomSummary {
+  code: string;
+  playerCount: number;
+  maxPlayers: number;
+  state: RoomState;
+}
+
+/** Gracz w pokoju (lista poczekalni / scoreboard lobby). */
+export interface RoomPlayer {
+  id: number;
+  nick: string;
+}
+
+// --- klient → serwer ---
+
+/** Klient → serwer: zgłoszenie z wersją protokołu, nickiem i (opcjonalnie) tokenem reconnectu. */
 export interface HelloMessage {
   t: 'hello';
   v: number;
   nick?: string;
+  /** Token sesji z poprzedniego połączenia (localStorage) — próba reconnectu. */
+  token?: string;
 }
 
-/** Serwer → klient: przyjęcie, przydzielone id i parametry symulacji. */
+/** Klient → serwer: poproś o listę otwartych pokoi. */
+export interface ListRoomsMessage {
+  t: 'listRooms';
+}
+
+/** Klient → serwer: utwórz nowy pokój (zostajesz hostem). */
+export interface CreateRoomMessage {
+  t: 'createRoom';
+}
+
+/** Klient → serwer: dołącz do pokoju o podanym kodzie. */
+export interface JoinRoomMessage {
+  t: 'joinRoom';
+  code: string;
+}
+
+/** Klient → serwer: szybka gra — dołącz do publicznego pokoju albo utwórz go. */
+export interface QuickPlayMessage {
+  t: 'quickPlay';
+}
+
+/** Klient → serwer: host startuje mecz (poczekalnia → gra). */
+export interface StartMatchMessage {
+  t: 'startMatch';
+}
+
+/** Klient → serwer: opuść bieżący pokój (powrót do lobby). */
+export interface LeaveRoomMessage {
+  t: 'leaveRoom';
+}
+
+// --- serwer → klient ---
+
+/** Serwer → klient: przyjęcie do lobby, parametry symulacji + token sesji do reconnectu.
+ *  Id gracza jest per-pokój i przychodzi dopiero w RoomJoinedMessage.youId. */
 export interface WelcomeMessage {
   t: 'welcome';
-  playerId: number;
   protocolVersion: number;
   physicsHz: number;
   snapshotHz: number;
+  /** Token sesji — klient zapisuje w localStorage i odsyła w hello przy reconnect. */
+  sessionToken: string;
 }
 
-/** Serwer → klient: odrzucenie (np. niezgodna wersja) — połączenie zostanie zamknięte. */
+/** Serwer → klient: lista otwartych pokoi. */
+export interface RoomListMessage {
+  t: 'roomList';
+  rooms: RoomSummary[];
+}
+
+/** Serwer → klient: potwierdzenie wejścia do pokoju (po create/join/quickPlay/reconnect). */
+export interface RoomJoinedMessage {
+  t: 'roomJoined';
+  code: string;
+  /** Id TEGO gracza w pokoju (= playerId encji w snapshocie). */
+  youId: number;
+  hostId: number;
+  state: RoomState;
+  players: RoomPlayer[];
+}
+
+/** Serwer → klient: zmiana składu/hosta/stanu pokoju (broadcast do członków). */
+export interface RoomUpdateMessage {
+  t: 'roomUpdate';
+  hostId: number;
+  state: RoomState;
+  players: RoomPlayer[];
+}
+
+/** Serwer → klient: mecz wystartował (poczekalnia → gra; klient włącza render). */
+export interface MatchStartedMessage {
+  t: 'matchStarted';
+}
+
+/** Serwer → klient: odrzucenie/błąd. Część kodów zamyka połączenie, część zostaje w lobby. */
 export interface ErrorMessage {
   t: 'error';
-  code: 'version' | 'malformed' | 'full' | 'internal';
+  code: 'version' | 'malformed' | 'full' | 'internal' | 'badCode' | 'notHost' | 'notInRoom';
   message: string;
 }
 
-/** Serwer → klient: rzadkie zdarzenie świata (spawn/respawn/…); rozszerzane w kolejnych fazach. */
-export interface EventMessage {
-  t: 'event';
-  kind: 'spawn' | 'respawn';
-  id: number;
-}
+export type ControlMessage =
+  | HelloMessage
+  | ListRoomsMessage
+  | CreateRoomMessage
+  | JoinRoomMessage
+  | QuickPlayMessage
+  | StartMatchMessage
+  | LeaveRoomMessage
+  | WelcomeMessage
+  | RoomListMessage
+  | RoomJoinedMessage
+  | RoomUpdateMessage
+  | MatchStartedMessage
+  | ErrorMessage;
 
-export type ControlMessage = HelloMessage | WelcomeMessage | ErrorMessage | EventMessage;
+const CONTROL_TAGS: ReadonlySet<string> = new Set([
+  'hello',
+  'listRooms',
+  'createRoom',
+  'joinRoom',
+  'quickPlay',
+  'startMatch',
+  'leaveRoom',
+  'welcome',
+  'roomList',
+  'roomJoined',
+  'roomUpdate',
+  'matchStarted',
+  'error',
+]);
 
 /** Parsuje ramkę tekstową na wiadomość kontrolną. Zwraca null, gdy to nie nasz JSON. */
 export function parseControlMessage(text: string): ControlMessage | null {
@@ -362,7 +515,7 @@ export function parseControlMessage(text: string): ControlMessage | null {
   }
   if (typeof obj !== 'object' || obj === null) return null;
   const t = (obj as { t?: unknown }).t;
-  if (t === 'hello' || t === 'welcome' || t === 'error' || t === 'event') {
+  if (typeof t === 'string' && CONTROL_TAGS.has(t)) {
     return obj as ControlMessage;
   }
   return null;

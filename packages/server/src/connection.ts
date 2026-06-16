@@ -2,23 +2,27 @@ import type { RawData, WebSocket } from 'ws';
 import {
   INPUT_BYTES,
   INPUT_HZ,
+  PHYSICS_HZ,
   PROTOCOL_VERSION,
   SNAPSHOT_HZ,
-  PHYSICS_HZ,
   decodeInput,
-  encodeSnapshot,
   parseControlMessage,
+  sanitizeNick,
   validateInputFrame,
+  type ControlMessage,
   type ErrorMessage,
+  type RoomJoinedMessage,
   type WelcomeMessage,
 } from '@air-combat/shared';
-import type { GameRoom } from './game-room';
+import type { GameRoom, RoomMember } from './game-room';
+import type { Lobby } from './lobby';
 
-// Jedno połączenie WS (faza 8). Maszyna stanów: handshaking → playing → closed.
-// Handshake JSON niesie bajt wersji protokołu; ramki binarne (INPUT) przyjmowane
-// dopiero po przyjęciu. Niezmiennik nr 11 (brak zaufania do klienta): każdy pakiet
-// walidowany — rozmiar, tag, zakresy wartości, rate limit. Spreparowany pakiet jest
-// odrzucany z logiem, połączenie i serwer żyją dalej.
+// Jedno połączenie WS. Maszyna stanów: handshaking → lobby → inRoom → closed (faza 10).
+// Handshake JSON niesie wersję protokołu, nick i opcjonalny token reconnectu. Po przyjęciu
+// gracz jest w LOBBY (jeszcze nie lata) i steruje pokojami wiadomościami kontrolnymi (JSON).
+// Ramki binarne INPUT przyjmowane dopiero w pokoju w stanie 'playing'. Niezmiennik nr 11
+// (brak zaufania do klienta): każdy pakiet walidowany — rozmiar, tag, zakresy, rate limit.
+// Connection implementuje RoomMember — pokój rozsyła przez nie JSON i snapshoty.
 
 /** Minimalny interfejs loggera (pino spełnia go strukturalnie). */
 export interface Logger {
@@ -29,22 +33,30 @@ export interface Logger {
 
 /** Sufit liczby ramek INPUT na sekundę zanim zaczniemy je odrzucać (2× INPUT_HZ = zapas na jitter). */
 const MAX_INPUTS_PER_SEC = INPUT_HZ * 2;
+/** Sufit wiadomości kontrolnych (lobby) na sekundę — tani antyspam (poza hot pathem). */
+const MAX_CONTROL_PER_SEC = 20;
 /** Po tylu odrzuconych pakietach z rzędu rozłączamy uparcie złośliwego klienta. */
 const MAX_VIOLATIONS = 240;
 
-type ConnState = 'handshaking' | 'playing' | 'closed';
+type ConnState = 'handshaking' | 'lobby' | 'inRoom' | 'closed';
 
-export class Connection {
+export class Connection implements RoomMember {
   private state: ConnState = 'handshaking';
+  private room: GameRoom | null = null;
   private playerId: number | null = null;
+  private token = '';
+  private nick = '';
   private violations = 0;
-  // okno rate-limitu: liczba ramek w bieżącej sekundzie
-  private windowStartMs = 0;
-  private windowCount = 0;
+  // okno rate-limitu ramek INPUT
+  private inputWindowStartMs = 0;
+  private inputWindowCount = 0;
+  // okno rate-limitu wiadomości kontrolnych
+  private ctrlWindowStartMs = 0;
+  private ctrlWindowCount = 0;
 
   constructor(
     private readonly socket: WebSocket,
-    private readonly room: GameRoom,
+    private readonly lobby: Lobby,
     private readonly log: Logger,
     private readonly remote: string,
   ) {
@@ -64,59 +76,188 @@ export class Connection {
     });
   }
 
-  get isPlaying(): boolean {
-    return this.state === 'playing';
+  // --- RoomMember: rozsyłka z pokoju ---
+
+  sendControl(msg: ControlMessage): void {
+    if (this.socket.readyState === this.socket.OPEN) this.socket.send(JSON.stringify(msg));
   }
 
-  // --- handshake / tekst ---
+  sendSnapshotBytes(bytes: Uint8Array): void {
+    if (this.socket.readyState === this.socket.OPEN) this.socket.send(bytes);
+  }
+
+  // --- tekst: handshake + wiadomości lobby ---
 
   private onText(data: RawData): void {
     const text = data.toString();
-    // legacy keepalive wskaźnika net-status w kliencie offline (dev) — dozwolony zawsze
+    // legacy keepalive wskaźnika net-status w kliencie (dev) — dozwolony zawsze
     if (text === 'ping') {
       this.socket.send('pong');
       return;
     }
     const msg = parseControlMessage(text);
-    if (!msg || msg.t !== 'hello') {
-      this.log.warn({ remote: this.remote }, 'oczekiwano hello, odrzucono ramkę tekstową');
+    if (!msg) {
+      this.log.warn({ remote: this.remote }, 'nieznana ramka tekstowa — odrzucono');
       this.flagViolation();
       return;
     }
-    if (this.state !== 'handshaking') return; // powtórny hello — ignoruj
-    if (msg.v !== PROTOCOL_VERSION) {
+    if (this.state === 'handshaking') {
+      if (msg.t !== 'hello') {
+        this.log.warn({ remote: this.remote }, 'oczekiwano hello — odrzucono');
+        this.flagViolation();
+        return;
+      }
+      this.handleHello(msg.v, msg.nick, msg.token);
+      return;
+    }
+    if (!this.allowControlByRate()) {
+      this.log.warn({ remote: this.remote }, 'przekroczony rate limit wiadomości lobby');
+      this.flagViolation();
+      return;
+    }
+    this.handleLobby(msg);
+  }
+
+  private handleHello(version: number, rawNick: unknown, token: unknown): void {
+    if (version !== PROTOCOL_VERSION) {
       const err: ErrorMessage = {
         t: 'error',
         code: 'version',
-        message: `niezgodna wersja protokołu: serwer ${String(PROTOCOL_VERSION)}, klient ${String(msg.v)}`,
+        message: `niezgodna wersja protokołu: serwer ${String(PROTOCOL_VERSION)}, klient ${String(version)}`,
       };
-      this.log.warn({ remote: this.remote, clientV: msg.v }, 'odrzucono — niezgodna wersja protokołu');
+      this.log.warn({ remote: this.remote, clientV: version }, 'odrzucono — niezgodna wersja protokołu');
       this.socket.send(JSON.stringify(err));
       this.socket.close();
       return;
     }
-    this.playerId = this.room.addPlayer();
-    this.state = 'playing';
+    this.nick = sanitizeNick(rawNick);
+
+    // próba reconnectu po istniejącym tokenie (ten sam slot w pokoju, okno 60 s)
+    if (typeof token === 'string' && token.length > 0) {
+      const resumed = this.lobby.tryReconnect(token, this);
+      if (resumed) {
+        this.token = token;
+        this.room = resumed.room;
+        this.playerId = resumed.playerId;
+        this.nick = resumed.room.nick(resumed.playerId) ?? this.nick;
+        this.state = 'inRoom';
+        this.sendWelcome();
+        this.sendRoomJoined(resumed.room, resumed.playerId);
+        this.log.info({ remote: this.remote, code: resumed.room.code, playerId: resumed.playerId }, 'reconnect gracza');
+        return;
+      }
+    }
+
+    this.token = this.lobby.newSessionToken();
+    this.state = 'lobby';
+    this.sendWelcome();
+    this.log.info({ remote: this.remote, nick: this.nick }, 'gracz w lobby');
+  }
+
+  private handleLobby(msg: ControlMessage): void {
+    switch (msg.t) {
+      case 'hello':
+        return; // powtórny hello — ignoruj
+      case 'listRooms':
+        this.sendControl({ t: 'roomList', rooms: this.lobby.list() });
+        return;
+      case 'createRoom': {
+        if (this.state === 'inRoom') return;
+        const { room, playerId } = this.lobby.createRoom(this.nick, this.token, this);
+        this.enterRoom(room, playerId);
+        return;
+      }
+      case 'quickPlay': {
+        if (this.state === 'inRoom') return;
+        const { room, playerId } = this.lobby.quickPlay(this.nick, this.token, this);
+        this.enterRoom(room, playerId);
+        return;
+      }
+      case 'joinRoom': {
+        if (this.state === 'inRoom') return;
+        const result = this.lobby.joinRoom(msg.code, this.nick, this.token, this);
+        if (!result.ok) {
+          this.sendControl({ t: 'error', code: result.code, message: result.message });
+          return;
+        }
+        this.enterRoom(result.room, result.playerId);
+        return;
+      }
+      case 'startMatch': {
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        if (this.room.hostId !== this.playerId) {
+          this.sendControl({ t: 'error', code: 'notHost', message: 'tylko host może wystartować mecz' });
+          return;
+        }
+        this.room.start();
+        return;
+      }
+      case 'leaveRoom':
+        this.leaveRoom();
+        return;
+      default:
+        return; // wiadomości serwer→klient nie powinny tu trafiać
+    }
+  }
+
+  private enterRoom(room: GameRoom, playerId: number): void {
+    this.room = room;
+    this.playerId = playerId;
+    this.state = 'inRoom';
+    this.sendRoomJoined(room, playerId);
+    room.broadcastRoomUpdate();
+    this.log.info({ remote: this.remote, code: room.code, playerId }, 'gracz wszedł do pokoju');
+  }
+
+  private leaveRoom(): void {
+    if (this.playerId === null) return;
+    const code = this.room?.code;
+    this.lobby.leave(this.token, this.playerId);
+    this.room = null;
+    this.playerId = null;
+    this.state = 'lobby';
+    // nowy token: stara sesja zamknięta, klient już do niej nie wróci
+    this.token = this.lobby.newSessionToken();
+    this.sendWelcome();
+    this.log.info({ remote: this.remote, code }, 'gracz wyszedł z pokoju do lobby');
+  }
+
+  private sendWelcome(): void {
     const welcome: WelcomeMessage = {
       t: 'welcome',
-      playerId: this.playerId,
       protocolVersion: PROTOCOL_VERSION,
       physicsHz: PHYSICS_HZ,
       snapshotHz: SNAPSHOT_HZ,
+      sessionToken: this.token,
     };
     this.socket.send(JSON.stringify(welcome));
-    this.log.info({ remote: this.remote, playerId: this.playerId }, 'gracz dołączył');
+  }
+
+  private sendRoomJoined(room: GameRoom, playerId: number): void {
+    const msg: RoomJoinedMessage = {
+      t: 'roomJoined',
+      code: room.code,
+      youId: playerId,
+      hostId: room.hostId ?? playerId,
+      state: room.state,
+      players: room.roomPlayers(),
+    };
+    this.sendControl(msg);
   }
 
   // --- ramki binarne (INPUT) ---
 
   private onBinary(data: RawData): void {
-    if (this.state !== 'playing' || this.playerId === null) {
-      this.log.warn({ remote: this.remote }, 'ramka binarna przed handshake — odrzucono');
+    if (this.state !== 'inRoom' || !this.room || this.playerId === null) {
+      this.log.warn({ remote: this.remote }, 'ramka binarna poza pokojem — odrzucono');
       this.flagViolation();
       return;
     }
-    if (!this.allowByRate()) {
+    if (this.room.state !== 'playing') {
+      // input przed startem meczu — cicho ignoruj (klient mógł wyprzedzić matchStarted)
+      return;
+    }
+    if (!this.allowInputByRate()) {
       this.log.warn({ remote: this.remote }, 'przekroczony rate limit INPUT — pakiet odrzucony');
       this.flagViolation();
       return;
@@ -145,15 +286,25 @@ export class Connection {
     this.room.applyInput(this.playerId, frame);
   }
 
-  /** Token okienkowy: ≤ MAX_INPUTS_PER_SEC ramek na sekundę. */
-  private allowByRate(): boolean {
+  /** Token okienkowy: ≤ MAX_INPUTS_PER_SEC ramek INPUT na sekundę. */
+  private allowInputByRate(): boolean {
     const now = Date.now();
-    if (now - this.windowStartMs >= 1000) {
-      this.windowStartMs = now;
-      this.windowCount = 0;
+    if (now - this.inputWindowStartMs >= 1000) {
+      this.inputWindowStartMs = now;
+      this.inputWindowCount = 0;
     }
-    this.windowCount++;
-    return this.windowCount <= MAX_INPUTS_PER_SEC;
+    this.inputWindowCount++;
+    return this.inputWindowCount <= MAX_INPUTS_PER_SEC;
+  }
+
+  private allowControlByRate(): boolean {
+    const now = Date.now();
+    if (now - this.ctrlWindowStartMs >= 1000) {
+      this.ctrlWindowStartMs = now;
+      this.ctrlWindowCount = 0;
+    }
+    this.ctrlWindowCount++;
+    return this.ctrlWindowCount <= MAX_CONTROL_PER_SEC;
   }
 
   private flagViolation(): void {
@@ -163,29 +314,14 @@ export class Connection {
     }
   }
 
-  /**
-   * Koduje i wysyła snapshot dla TEGO klienta (ack i flaga „własny" są per-gracz).
-   * `scratch` to współdzielony bufor serwera — wysyłamy świeżą kopię (ws może
-   * buforować), więc nadpisanie scratcha przez kolejne połączenie jest bezpieczne.
-   */
-  sendSnapshot(scratch: Uint8Array): void {
-    if (this.state !== 'playing' || this.playerId === null) return;
-    const len = encodeSnapshot(
-      new DataView(scratch.buffer),
-      this.room.tick,
-      this.room.lastProcessedSeq(this.playerId),
-      this.playerId,
-      this.room.snapshotEntities(),
-    );
-    this.socket.send(scratch.slice(0, len));
-  }
-
   private cleanup(): void {
     if (this.state === 'closed') return;
     this.state = 'closed';
-    if (this.playerId !== null) {
-      this.room.removePlayer(this.playerId);
-      this.log.info({ remote: this.remote, playerId: this.playerId }, 'gracz rozłączony');
+    // NIE usuwamy gracza od razu — trzymamy slot na reconnect (okno 60 s, lobby.maintain
+    // posprząta po wygaśnięciu). Połączenie znika z pokoju jako RoomMember.
+    if (this.room && this.playerId !== null) {
+      this.room.detachMember(this.playerId, Date.now());
+      this.log.info({ remote: this.remote, code: this.room.code, playerId: this.playerId }, 'gracz rozłączony (slot trzymany na reconnect)');
     }
   }
 }

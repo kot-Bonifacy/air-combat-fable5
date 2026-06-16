@@ -8,14 +8,19 @@
 
 ## Status faz
 
-Fazy ukończone: 0–9. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
+Fazy ukończone: 0–10. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
 + snapshoty 30 Hz. Faza 9 (2026-06-16): client prediction + reconciliation własnego samolotu
 i interpolacja obcych — wspólny `stepPilotedPlane` (`shared/world/piloted-plane.ts`) używany
 przez serwer i klienta; moduły `packages/client/src/net/` (net-client, prediction, interpolation,
 net-conditions[+panel], net-debug-overlay); symulator warunków sieci (dev) + overlay metryk.
-Następna: Faza 10 — lobby i pokoje.
+Faza 10 (2026-06-16): lobby i pokoje — rejestr wielu pokoi (`server/lobby.ts`) + maszyna stanów
+`GameRoom` (waiting/playing/ended); protokół lobby = osobny kanał JSON (createRoom/joinRoom/
+quickPlay/startMatch + roomJoined/roomUpdate/matchStarted); token sesji + reconnect (okno 60 s,
+brak wycieku pokoi); klient: leniwe łączenie, ekrany lobby vanilla DOM (`client/src/net/lobby-ui.ts`),
+poczekalnia na tle `/dogfight-splash.jpg`. **Przed deployem: wrzucić `assets/dogfight-splash.jpg`.**
+Następna: Faza 11 — broń online + hit detection na serwerze.
 
 ## Stack (skrót)
 
