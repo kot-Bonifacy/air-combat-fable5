@@ -5,11 +5,8 @@ import {
   createPilotDemands,
   createSimPlane,
   createTerrain,
-  keyboardDemands,
-  pilotStep,
+  stepPilotedPlane,
   updateLifecycle,
-  validatePlaneState,
-  wrapToArena,
   type InputFrame,
   type PilotDemands,
   type PlaneConfig,
@@ -57,8 +54,6 @@ export class GameRoom {
   /** Licznik ticków fizyki (u32 w protokole) — monotoniczny, znacznik snapshotu. */
   tick = 0;
 
-  private readonly scratchWrap = new Vector3();
-  private readonly scratchAim = new Vector3();
   /** Bufor źródeł snapshotu — przebudowywany przy zmianie składu (zero alokacji per tick). */
   private snapshotSources: SnapshotEntitySource[] = [];
 
@@ -125,43 +120,23 @@ export class GameRoom {
   }
 
   private stepPlayer(player: ServerPlayer, dtS: number): void {
-    const { sim, demands } = player;
-    const state = sim.state;
+    const state = player.sim.state;
 
     if (state.life === 'alive') {
       const input = player.latestInput;
-      if (input) {
-        player.lastProcessedSeq = input.sequence;
-        state.throttle = input.throttle;
-        const hasKeyboard = input.pitchUp !== 0 || input.rollRight !== 0 || input.yawRight !== 0;
-        if (hasKeyboard) {
-          // niezerowe wychylenia omijają instruktora (bezpośrednie żądania przez kopertę);
-          // instruktor zresetowany, by po powrocie myszy nie strzelił starym stanem filtra
-          player.instructor.reset();
-          keyboardDemands(
-            state,
-            this.plane,
-            { pitchUp: input.pitchUp, rollRight: input.rollRight, yawRight: input.yawRight },
-            demands,
-          );
-        } else {
-          // mysz: instruktor prowadzi nos na kierunek celu (jednostkowy w świecie)
-          this.scratchAim.set(input.aimX, input.aimY, input.aimZ).normalize();
-          player.instructor.update(state, this.plane, this.scratchAim, dtS, demands);
-        }
-      } else {
-        // brak inputu (chwila po spawnie): trzymaj lot prosto, neutralne żądania
-        player.instructor.reset();
-        demands.nDemandG = 1;
-        demands.rollRateRadS = 0;
-        demands.yawRateRadS = 0;
-      }
-
-      pilotStep(sim, this.plane, demands, dtS);
-      wrapToArena(state.position, this.scratchWrap);
-      validatePlaneState(state, `serwer: gracz ${String(player.id)}`);
-      // brak walki w fazie 8: jedyna śmierć to rozbicie o ziemię → 'dead', potem respawn
-      updateLifecycle(state, this.terrain, dtS);
+      if (input) player.lastProcessedSeq = input.sequence;
+      // ta sama autorytatywna ścieżka co predykcja klienta (shared/world/piloted-plane).
+      // brak walki w fazie 8/9: jedyna śmierć to rozbicie o ziemię → 'dead', potem respawn.
+      stepPilotedPlane(
+        player.sim,
+        player.instructor,
+        this.plane,
+        player.demands,
+        input,
+        this.terrain,
+        dtS,
+        `serwer: gracz ${String(player.id)}`,
+      );
     } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
       this.spawn(player);
     }

@@ -52,6 +52,41 @@ Poza zakresem: lag compensation broni (faza 11), lobby (faza 10).
 - Czas: klient i serwer mają osobne zegary — synchronizacja przez tick serwera w snapshotach,
   nie przez `Date.now()` porównywany między maszynami
 
-## Wynik (uzupełnić po zakończeniu)
+## Wynik
 
-—
+Zrealizowane (2026-06-16). typecheck + 316 testów + lint zielone; build klienta (multi-page)
+i serwera OK.
+
+- **Wspólny autorytatywny tick** `shared/world/piloted-plane.ts` → `stepPilotedPlane`
+  (wyciągnięty z `GameRoom.stepPlayer`, używany przez serwer i predykcję — gwarancja, że
+  replay idzie tym samym kodem co serwer). Serwer zrefaktoryzowany na tę funkcję.
+- **Client prediction + reconciliation**: `client/src/net/prediction.ts` (`Predictor`).
+  Input działa natychmiast na lokalnej fizyce; bufor inputów; snapshot serwera = autorytet
+  dla stanu widocznego + replay nowszych niż ack; korekta wygładzana zanikającym OFFSETEM
+  RENDERU (τ = `RECONCILE_SMOOTH_TAU_S`), twardy snap ≥ `RECONCILE_SNAP_DIST_M` (50 m).
+  Ukryty stan maszyn poza snapshotem (tolerowany mikro-dryf), `iasMs` odtwarzane z prędkości.
+- **Snapshot interpolation**: `client/src/net/interpolation.ts` (`SnapshotInterpolator`).
+  Bufor `INTERP_DELAY_MS` (100 ms), lerp pozycji (toroidalnie bezpieczny) + slerp orientacji,
+  zegar odtwarzania po ticku serwera (nie `Date.now`), ekstrapolacja ≤ `INTERP_EXTRAPOLATION_MAX_MS`.
+- **Symulator sieci (dev)**: `client/src/net/net-conditions.ts` (`rollDelayMs`, czysty,
+  deterministyczny) wpięty w `NetClient` (TX/RX: opóźnienie, jitter, strata) + panel tweakpane
+  `net-conditions-panel.ts` (`[P]`, tylko DEV — tree-shaken z prod) z presetami.
+- **Network debug overlay**: `client/src/net/net-debug-overlay.ts` (`[N]`): ping, korekty
+  reconciliation (śr./maks/% < próg snap), utracone snapshoty, zajętość bufora interpolacji.
+- **`online-main.ts`** przepisany na predykcję (własny samolot) + interpolację (obce); reset
+  kamery przy teleporcie (zawinięcie torusa / respawn / snap).
+
+### Kryteria
+
+- [x] Przy 100 ms ping + 20 ms jitter + 2% loss korekty < próg snap — zweryfikowane TESTEM
+  zamkniętej pętli z lagiem (`prediction.test.ts`): `belowSnapFraction == 1`, `maxM < 10 m`.
+  Subiektywne „bez szarpnięć" — do potwierdzenia manualnie (przeglądarka).
+- [x] Dwa okna: implementacja gotowa (interpolacja obcych) — test manualny w przeglądarce.
+- [x] Pętla/przeciągnięcie online = offline: STRUKTURALNIE (wspólny `stepPilotedPlane`/`pilotStep`);
+  porównanie n(t) rejestratorem zostaje testem manualnym (online recorder nie budowany).
+- [x] Testy replay zielone (`piloted-plane.test.ts` determinizm + `prediction.test.ts` reconcile).
+- [x] typecheck + test + lint zielone; memory zapisane. Commit `faza-9`.
+
+Poza zakresem (świadomie): rejestrator w trybie online, lag compensation broni (faza 11),
+lobby (faza 10). Pamięć projektu nie zawiera `project_phase8_decisions.md` (faza 8 tylko w
+auto-pamięci) — do ewentualnego backfillu.

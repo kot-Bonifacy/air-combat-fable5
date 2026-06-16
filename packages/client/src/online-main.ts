@@ -22,13 +22,19 @@ import {
 import { ChaseCamera } from './chase-camera';
 import { KeyboardInput } from './input';
 import { MouseAim } from './mouse-aim';
-import { NetClient, defaultServerUrl } from './net-client';
+import { NetClient, defaultServerUrl } from './net/net-client';
+import { SnapshotInterpolator, createInterpolatedState } from './net/interpolation';
+import { NetDebugOverlay } from './net/net-debug-overlay';
+import { Predictor } from './net/prediction';
+import type { NetConditionsPanel } from './net/net-conditions-panel';
 import { createPlaneMesh, type PlaneModel } from './plane-mesh';
 import { createWorld } from './world';
 
-// Tryb online fazy 8 — osobna strona (online.html), izolowana od gry offline (main.ts).
-// Klient NIE liczy fizyki: wysyła input 60 Hz i renderuje najświeższy snapshot z serwera
-// SUROWO (bez interpolacji/predykcji — to faza 9). Broń online wyłączona (faza 11).
+// Tryb online fazy 9 — osobna strona (online.html). Własny samolot jest PREDYKOWANY
+// lokalnie (ta sama fizyka co serwer, przez Predictor): input działa natychmiast, a
+// snapshot serwera koryguje dryf (reconciliation). Obce samoloty idą przez interpolację
+// snapshotów (bufor ~100 ms). Klawisze: [N] overlay sieci, [P] panel symulatora (dev).
+// Broń online wciąż wyłączona (wraca w fazie 11).
 
 const plane = SPITFIRE_MK2;
 const wingspanM = Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
@@ -98,12 +104,19 @@ const aimCore = new MouseAimCore();
 const mouseAim = new MouseAim(renderer.domElement, aimCore);
 renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
 
-// --- sieć ---
+// --- sieć + predykcja + interpolacja ---
 const net = new NetClient(defaultServerUrl(PORT));
+const predictor = new Predictor(plane, terrain);
+const interpolator = new SnapshotInterpolator();
+const interpOut = createInterpolatedState();
+const overlay = new NetDebugOverlay();
 
 // --- meshe encji (jeden PlaneModel na id z serwera) ---
 const meshes = new Map<number, PlaneModel>();
-const seenIds = new Set<number>();
+const presentIds = new Set<number>();
+const remoteScratch: EntitySnapshot[] = [];
+let remoteCount = 0;
+let extrapolatingCount = 0;
 
 function ensureMesh(id: number): PlaneModel {
   let m = meshes.get(id);
@@ -115,9 +128,24 @@ function ensureMesh(id: number): PlaneModel {
   return m;
 }
 
-function localEntity(): EntitySnapshot | undefined {
-  return net.latestSnapshot?.entities.find((e) => e.isLocal);
-}
+// Każdy snapshot: własny samolot → reconciliation predyktora, obce → bufor interpolacji,
+// plus zarządzanie obecnością meshów (gracz wszedł/wyszedł).
+net.onSnapshot = (snap) => {
+  presentIds.clear();
+  remoteScratch.length = 0;
+  for (const e of snap.entities) {
+    presentIds.add(e.id);
+    ensureMesh(e.id);
+    if (e.isLocal) predictor.reconcile(e, snap.ackSeq);
+    else remoteScratch.push(e);
+  }
+  interpolator.ingest(snap.serverTick, remoteScratch);
+  for (const [id, m] of meshes) {
+    if (presentIds.has(id)) continue;
+    scene.remove(m.object);
+    meshes.delete(id);
+  }
+};
 
 // --- pętla wejścia (60 Hz, niezależnie od fps renderu) ---
 const scratchNose = new Vector3();
@@ -142,17 +170,17 @@ function sendInputTick(dtS: number): void {
   const rollRight = keyboard.rollDeflection;
   const yawRight = keyboard.yawDeflection;
 
-  const local = localEntity();
-  if (local) getForward(local.orientation, scratchNose);
+  // nos z PREDYKOWANEGO stanu (instant) — celownik renormalizowany lokalnie, nie z serwera;
+  // dzięki temu mysz odpowiada natychmiast (klucz fazy 9), a nie po RTT
+  if (predictor.ready) getForward(predictor.sim.state.orientation, scratchNose);
   else scratchNose.set(0, 0, 1);
 
   const hasKeyboard = pitchUp !== 0 || rollRight !== 0 || yawRight !== 0;
   if (mouseAim.locked && !hasKeyboard) {
-    // mysz prowadzi: cel z celownika, renormalizowany względem nosa z serwera
     aimCore.renormalize(scratchNose);
     aimCore.targetDir(scratchAim);
   } else {
-    // klawiatura lub brak locka: cel = nos (serwer i tak użyje klawiatury); aim nigdy zerowy
+    // klawiatura lub brak locka: cel = nos; aim nigdy zerowy (walidacja serwera)
     aimCore.alignTo(scratchNose);
     scratchAim.copy(scratchNose);
   }
@@ -163,31 +191,33 @@ function sendInputTick(dtS: number): void {
   inputFrame.pitchUp = pitchUp;
   inputFrame.rollRight = rollRight;
   inputFrame.yawRight = yawRight;
-  inputFrame.fire = false; // broń online wyłączona w fazie 8 (wraca w fazie 11)
+  inputFrame.fire = false; // broń online wyłączona w fazie 9 (wraca w fazie 11)
   inputFrame.aimX = scratchAim.x;
   inputFrame.aimY = scratchAim.y;
   inputFrame.aimZ = scratchAim.z;
-  net.sendInput(inputFrame);
+
+  net.sendInput(inputFrame); // do serwera (autorytet)
+  predictor.predict(inputFrame, inputFrame.sequence); // i natychmiast lokalnie
 }
 
 // --- HUD / status połączenia ---
 function updateHud(): void {
-  const local = localEntity();
-  const lines: string[] = ['TRYB ONLINE — faza 8 (broń wyłączona, input z opóźnieniem)'];
-  if (local) {
-    const tasKmh = local.velocity.length() * MS_TO_KMH;
+  const lines: string[] = ['TRYB ONLINE — faza 9 (predykcja + interpolacja)'];
+  if (predictor.ready) {
+    const s = predictor.sim.state;
+    const tasKmh = s.velocity.length() * MS_TO_KMH;
     lines.push(
       `prędkość ${tasKmh.toFixed(0).padStart(4)} km/h`,
-      `wysokość ${local.position.y.toFixed(0).padStart(5)} m`,
-      `gaz      ${(local.throttle * 100).toFixed(0).padStart(3)} %`,
-      `stan     ${local.life}${local.stalled ? '  PRZECIĄGNIĘCIE' : ''}`,
+      `wysokość ${s.position.y.toFixed(0).padStart(5)} m`,
+      `gaz      ${(s.throttle * 100).toFixed(0).padStart(3)} %`,
+      `stan     ${s.life}${s.stalled ? '  PRZECIĄGNIĘCIE' : ''}`,
     );
   }
   lines.push(
     '',
     `ping ${String(net.rttMs).padStart(3)} ms   id ${net.localPlayerId ?? '—'}   gracze ${net.latestSnapshot?.entities.length ?? 0}`,
     mouseAim.locked ? '[mysz aktywna]' : '[kliknij, by przejąć celowanie myszą]',
-    'WSAD/strzałki — ster • Q/E — kierunek • Shift/Ctrl — gaz',
+    'WSAD/strzałki — ster • Q/E — kierunek • Shift/Ctrl — gaz • [N] sieć',
   );
   hudEl.textContent = lines.join('\n');
 }
@@ -217,10 +247,33 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
 }
 
+// --- przełączniki debug: [N] overlay sieci, [P] panel symulatora (tylko dev) ---
+let conditionsPanel: NetConditionsPanel | undefined;
+let panelLoading = false;
+window.addEventListener('keydown', (event) => {
+  if (event.code === 'KeyN') {
+    overlay.toggle();
+  } else if (event.code === 'KeyP' && import.meta.env.DEV) {
+    if (conditionsPanel) {
+      conditionsPanel.toggle();
+    } else if (!panelLoading) {
+      panelLoading = true;
+      void import('./net/net-conditions-panel').then((m) => {
+        conditionsPanel = m.createNetConditionsPanel(net.conditions);
+      });
+    }
+  }
+});
+
 // --- pętla renderu ---
 let lastMs = performance.now();
 let inputAccumS = 0;
 let loadingHidden = false;
+// wykrycie teleportu własnego samolotu (zawinięcie torusa / respawn / twardy snap):
+// reset kamery zamiast wygładzonego przelotu przez całą arenę
+const prevLocalPos = new Vector3();
+let hasPrevLocal = false;
+const TELEPORT_JUMP_M = 1000; // > max ruchu na klatkę (600 m/s · 0.1 s = 60 m)
 
 renderer.setAnimationLoop(() => {
   const now = performance.now();
@@ -234,28 +287,38 @@ renderer.setAnimationLoop(() => {
     inputAccumS -= INPUT_DT_S;
   }
 
-  const snap = net.latestSnapshot;
-  if (snap) {
-    seenIds.clear();
-    for (const e of snap.entities) {
-      seenIds.add(e.id);
-      const m = ensureMesh(e.id);
-      m.object.position.copy(e.position); // SUROWO: bez interpolacji (faza 9)
-      m.object.quaternion.copy(e.orientation);
-      m.object.visible = e.life !== 'dead';
-      m.update(frameDtS, e.throttle, e.life === 'alive');
-    }
-    for (const [id, m] of meshes) {
-      if (seenIds.has(id)) continue;
-      scene.remove(m.object);
-      meshes.delete(id);
+  predictor.updateRender(frameDtS); // wygładź offset korekty
+  interpolator.update(frameDtS); // posuń zegar odtwarzania obcych
+
+  remoteCount = 0;
+  extrapolatingCount = 0;
+  const localId = net.localPlayerId;
+  for (const [id, m] of meshes) {
+    if (id === localId) {
+      if (!predictor.ready) continue;
+      const s = predictor.sim.state;
+      m.object.position.copy(predictor.renderPosition); // predykcja + wygładzenie
+      m.object.quaternion.copy(predictor.renderOrientation);
+      m.object.visible = s.life !== 'dead';
+      m.update(frameDtS, s.throttle, s.life === 'alive');
+    } else if (interpolator.sample(id, interpOut)) {
+      remoteCount++;
+      if (interpOut.extrapolated) extrapolatingCount++;
+      m.object.position.copy(interpOut.position); // interpolacja snapshotów
+      m.object.quaternion.copy(interpOut.orientation);
+      m.object.visible = interpOut.life !== 'dead';
+      m.update(frameDtS, interpOut.throttle, interpOut.life === 'alive');
     }
   }
 
-  const local = localEntity();
-  if (local) {
-    const lm = meshes.get(local.id);
-    if (lm) chaseCamera.update(frameDtS, lm.object.position, lm.object.quaternion, local.velocity, 0);
+  if (predictor.ready) {
+    const s = predictor.sim.state;
+    if (hasPrevLocal && prevLocalPos.distanceTo(predictor.renderPosition) > TELEPORT_JUMP_M) {
+      chaseCamera.reset(); // teleport — bez przelotu kamery przez arenę
+    }
+    prevLocalPos.copy(predictor.renderPosition);
+    hasPrevLocal = true;
+    chaseCamera.update(frameDtS, predictor.renderPosition, predictor.renderOrientation, s.velocity, 0);
     if (!loadingHidden) {
       document.getElementById('loading')?.classList.add('hidden');
       loadingHidden = true;
@@ -265,6 +328,16 @@ renderer.setAnimationLoop(() => {
   world.update(camera.position);
   updateHud();
   updateConnOverlay();
+  overlay.update({
+    status: net.status,
+    rttMs: net.rttMs,
+    conditions: net.conditions,
+    reconcile: predictor.metrics,
+    bufferMs: interpolator.bufferMs,
+    lostSnapshots: interpolator.lostSnapshots,
+    remoteCount,
+    extrapolatingCount,
+  });
   renderer.render(scene, camera);
 });
 

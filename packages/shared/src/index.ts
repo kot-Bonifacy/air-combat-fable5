@@ -22,6 +22,7 @@ export * from './planes/loader';
 export * from './world/terrain';
 export * from './world/arena';
 export * from './world/lifecycle';
+export * from './world/piloted-plane';
 export * from './world/match';
 export * from './world/zone';
 export * from './world/scoreboard';

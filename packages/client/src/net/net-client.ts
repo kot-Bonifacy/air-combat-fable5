@@ -7,11 +7,14 @@ import {
   type InputFrame,
   type Snapshot,
 } from '@air-combat/shared';
+import { defaultNetConditions, rollDelayMs, type NetConditionsConfig } from './net-conditions';
 
-// Klient sieciowy trybu online (faza 8): handshake JSON + binarny INPUT/SNAPSHOT.
-// CELOWO bez predykcji i interpolacji — renderujemy najświeższy snapshot „surowo",
-// input ma widoczne opóźnienie (to naprawia faza 9). RTT mierzymy z acka: serwer
-// odsyła ostatnią przetworzoną sekwencję, a my znamy moment jej wysłania.
+// Klient sieciowy trybu online. Handshake JSON + binarny INPUT/SNAPSHOT (faza 8) PLUS
+// (faza 9) wbudowany symulator warunków sieci: opóźnia/odrzuca wychodzące INPUT
+// i przychodzące SNAPSHOT wg `conditions`. RTT mierzymy od MOMENTU WYWOŁANIA sendInput
+// (przed sztucznym opóźnieniem) do przetworzenia acka — dzięki temu ping w overlay
+// odzwierciedla symulowany lag. Zdekodowane snapshoty trafiają do `onSnapshot`
+// (predykcja + interpolacja); `latestSnapshot` trzyma najnowszy po serverTick (HUD).
 
 export type NetStatus = 'connecting' | 'handshaking' | 'online' | 'error' | 'closed';
 
@@ -22,6 +25,10 @@ export class NetClient {
   localPlayerId: number | null = null;
   rttMs = 0;
   latestSnapshot: Snapshot | undefined;
+  /** Symulator warunków sieci (dev) — mutowany przez panel; domyślnie wyłączony. */
+  readonly conditions: NetConditionsConfig = defaultNetConditions();
+  /** Wywoływane dla KAŻDEGO zdekodowanego snapshotu (po symulowanym opóźnieniu). */
+  onSnapshot: ((snap: Snapshot) => void) | undefined;
 
   private readonly ws: WebSocket;
   private readonly inputBuf = new Uint8Array(INPUT_BYTES);
@@ -63,7 +70,12 @@ export class NetClient {
       return;
     }
     if (data instanceof ArrayBuffer) {
-      this.onSnapshot(data);
+      // symulator RX: opóźnij/odrzuć przychodzący snapshot (każda ramka to świeży
+      // ArrayBuffer z ws — można go bezpiecznie przetrzymać do dekodowania po delayu)
+      const delay = rollDelayMs(this.conditions);
+      if (delay === null) return; // zgubiony snapshot (symulacja) — gap złapie metryka
+      if (delay <= 0) this.handleSnapshot(data);
+      else setTimeout(() => this.handleSnapshot(data), delay);
     }
   }
 
@@ -79,35 +91,57 @@ export class NetClient {
     }
   }
 
-  private onSnapshot(buffer: ArrayBuffer): void {
+  private handleSnapshot(buffer: ArrayBuffer): void {
     let snap: Snapshot;
     try {
       snap = decodeSnapshot(new DataView(buffer));
     } catch {
       return; // uszkodzony snapshot — pomiń klatkę
     }
-    this.latestSnapshot = snap;
+    // RTT z acka liczony zawsze (nawet dla snapshotu, który po reorderingu jest starszy)
     const sentAt = this.sentTimes.get(snap.ackSeq);
     if (sentAt !== undefined) {
       this.rttMs = Math.round(performance.now() - sentAt);
-      // sprzątnij potwierdzone (i starsze) wpisy — mapa nie rośnie bez końca
       for (const seq of this.sentTimes.keys()) {
         if (seq <= snap.ackSeq) this.sentTimes.delete(seq);
       }
     }
+    // predykcja/interpolacja dostają KAŻDY snapshot (interpolator sam sortuje po ticku)
+    this.onSnapshot?.(snap);
+    // latestSnapshot = najnowszy po serverTick (jitter może dostarczyć starszy później)
+    if (!this.latestSnapshot || tickNewer(snap.serverTick, this.latestSnapshot.serverTick)) {
+      this.latestSnapshot = snap;
+    }
   }
 
-  /** Wysyła ramkę INPUT (zero alokacji — współdzielony bufor). No-op poza 'online'. */
+  /** Wysyła ramkę INPUT (symulator TX: opóźnia/odrzuca). No-op poza 'online'. */
   sendInput(frame: InputFrame): void {
     if (this.status !== 'online' || this.ws.readyState !== WebSocket.OPEN) return;
-    encodeInput(this.inputView, frame);
-    this.ws.send(this.inputBuf);
+    // znacznik czasu wysyłki PRZED symulowanym opóźnieniem → RTT obejmuje lag TX i RX
     this.sentTimes.set(frame.sequence, performance.now());
+    const delay = rollDelayMs(this.conditions);
+    if (delay === null) return; // zgubiony input (symulacja) — serwer go nie potwierdzi
+    if (delay <= 0) {
+      encodeInput(this.inputView, frame);
+      this.ws.send(this.inputBuf);
+      return;
+    }
+    // opóźnienie: kopiujemy bajty (współdzielony bufor zostałby nadpisany przed wysłaniem)
+    const copy = new Uint8Array(INPUT_BYTES);
+    encodeInput(new DataView(copy.buffer), frame);
+    setTimeout(() => {
+      if (this.ws.readyState === WebSocket.OPEN) this.ws.send(copy);
+    }, delay);
   }
 
   close(): void {
     this.ws.close();
   }
+}
+
+/** Czy tick `a` jest nowszy od `b` przy zawijaniu u32 (różnica w połówce zakresu). */
+function tickNewer(a: number, b: number): boolean {
+  return ((a - b) >>> 0) < 0x80000000 && a !== b;
 }
 
 /** Domyślny URL serwera gry: ten sam host co strona, port WS serwera (dev). */

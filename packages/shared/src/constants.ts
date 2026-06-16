@@ -140,3 +140,32 @@ export const ASSIST_POINTS = 50;
  * walka i strefa mniej więcej równoważne (decyzja briefingu 2026-06-14).
  */
 export const ZONE_POINTS_PER_SECOND = 1;
+
+// --- multiplayer cz.2 (faza 9): predykcja, reconciliation, interpolacja ---
+
+/**
+ * Opóźnienie bufora interpolacji obcych encji [ms]. Render obcych „w przeszłości"
+ * o tyle, by dwa kolejne snapshoty (30 Hz → 33 ms odstępu) prawie zawsze
+ * bracketowały czas renderu mimo jitteru — bez tego jitter daje teleporty.
+ * 100 ms to start, nie dogmat (faza-09.md): pole celowania (faza 11) może je obniżyć.
+ */
+export const INTERP_DELAY_MS = 100;
+
+/**
+ * Maksymalna ekstrapolacja obcej encji, gdy bufor się opróżni (zgubiony snapshot) [ms].
+ * Powyżej tego trzymamy ostatnią pozycję, zamiast wystrzelić samolot po stycznej.
+ */
+export const INTERP_EXTRAPOLATION_MAX_MS = 100;
+
+/**
+ * Próg „snap" korekty reconciliation [m]. Błąd predykcji własnego samolotu PONIŻEJ
+ * tej wartości wygładzamy zanikającym offsetem renderu (bez szarpnięcia); POWYŻEJ —
+ * render przeskakuje wprost na stan serwera (respawn, duży rozjazd po stracie pakietów).
+ */
+export const RECONCILE_SNAP_DIST_M = 50;
+
+/**
+ * Stała czasowa zaniku offsetu wygładzania korekty [s]. Mała korekta znika wizualnie
+ * w ~tej skali czasu; za duża = obcy „guma", za mała = widoczne mikro-szarpnięcia.
+ */
+export const RECONCILE_SMOOTH_TAU_S = 0.1;

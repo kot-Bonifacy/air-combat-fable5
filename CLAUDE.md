@@ -8,11 +8,14 @@
 
 ## Status faz
 
-Fazy ukończone: 0–8. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
+Fazy ukończone: 0–9. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
-+ snapshoty 30 Hz, klient online `online.html`/`online-main.ts`/`net-client.ts` (bez predykcji,
-bez walki). Następna: Faza 9 — multiplayer cz.2 (predykcja + reconciliation + interpolacja).
++ snapshoty 30 Hz. Faza 9 (2026-06-16): client prediction + reconciliation własnego samolotu
+i interpolacja obcych — wspólny `stepPilotedPlane` (`shared/world/piloted-plane.ts`) używany
+przez serwer i klienta; moduły `packages/client/src/net/` (net-client, prediction, interpolation,
+net-conditions[+panel], net-debug-overlay); symulator warunków sieci (dev) + overlay metryk.
+Następna: Faza 10 — lobby i pokoje.
 
 ## Stack (skrót)
 
