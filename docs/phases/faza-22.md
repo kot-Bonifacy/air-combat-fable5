@@ -1,6 +1,6 @@
-# Faza 17 — Modułowe uszkodzenia („zaawansowana fizyka walki")
+# Faza 22 — Modułowe uszkodzenia („zaawansowana fizyka walki")
 
-**Zależy od:** Faza 16
+**Zależy od:** Faza 21
 **Cel:** trafienia mają konsekwencje taktyczne — uszkodzony samolot lata gorzej w konkretny,
 czytelny sposób. Zwieńczenie projektu: fizyka walki na poziomie obiecanym w założeniach.
 

@@ -1,6 +1,6 @@
-# Faza 15 — Teren v2 (TWARDY TIMEBOX: jedna sesja)
+# Faza 20 — Teren v2 (TWARDY TIMEBOX: jedna sesja)
 
-**Zależy od:** Faza 14
+**Zależy od:** Faza 19
 **Cel:** ładniejszy świat bez regresji wydajności. To faza „nice to have" — gra jest już
 kompletna; tu wolno TYLKO ulepszać, nigdy przebudowywać.
 

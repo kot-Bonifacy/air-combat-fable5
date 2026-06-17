@@ -12,13 +12,13 @@ W tej fazie:
 - Symulacja pocisków w `shared`: punkt materialny z grawitacją i prostym oporem
   (deceleracja ~konfigurowalna), czas życia ~3 s, pula obiektów (zero alokacji w pętli)
 - Hit detection: raycast segmentowy (pozycja pocisku tick→tick) vs sfera otaczająca samolot
-  (jedna sfera w MVP; strefy trafień → faza 17)
+  (jedna sfera w MVP; strefy trafień → faza 22)
 - HP: pula globalna, dmg per trafienie, zniszczenie → wybuch + respawn (reużycie z fazy 4)
 - Klient: tracery (co 3. pocisk widoczny), błysk luf, hit marker (dźwięk wizualny — krzyżyk),
   kill feed lokalny, licznik amunicji w HUD
 - Cel testowy: balon/dron latający po okręgu (stała prędkość, bez AI) do testów celowania
 
-Poza zakresem: bot walczący (faza 6), sieć (fazy 8+), uszkodzenia modułowe (faza 17),
+Poza zakresem: bot walczący (faza 6), sieć (fazy 8+), uszkodzenia modułowe (faza 22),
 bomby/rakiety (backlog).
 
 ## Kroki

@@ -135,7 +135,7 @@ Każda siła ma własną funkcję `(state, plane) => Vector3` i własną strzał
   wykrywane symetrycznie (uproszczenie simcade: symetryczny zakres Cl).
 - Wyjście: oddać drążek / skierować nos w dół i nabrać prędkości — klasyczna procedura;
   trzymanie ciągnięcia utrzymuje przeciągnięcie (mush), bo n siedzi na n_avail.
-- Pełny korkociąg: backlog (faza 17 ma uproszczony po utracie skrzydła).
+- Pełny korkociąg: backlog (faza 22 ma uproszczony po utracie skrzydła).
 
 ### 6.6 Tolerancja przeciążenia pilota (G-LOC, decyzja 2026-06-14)
 - Problem: koperta (6.1) ogranicza n tylko strukturalnie (`n_max`) i aerodynamicznie
@@ -231,7 +231,7 @@ Morgan & Morris BA 1640). Kolumna Bf 109 E-3 do rewizji źródłowej w fazie 14.
 > 2995 ft/min przy niższym ratingu). Pozostałe metryki bez zmian (ten sam
 > płatowiec). Tabela Mk IA poniżej zachowana jako baseline.
 
-| Metryka | Spitfire Mk IA (+12 lb) | Bf 109 E-3 (faza 14) |
+| Metryka | Spitfire Mk IA (+12 lb) | Bf 109 E-3 (faza 19) |
 |---|---|---|
 | V_max na poziomie morza (TAS) | ~505 km/h (314 mph, RAE) | ~465 km/h |
 | V_max na 5–6 km (TAS) | ~570 km/h (354 mph @ 18.9k ft) | ~555 km/h |

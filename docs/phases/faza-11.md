@@ -19,7 +19,7 @@ W tej fazie:
 - Walidacja antygriefingowa: kadencja po stronie serwera (klient nie może strzelać szybciej),
   zapas amunicji liczony serwerowo
 
-Poza zakresem: uszkodzenia modułowe (faza 17), friendly fire / drużyny (faza 13).
+Poza zakresem: uszkodzenia modułowe (faza 22), friendly fire / drużyny (faza 18).
 
 ## Kroki
 

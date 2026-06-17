@@ -1,6 +1,6 @@
-# Faza 16 — Dźwięk i efekty
+# Faza 21 — Dźwięk i efekty
 
-**Zależy od:** Faza 15
+**Zależy od:** Faza 20
 **Cel:** gra brzmi i wygląda jak walka powietrzna — immersja, ale też informacja
 (dźwięk silnika = prędkość/moc, świst = przeciągnięcie, trafienia słyszalne).
 
@@ -40,7 +40,7 @@ Poza zakresem: muzyka, voice lines, doppler (nice-to-have: backlog).
 - [ ] Wszystkie sample wpisane w LICENSES.md
 - [ ] Brak błędów autoplay w konsoli (Chrome/Firefox/Edge)
 - [ ] 60 fps utrzymane przy pełnej walce 8 samolotów z efektami
-- [ ] typecheck + test + lint zielone; commit `faza-16`; memory zapisane
+- [ ] typecheck + test + lint zielone; commit `faza-21`; memory zapisane
 
 ## Pułapki
 

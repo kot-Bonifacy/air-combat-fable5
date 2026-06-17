@@ -2,7 +2,7 @@
 
 **Zależy od:** Faza 3
 **Cel:** kontekst przestrzenny do walki (punkt odniesienia wysokości i prędkości) przy
-MINIMALNYM koszcie. Teren „ładny" to faza 15 — nie tu.
+MINIMALNYM koszcie. Teren „ładny" to faza 20 — nie tu.
 
 ## Zakres
 

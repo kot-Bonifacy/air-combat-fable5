@@ -1,6 +1,6 @@
-# Faza 14 — Drugi samolot + balans: Bf 109 E
+# Faza 19 — Drugi samolot + balans: Bf 109 E
 
-**Zależy od:** Faza 13
+**Zależy od:** Faza 18 (parytet multiplayera ukończony)
 **Cel:** asymetryczny matchup Spitfire (turn-fighter) vs Bf 109 (energy-fighter) —
 dowód, że architektura fizyki rzeczywiście jest data-driven.
 
@@ -38,7 +38,7 @@ ZAKAZANY — asymetria to feature).
 - [ ] Boty latają oboma typami bez zmian w AI (interfejs instruktora wystarcza)
 - [ ] Sesja balansowa 1v1: oba samoloty wygrywają mecze (żaden nie jest strictly better) —
   notatka w memory
-- [ ] typecheck + test + lint zielone; commit `faza-14`; memory zapisane
+- [ ] typecheck + test + lint zielone; commit `faza-19`; memory zapisane
 
 ## Pułapki
 

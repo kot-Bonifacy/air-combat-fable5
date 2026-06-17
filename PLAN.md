@@ -47,10 +47,10 @@ Kod referencyjny (do podglądania, nie kopiowania bez zrozumienia):
 | Sterowanie | Mysz (mouse-aim + instruktor) + klawiatura | Wzorzec WT; gamepad/HOTAS w backlogu |
 | Kamera | 3rd person chase | Brak kokpitów w MVP |
 | Boty | FSM sterujące przez instruktora (jak gracz) | Bot automatycznie respektuje kopertę — nie umie „oszukać" fizyki |
-| Uszkodzenia | Globalne HP w MVP; modułowe w fazie 17 | Najpierw fundament |
+| Uszkodzenia | Globalne HP w MVP; modułowe w fazie 22 | Najpierw fundament |
 | Świat | Arena 20×20 km: ocean + wyspa, start w powietrzu | Minimalny koszt, maksimum grywalności |
 | Konta | Stateless: nick + pokój. Brak DB | Prostota; konta w backlogu |
-| Samoloty | MVP: Spitfire Mk I; faza 14: Bf 109 E | Klasyczny matchup turn-fighter vs energy-fighter |
+| Samoloty | MVP: Spitfire Mk I; faza 19: Bf 109 E | Klasyczny matchup turn-fighter vs energy-fighter |
 | Assety 3D | Sketchfab / Poly Haven, CC0/CC-BY z atrybucją w `assets/LICENSES.md` | Twardy niezmiennik z CLAUDE.md |
 | Deploy | Docker, wzorzec C; port **8087**; subdomena **dogfight.tatanga.eu** (do potwierdzenia) | Zgodnie z `C:\AI\vps_home_pl_konfiguracja.md` |
 | Repo | `git init` w fazie 0, commit po każdej fazie | Historia faz = punkty powrotu |
@@ -65,7 +65,7 @@ Kod referencyjny (do podglądania, nie kopiowania bez zrozumienia):
 - Brak anti-cheata po stronie klienta (walidacja tylko serwerowa, hobby community)
 - Brak gamepada/HOTAS, brak voice chatu, brak monetyzacji
 - Brak streamingu mapy — stała arena 20×20 km
-- Dźwięk dopiero w fazie 16 (świadomie późno — nie blokuje grywalności)
+- Dźwięk dopiero w fazie 21 (świadomie późno — nie blokuje grywalności)
 
 ---
 
@@ -89,16 +89,69 @@ Każda faza = osobny plik, osobna sesja vibecodingu, mierzalne kryterium ukończ
 | 11 | `docs/phases/faza-11.md` | Walka sieciowa: serwerowy hit detection + lag compensation | „co widzę, to trafiam" |
 | 12 | `docs/phases/faza-12.md` | Boty na serwerze | mecz 1 gracz + 3 boty |
 | 13 | `docs/phases/faza-13.md` | Pętla meczu: FFA, scoreboard, respawn + deploy MP | **publiczny multiplayer** |
-| 14 | `docs/phases/faza-14.md` | Drugi samolot + balans (Bf 109 E) | asymetryczny matchup |
-| 15 | `docs/phases/faza-15.md` | Teren v2 (LOD, detale) — TIMEBOX | ładniej, bez regresji fps |
-| 16 | `docs/phases/faza-16.md` | Dźwięk i efekty | pełne udźwiękowienie |
-| 17 | `docs/phases/faza-17.md` | Modułowe uszkodzenia | odstrzelone skrzydło = korkociąg |
+| 14 | `docs/phases/faza-14.md` | Parytet MP cz.1 — wizualia i HUD online | wybuchy, dym, markery, reticle, pełny HUD online |
+| 15 | `docs/phases/faza-15.md` | Parytet MP cz.2 — obserwator + kamery po śmierci | brak „pustego kadru" po zestrzeleniu |
+| 16 | `docs/phases/faza-16.md` | Parytet MP cz.3 — kolizje + spadający wrak (serwer) | model śmierci jak w SP; domknięty kod `collision`/`dying` |
+| 17 | `docs/phases/faza-17.md` | Parytet MP cz.4 — kontrola strefy KotH (serwer) | główny cel gry także online |
+| 18 | `docs/phases/faza-18.md` | Parytet MP cz.5 — tryb drużynowy | **multiplayer ma parytet z singleplayer** |
+| 19 | `docs/phases/faza-19.md` | Drugi samolot + balans (Bf 109 E) | asymetryczny matchup |
+| 20 | `docs/phases/faza-20.md` | Teren v2 (LOD, detale) — TIMEBOX | ładniej, bez regresji fps |
+| 21 | `docs/phases/faza-21.md` | Dźwięk i efekty | pełne udźwiękowienie |
+| 22 | `docs/phases/faza-22.md` | Modułowe uszkodzenia | odstrzelone skrzydło = korkociąg |
 
-### Backlog (po fazie 17, kolejność do ustalenia)
+### Backlog (po fazie 22, kolejność do ustalenia)
 
 Kokpit 1st person · gamepad/HOTAS · konta i statystyki · replay system · TDM Allies vs Axis ·
 cele naziemne / eskorta bombowca · pogoda i wiatr · większa mapa ze streamingiem ·
 więcej samolotów (Hurricane, Bf 110) · tryb treningowy z samouczkiem
+
+---
+
+## Parytet multiplayera (Fazy 14–18) — domknięcie różnic MP ↔ SP
+
+Multiplayer (fazy 8–13) powstawał jako FFA deathmatch i jest uboższy od trybu single-player
+(`packages/client/src/main.ts`) — brakuje warstwy wizualnej/feedbacku, trybu obserwatora oraz
+kilku mechanik serwerowych. Ten blok (decyzja 2026-06-18: **pełny parytet przed Bf 109**)
+domyka różnice w pięciu sesjach. Kolejność wg rosnącego ryzyka i zależności: najpierw kosmetyka
+klienta, potem model śmierci na serwerze i kliencka warstwa śmierci, na końcu strefa i drużyny
+(serwer + lobby + protokół).
+
+Decyzje projektowe (2026-06-18, doprecyzowanie):
+- **Strefa i drużyny jako warstwa na FFA (jak SP)** — strefa KotH to DODATKOWY warunek zwycięstwa
+  obok limitu zestrzeleń/czasu; tryb drużynowy to OPCJA pokoju (host wybiera FFA/Drużynowy). Nie
+  robimy osobnych, rozłącznych trybów — mecz łączy warunki, jak w SP.
+- **Pełny parytet wraku gracza** — po zestrzeleniu w powietrzu gracz STERUJE własnym spadającym
+  wrakiem (`stepWreck`) z overlayem decyzji (obserwator / koniec), respawn wstrzymany. Wymaga to
+  lokalnej predykcji stanu `'dying'` (dziś `Predictor.predict` no-opuje, gdy nie-żywy) — dlatego
+  model `'dying'` na serwerze (Faza 15) MUSI poprzedzać kliencką warstwę śmierci (Faza 16).
+
+Ustalenia techniczne kształtujące plan:
+- Klient online **liczy pełną fizykę lokalnie** (`Predictor.sim` → `stepPilotedPlane` z
+  instruktorem i maszyną G-LOC), więc HUD-G, stall, greyout, przechył/pochylenie są dostępne
+  **bez zmiany protokołu**. Wyjątek: **amunicja** (predykcja nie symuluje ognia) — wymaga
+  +1 bajtu w snapshocie (bump `PROTOCOL_VERSION`).
+- Boty już mają waypoint strefy (`PATROL_WAYPOINTS` = środek strefy) — po dodaniu `ZoneControl`
+  na serwerze kontestują strefę bez zmian w `bot-manager.ts`.
+- Serwer **nie trzyma `prevPos`** per encja — dla zamiatanych kolizji samolot↔samolot trzeba go
+  dołożyć.
+
+Wykryte luki/niespójności do zaadresowania (martwy kod):
+- `KillCause 'collision'` jest w protokole i obsłużony przez klienta, ale **serwer nigdy go nie
+  emituje** (brak wykrywania kolizji samolotów) → Faza 15.
+- Faza życia `'dying'` (spadający wrak) jest w protokole, lecz serwer ustawia od razu `'dead'`
+  → różny model śmierci MP vs SP → Faza 15.
+
+| # | Nazwa | Warstwa | Protokół | Kluczowe elementy |
+|---|---|---|---|---|
+| 14 | Wizualia i HUD online | klient (+1 pole snap.) | bump (amunicja) | `Explosions`, `SmokeTrails`, `MuzzleFlash`, `EnemyMarker`+spotting, reticle+nose-marker, ostrzeżenie granicy, `RosterOverlay`, pełny HUD-G/stall/greyout |
+| 15 | Model śmierci na serwerze: kolizje + spadający wrak | serwer | bez bumpu (`'dying'`/`'collision'` już w protokole) | `prevPos` per encja, `resolvePlaneCollisions`+emisja `collision`, model `'dying'`+`stepWreck` serwerowo, `wreckImpact`→`dead` |
+| 16 | Kliencka warstwa śmierci: obserwator + sterowany wrak | klient | bez zmian | render spadającego wraku + dym wraku, lokalna predykcja `stepWreck` dla `'dying'`, sterowanie wrakiem + `DownedOverlay` (obserwator/koniec), tryb obserwatora (cykl LPM), kamera orbitalna (C), wybuch na `dying→dead` |
+| 17 | Kontrola strefy KotH (dodatkowy warunek, jak SP) | serwer + klient | +stan strefy w JSON `standings` | `ZoneControl` autorytatywnie, warunek `'zone'` OBOK limitu zestrzeleń/czasu, `ZoneBar`+marker strefy (boty już kontestują) |
+| 18 | Tryb drużynowy (opcja pokoju) | serwer + lobby + klient | +tryb/drużyny w `CreateRoom`, frakcje w JSON | frakcje serwerowo, friendly fire wg drużyn, wybór FFA/Drużynowy w lobby, kolory markerów wróg/sojusznik, scoreboard drużynowy (możliwy podział na 2 sesje) |
+
+Niezmienniki w mocy: serwer autorytetem (5), pakiety gry binarne (6), `shared` bez Node/DOM (9),
+`wss://` na produkcji (10), walidacja każdego inputu (11). Pliki `faza-14..18.md` powstają w
+swoich sesjach (zasada „nie scaffolduj na zapas").
 
 ---
 
@@ -136,7 +189,7 @@ Wzorzec C z `C:\AI\vps_home_pl_konfiguracja.md` (Tetris jako referencja):
    limity zasobów w docker-compose.
 3. **Brak dobrych modeli 3D CC0/CC-BY** dla konkretnych samolotów — plan B: stylizowany low-poly
    (własny lub generowany), estetyka „flat shading" zamiast realizmu. Decyzja w fazie 7/14.
-4. **Scope creep terenu** — historycznie zabił poprzedni projekt. Faza 15 ma twardy timebox
+4. **Scope creep terenu** — historycznie zabił poprzedni projekt. Faza 20 ma twardy timebox
    i status „nice to have".
 5. **Różnice float między przeglądarkami/Node** — akceptowane: serwer jest autorytetem,
    reconciliation koryguje dryf. NIE wymagać bitowego determinizmu.
@@ -151,6 +204,7 @@ Wzorzec C z `C:\AI\vps_home_pl_konfiguracja.md` (Tetris jako referencja):
 ## Otwarte decyzje (do podjęcia we wskazanych fazach)
 
 - Nazwa gry i subdomena (`dogfight.tatanga.eu` robocza) → faza 7
-- Źródło modeli 3D: konkretne assety CC vs stylizowany low-poly → faza 7 (demo) / 14
+- Źródło modeli 3D: konkretne assety CC vs stylizowany low-poly → faza 7 (demo) / 19
 - UI lobby: vanilla DOM (domyślnie) vs Preact → faza 10
 - Interest management: czy potrzebny przy 8 graczach → pomiar w fazie 13
+- Tryb drużynowy (faza 18): jedna sesja vs podział (serwer/lobby + UI/kolory) → decyzja przy doprecyzowaniu bloku parytetu

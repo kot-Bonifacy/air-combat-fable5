@@ -47,7 +47,10 @@ shutdown (`notifyShutdown` → komunikat zamiast spinnera). **Błąd naprawiony*
 (esbuild bundle, ws+pino external) + compose backend (mem_limit 256m/cpus 0.5/healthcheck) +
 runbook `deploy/WDROZENIE-NA-VPS.md` sekcja „Faza 13". **OTWARTE (użytkownik): deploy na VPS,
 smoke 2 os. przez wss://, `docker stats` przy pełnym pokoju → memory; tag `mp-1`.**
-Następna: Faza 14 — drugi samolot (Bf 109 E) + balans (asymetryczny matchup).
+Następna: Faza 14 — parytet multiplayera cz.1 (wizualia i HUD online). Decyzja 2026-06-18:
+blok parytetu MP↔SP (Fazy 14–18: wizualia/HUD → obserwator → kolizje+wrak → strefa KotH →
+tryb drużynowy) PRZED Bf 109; dotychczasowe fazy przesunięte (Bf 109→19, teren→20, dźwięk→21,
+uszkodzenia→22). Szczegóły: sekcja „Parytet multiplayera" w PLAN.md.
 
 ## Stack (skrót)
 
@@ -133,7 +136,7 @@ memory/
   - zaktualizuj linię „Status faz" na górze tego pliku
   - `git commit` z opisem fazy
 - **Nie scaffolduj na zapas** — plik powstaje w fazie, która go używa.
-- **Timeboxy są twarde** (szczególnie faza 15 — teren). Po przekroczeniu: zamknij co działa,
+- **Timeboxy są twarde** (szczególnie faza 20 — teren). Po przekroczeniu: zamknij co działa,
   resztę do backlogu w PLAN.md.
 
 ## Referencje
