@@ -26,9 +26,11 @@ import {
   type GameEvent,
   type InputFrame,
   type KillCause,
+  type MatchEndedMessage,
   type RoomJoinedMessage,
   type RoomPlayer,
   type Snapshot,
+  type StandingsMessage,
 } from '@air-combat/shared';
 import { BulletTracers } from './bullet-tracers';
 import { ChaseCamera } from './chase-camera';
@@ -39,6 +41,7 @@ import { SnapshotInterpolator, createInterpolatedState } from './net/interpolati
 import { NetDebugOverlay } from './net/net-debug-overlay';
 import { Predictor } from './net/prediction';
 import { LobbyUI, type WaitingView } from './net/lobby-ui';
+import { ResultsOverlay, ScoreboardOverlay } from './net/match-ui';
 import type { NetConditionsPanel } from './net/net-conditions-panel';
 import { createPlaneMesh, type PlaneModel } from './plane-mesh';
 import { createWorld } from './world';
@@ -49,7 +52,9 @@ import { createWorld } from './world';
 // input + predykcja działają tylko w fazie 'playing'; w lobby pokazujemy ekrany DOM.
 // Predykcja/interpolacja jak w fazie 9. Faza 11: broń online — spust w INPUT, pociski
 // autorytatywne na serwerze; klient rysuje smugacze z eventu MUZZLE i pokazuje hit marker /
-// kill feed z eventów HIT / KILL (zero hit-detekcji po stronie klienta).
+// kill feed z eventów HIT / KILL (zero hit-detekcji po stronie klienta). Faza 13: pętla
+// meczu FFA — scoreboard na Tab (standings), ekran wyników z rewanżem (matchEnded), HUD
+// z zegarem i wynikiem; wszystko AUTORYTATYWNE z serwera (klient tylko wyświetla).
 
 const plane = SPITFIRE_MK2;
 const wingspanM = Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
@@ -134,9 +139,18 @@ window.addEventListener('pointerup', (e) => {
 });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') triggerKey = true;
+  // Tab (przytrzymanie) = tabela wyników w trakcie meczu; blokujemy domyślną zmianę fokusu
+  if (e.code === 'Tab') {
+    e.preventDefault();
+    if (phase === 'playing' && !matchResultsShown) scoreboard.show();
+  }
 });
 window.addEventListener('keyup', (e) => {
   if (e.code === 'Space') triggerKey = false;
+  if (e.code === 'Tab') {
+    e.preventDefault();
+    scoreboard.hide();
+  }
 });
 function triggerHeld(): boolean {
   return (mouseAim.locked && triggerMouse) || triggerKey;
@@ -217,6 +231,7 @@ function resetGameState(): void {
   hitMarkerTimerS = 0;
   hitMarkerKill = false;
   localHealthFrac = 1;
+  latestStandings = null;
 }
 
 function handleSnapshot(snap: Snapshot): void {
@@ -311,7 +326,7 @@ function playerName(id: number): string {
 // --- lobby UI + sieć ---
 const lobby = new LobbyUI({
   onQuickPlay: () => withConnection((c) => c.quickPlay()),
-  onCreateRoom: (bots, difficulty) => withConnection((c) => c.createRoom(bots, difficulty)),
+  onCreateRoom: (bots, difficulty, scoreLimit) => withConnection((c) => c.createRoom(bots, difficulty, scoreLimit)),
   onJoinRoom: (code) => withConnection((c) => c.joinRoom(code)),
   onRefreshList: () => withConnection((c) => c.requestRoomList()),
   onStartMatch: () => net?.startMatch(),
@@ -320,6 +335,20 @@ const lobby = new LobbyUI({
     enterLobby();
   },
 });
+
+// --- nakładki pętli meczu (faza 13): scoreboard (Tab) + ekran wyników z rewanżem ---
+const scoreboard = new ScoreboardOverlay();
+const results = new ResultsOverlay({
+  onRematch: () => net?.startMatch(), // host: ended → playing (start() na serwerze)
+  onLeave: () => {
+    net?.leaveRoom();
+    enterLobby();
+  },
+});
+/** Ostatnia tabela wyników z serwera (HUD + scoreboard); null poza meczem. */
+let latestStandings: StandingsMessage | null = null;
+/** Czy widać ekran wyników (blokuje scoreboard na Tab — tabela jest już na ekranie). */
+let matchResultsShown = false;
 
 function loadToken(): string | null {
   try {
@@ -374,12 +403,38 @@ function createNet(nick: string, token: string | null): NetClient {
   c.onRoomUpdate = (msg) => {
     if (!roomView) return;
     roomView = { ...roomView, state: msg.state, players: msg.players, hostId: msg.hostId };
-    if (msg.state === 'playing' && phase !== 'playing') enterPlaying();
-    else if (phase === 'lobby') lobby.updateWaiting(roomView);
+    if (msg.state === 'playing') {
+      if (phase !== 'playing') enterPlaying();
+    } else if (msg.state === 'waiting') {
+      // ekran wyników wygasł na serwerze → powrót do poczekalni (z meczu albo z lobby)
+      results.hide();
+      if (phase === 'playing') enterWaiting(roomView);
+      else if (phase === 'lobby') lobby.updateWaiting(roomView);
+    }
+    // 'ended' obsługuje onMatchEnded (overlay wyników); roomView już zaktualizowane
   };
   c.onMatchStarted = () => enterPlaying();
+  c.onStandings = (msg) => {
+    latestStandings = msg;
+    scoreboard.update(msg.rows, msg.scoreLimit, msg.timeLeftS);
+  };
+  c.onMatchEnded = (msg) => onMatchEnded(msg);
+  c.onServerShutdown = () => {
+    // status 'error' (ustawiony w NetClient) wyświetli komunikat zamiast spinnera;
+    // chowamy nakładki meczu, żeby nie zasłaniały
+    scoreboard.hide();
+    results.hide();
+  };
   c.onLobbyError = (_code, message) => lobby.setError(message);
   return c;
+}
+
+function onMatchEnded(msg: MatchEndedMessage): void {
+  if (!roomView) return;
+  scoreboard.hide();
+  matchResultsShown = true;
+  const isHost = roomView.youId === roomView.hostId;
+  results.show(msg.winnerId, msg.reason, msg.rows, net?.localPlayerId ?? null, isHost);
 }
 
 function onRoomJoined(msg: RoomJoinedMessage): void {
@@ -390,6 +445,7 @@ function onRoomJoined(msg: RoomJoinedMessage): void {
     hostId: msg.hostId,
     youId: msg.youId,
   };
+  scoreboard.setLocalId(msg.youId);
   if (msg.state === 'playing') enterPlaying();
   else enterWaiting(roomView);
 }
@@ -397,13 +453,19 @@ function onRoomJoined(msg: RoomJoinedMessage): void {
 function enterLobby(): void {
   phase = 'lobby';
   roomView = null;
+  matchResultsShown = false;
   resetGameState();
+  scoreboard.hide();
+  results.hide();
   lobby.showEntry();
   document.getElementById('loading')?.classList.add('hidden');
 }
 
 function enterWaiting(view: WaitingView): void {
   phase = 'lobby';
+  matchResultsShown = false;
+  scoreboard.hide();
+  results.hide();
   lobby.showWaiting(view);
   document.getElementById('loading')?.classList.add('hidden');
 }
@@ -411,7 +473,10 @@ function enterWaiting(view: WaitingView): void {
 function enterPlaying(): void {
   if (phase === 'playing') return;
   phase = 'playing';
+  matchResultsShown = false;
   resetGameState();
+  scoreboard.hide();
+  results.hide();
   lobby.hide();
   loadingHidden = false;
 }
@@ -482,13 +547,26 @@ function updateHud(): void {
       `stan     ${s.life}${s.stalled ? '  PRZECIĄGNIĘCIE' : ''}`,
     );
   }
+  if (latestStandings) {
+    const localId = net?.localPlayerId ?? null;
+    const myKills = latestStandings.rows.find((r) => r.id === localId)?.kills ?? 0;
+    lines.push(
+      `mecz     ${String(myKills).padStart(2)} / ${String(latestStandings.scoreLimit)} zestrz.   czas ${formatClock(latestStandings.timeLeftS)}`,
+    );
+  }
   lines.push(
     '',
     `ping ${String(net?.rttMs ?? 0).padStart(3)} ms   id ${net?.localPlayerId ?? '—'}   gracze ${describePlayers()}`,
     mouseAim.locked ? '[mysz aktywna]' : '[kliknij, by przejąć celowanie myszą]',
-    'WSAD/strzałki — ster • Q/E — kierunek • Shift/Ctrl — gaz • LPM/Spacja — ogień • [N] sieć',
+    'WSAD/strzałki — ster • Q/E — kierunek • Shift/Ctrl — gaz • LPM/Spacja — ogień • [Tab] tabela • [N] sieć',
   );
   hudEl.textContent = lines.join('\n');
+}
+
+/** MM:SS dla zegara meczu w HUD. */
+function formatClock(totalS: number): string {
+  const s = Math.max(0, Math.floor(totalS));
+  return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, '0')}`;
 }
 
 function describePlayers(): string {

@@ -182,7 +182,8 @@ export class Connection implements RoomMember {
         if (this.state === 'inRoom') return;
         const bots = clampBotCount(msg.bots);
         const difficulty = validDifficulty(msg.difficulty);
-        const { room, playerId } = this.lobby.createRoom(this.nick, this.token, this, bots, difficulty);
+        // scoreLimit klampuje lobby (clampScoreLimit) — surowa wartość bezpieczna (faza 13)
+        const { room, playerId } = this.lobby.createRoom(this.nick, this.token, this, bots, difficulty, msg.scoreLimit);
         this.enterRoom(room, playerId);
         return;
       }

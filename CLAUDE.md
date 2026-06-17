@@ -8,7 +8,8 @@
 
 ## Status faz
 
-Fazy ukończone: 0–12. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
+Fazy ukończone: 0–13 (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP i pomiary
+na VPS po stronie użytkownika** — brak SSH z sesji). Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
 + snapshoty 30 Hz. Faza 9 (2026-06-16): client prediction + reconciliation własnego samolotu
@@ -19,7 +20,7 @@ Faza 10 (2026-06-16): lobby i pokoje — rejestr wielu pokoi (`server/lobby.ts`)
 `GameRoom` (waiting/playing/ended); protokół lobby = osobny kanał JSON (createRoom/joinRoom/
 quickPlay/startMatch + roomJoined/roomUpdate/matchStarted); token sesji + reconnect (okno 60 s,
 brak wycieku pokoi); klient: leniwe łączenie, ekrany lobby vanilla DOM (`client/src/net/lobby-ui.ts`),
-poczekalnia na tle `/dogfight-splash.jpg`. **Przed deployem: wrzucić `assets/dogfight-splash.jpg`.**
+poczekalnia na tle `/dogfight-splash.jpg` (asset w repo od fazy 13, wpis w `assets/LICENSES.md`).
 Faza 11 (2026-06-17): walka sieciowa autorytatywna — pociski na serwerze (pula per-pokój) +
 hit detection z lag-compensation (`shared/combat/lag-comp.ts` `PositionHistory`; rewind celów =
 echo ticku `ackServerTick` + bufor interpolacji, cap 250 ms; cofamy TYLKO cele); HP/kill credit/
@@ -32,8 +33,21 @@ nieodróżnialny od gracza (te same ścieżki combat/HP/snapshot/eventy); `serve
 kontrolery AI (`Bot` z fazy 6) + decymacja myślenia 10 Hz (`BOT_THINK_INTERVAL=6`, sterowanie co tick),
 unikanie ziemi też 10 Hz; host wybiera 0–7 botów + poziom przy tworzeniu pokoju (`CreateRoomMessage`
 +bots/+difficulty, connection klampuje); sprzątanie pokoi po `humanCount` (boty nie trzymają pokoju);
-„Szybka gra" zasiewa 3 boty. Benchmark 1 gracz + 7 botów = 0,309 ms/tick (dev). **OTWARTE: formalny
-pomiar CPU w Dockerze/na VPS.** Następna: Faza 13 — pętla meczu: FFA + scoreboard + deploy multiplayer (kamień milowy).
+„Szybka gra" zasiewa 3 boty. Benchmark 1 gracz + 7 botów = 0,309 ms/tick (dev).
+Faza 13 (2026-06-17, KAMIEŃ MILOWY — kod): pętla meczu FFA — `shared/world/ffa.ts` (`evaluateFfa`:
+koniec przy limicie zestrzeleń [5/10/20] lub czasu 15 min, zwycięzca = lider `rankFfa`); maszyna
+meczu w `GameRoom.step` (playing liczy zegar + `checkMatchEnd`; `ended` → `matchEnded`, po 15 s
+auto-`waiting`; rewanż = `start()` także z `ended`); respawn z ochroną `SPAWN_PROTECTION_S=3`
+(`resolveHits` pomija cel, ogień ją znosi) + wybór miejsca z dala od wrogów (`shared/world/spawn.ts`);
+scoreboard (Tab) + ekran wyników + rewanż (`client/src/net/match-ui.ts`), HUD z wynikiem/zegarem;
+standings 2 Hz + ping serwerowy z echa ticku (diagnostyka); protokół BEZ bumpu (+`scoreLimit`,
++`standings`/`matchEnded`/`serverShutdown`); `/health` (http.Server + WebSocketServer) + graceful
+shutdown (`notifyShutdown` → komunikat zamiast spinnera). **Błąd naprawiony**: `defaultServerUrl` →
+`wss://<host>/ws` na produkcji (był `:3001`); nginx `/ws → backend:3001`. Deploy: `Dockerfile.backend`
+(esbuild bundle, ws+pino external) + compose backend (mem_limit 256m/cpus 0.5/healthcheck) +
+runbook `deploy/WDROZENIE-NA-VPS.md` sekcja „Faza 13". **OTWARTE (użytkownik): deploy na VPS,
+smoke 2 os. przez wss://, `docker stats` przy pełnym pokoju → memory; tag `mp-1`.**
+Następna: Faza 14 — drugi samolot (Bf 109 E) + balans (asymetryczny matchup).
 
 ## Stack (skrót)
 

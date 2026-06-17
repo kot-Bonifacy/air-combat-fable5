@@ -1,0 +1,14 @@
+# Patterny względem KORZENIA repo (build context = ..). BuildKit czyta ten plik
+# obok Dockerfile'a. Cel: nie wysyłać do demona node_modules (kolizja Windows↔Linux)
+# ani artefaktów builda, historii gita czy klienta (backend ich nie buduje).
+**/node_modules
+**/dist
+**/build
+.git
+**/.env
+**/*.local
+# assety (model glTF, tekstury) niepotrzebne backendowi — mniejszy kontekst builda.
+# UWAGA: NIE wykluczamy packages/client w całości — jego package.json jest wymagany do
+# instalacji workspace'ów (package-lock odwołuje się do każdego pakietu).
+assets
+tmp-*

@@ -568,13 +568,16 @@ export interface ListRoomsMessage {
   t: 'listRooms';
 }
 
-/** Klient → serwer: utwórz nowy pokój (zostajesz hostem). Host konfiguruje boty (faza 12). */
+/** Klient → serwer: utwórz nowy pokój (zostajesz hostem). Host konfiguruje boty (faza 12)
+ *  i limit zestrzeleń meczu FFA (faza 13). */
 export interface CreateRoomMessage {
   t: 'createRoom';
   /** Liczba botów do dołożenia (0..MAX_BOTS_PER_ROOM). Brak/poza zakresem → serwer klampuje. */
   bots?: number;
   /** Poziom trudności botów; brak/nieznany → serwerowy domyślny. */
   difficulty?: DifficultyLevel;
+  /** Limit zestrzeleń kończący mecz (5/10/20). Brak/poza listą → serwer klampuje (faza 13). */
+  scoreLimit?: number;
 }
 
 /** Klient → serwer: dołącz do pokoju o podanym kodzie. */
@@ -641,6 +644,46 @@ export interface MatchStartedMessage {
   t: 'matchStarted';
 }
 
+/** Powód zakończenia meczu FFA (faza 13): osiągnięty limit zestrzeleń albo limit czasu. */
+export type MatchEndReason = 'score' | 'time';
+
+/** Jeden wiersz tabeli wyników (faza 13) — autorytet serwera; klient tylko wyświetla. */
+export interface StandingRow {
+  id: number;
+  nick: string;
+  kills: number;
+  deaths: number;
+  assists: number;
+  /** Szacowany ping [ms] (serwer liczy z echa ticku, bez synchronizacji zegarów); bot = 0. */
+  pingMs: number;
+  isBot: boolean;
+}
+
+/** Serwer → klient: tabela wyników (Tab) + metryki meczu. Rozsyłana ~STANDINGS_BROADCAST_HZ. */
+export interface StandingsMessage {
+  t: 'standings';
+  /** Posortowane rankingiem FFA (najlepszy pierwszy). */
+  rows: StandingRow[];
+  scoreLimit: number;
+  /** Pozostały czas meczu [s] (serwer liczy zegar; klient tylko wyświetla). */
+  timeLeftS: number;
+}
+
+/** Serwer → klient: koniec meczu — zwycięzca + finalna tabela (ekran wyników, rewanż). */
+export interface MatchEndedMessage {
+  t: 'matchEnded';
+  /** Id zwycięzcy albo null (brak rozstrzygnięcia). */
+  winnerId: number | null;
+  reason: MatchEndReason;
+  rows: StandingRow[];
+}
+
+/** Serwer → klient: serwer się zamyka (SIGTERM/restart) — klient pokazuje komunikat, nie spinner. */
+export interface ServerShutdownMessage {
+  t: 'serverShutdown';
+  message: string;
+}
+
 /** Serwer → klient: odrzucenie/błąd. Część kodów zamyka połączenie, część zostaje w lobby. */
 export interface ErrorMessage {
   t: 'error';
@@ -661,6 +704,9 @@ export type ControlMessage =
   | RoomJoinedMessage
   | RoomUpdateMessage
   | MatchStartedMessage
+  | StandingsMessage
+  | MatchEndedMessage
+  | ServerShutdownMessage
   | ErrorMessage;
 
 const CONTROL_TAGS: ReadonlySet<string> = new Set([
@@ -676,6 +722,9 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'roomJoined',
   'roomUpdate',
   'matchStarted',
+  'standings',
+  'matchEnded',
+  'serverShutdown',
   'error',
 ]);
 

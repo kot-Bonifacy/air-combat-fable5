@@ -6,12 +6,18 @@ import {
   Instructor,
   LAGCOMP_HISTORY_TICKS,
   LAGCOMP_MAX_REWIND_MS,
+  MATCH_DEFAULT_SCORE_LIMIT,
+  MATCH_RESULTS_LINGER_S,
+  MATCH_TIME_LIMIT_S,
   MAX_EVENTS_PER_FRAME,
   MAX_PLAYERS_PER_ROOM,
   PHYSICS_HZ,
   PositionHistory,
+  SPAWN_PROTECTION_S,
   SPITFIRE_MK2,
   applyDamage,
+  chooseSpawnIndex,
+  compareFfa,
   createFireControl,
   createHealth,
   createPilotDemands,
@@ -20,6 +26,7 @@ import {
   createTerrain,
   encodeEvents,
   encodeSnapshot,
+  evaluateFfa,
   eventsByteLength,
   pilotStep,
   resetHealth,
@@ -33,10 +40,12 @@ import {
   wrapToArena,
   type ControlMessage,
   type DifficultyLevel,
+  type FfaScore,
   type FireControl,
   type GameEvent,
   type Health,
   type InputFrame,
+  type MatchEndReason,
   type PilotDemands,
   type PlaneConfig,
   type PlaneState,
@@ -45,6 +54,7 @@ import {
   type RoomSummary,
   type SimPlane,
   type SnapshotEntitySource,
+  type StandingRow,
   type Terrain,
 } from '@air-combat/shared';
 import { BOT_THINK_INTERVAL, BotManager } from './bot-manager';
@@ -55,6 +65,10 @@ import { BOT_THINK_INTERVAL, BotManager } from './bot-manager';
 // żeby rozsyłać im wiadomości lobby (JSON) i snapshoty (binarnie). Faza 11 dokłada WALKĘ:
 // pociski symulowane TU (balistyka z shared), hit detection z lag-compensation, HP/kill
 // credit po stronie serwera (niezmiennik nr 5), eventy MUZZLE/HIT/KILL do klientów.
+// Faza 13 dokłada PĘTLĘ MECZU FFA: zegar meczu i wynik liczone TU (niezmiennik: klient
+// tylko wyświetla), koniec przy limicie zestrzeleń albo czasu (shared/world/ffa), tabela
+// wyników (standings, JSON poza hot pathem), respawn z ochroną + wyborem miejsca z dala od
+// wrogów (shared/world/spawn), rewanż (ended → playing) i auto-powrót ended → waiting.
 
 const SPAWN_ALTITUDE_M = 800;
 const SPAWN_SPEED_MS = 120;
@@ -79,6 +93,26 @@ const scratchHitCenter = new Vector3();
 const scratchBotWrap = new Vector3();
 
 /**
+ * Buduje pierścień slotów startowych: pozycja na obrzeżach areny, nos poziomo ku środkowi
+ * (strefa kontroli w centrum). Wysokość rośnie ze slotem, żeby spawny się nie nakładały w
+ * pionie. Sloty są jednocześnie kandydatami wyboru miejsca respawnu (shared/world/spawn).
+ */
+function buildSpawnRing(): { pos: Vector3; dir: Vector3 }[] {
+  const ring: { pos: Vector3; dir: Vector3 }[] = [];
+  for (let slot = 0; slot < SPAWN_RING_SLOTS; slot++) {
+    const angle = (slot / SPAWN_RING_SLOTS) * Math.PI * 2;
+    const pos = new Vector3(
+      Math.cos(angle) * SPAWN_RING_RADIUS_M,
+      SPAWN_ALTITUDE_M + slot * 60,
+      Math.sin(angle) * SPAWN_RING_RADIUS_M,
+    );
+    const dir = new Vector3(-Math.cos(angle), 0, -Math.sin(angle)).normalize();
+    ring.push({ pos, dir });
+  }
+  return ring;
+}
+
+/**
  * Połączenie widziane przez pokój — tylko to, co potrzebne do rozsyłki. Interfejs
  * (zamiast importu Connection) przecina cykl zależności: connection.ts importuje GameRoom.
  */
@@ -100,9 +134,14 @@ interface ServerPlayer {
   readonly fire: FireControl;
   /** Strumień RNG rozrzutu (osobny per gracz). */
   readonly rng: () => number;
-  /** Zestrzelenia wrogów (kredyt) i asysty w bieżącym meczu — pełna buchalteria w fazie 13. */
+  /** Zestrzelenia wrogów (kredyt), asysty i śmierci w bieżącym meczu (tabela wyników, faza 13). */
   kills: number;
   assists: number;
+  deaths: number;
+  /** Czas pozostałej ochrony po (re)spawnie [s] — nietykalny i nie zadaje sam (faza 13). */
+  protectionTimerS: number;
+  /** Szacowany ping [ms] (EMA z echa ticku) — diagnostyka w standings; bot = 0. */
+  pingMs: number;
   /** Id strzelców, którzy trafili tę maszynę w bieżącym życiu (kredyt asyst); czyszczone przy spawnie. */
   readonly damagedBy: Set<number>;
   nick: string;
@@ -138,6 +177,24 @@ export class GameRoom {
   /** Bufor źródeł snapshotu — przebudowywany przy zmianie składu (zero alokacji per tick). */
   private snapshotSources: SnapshotEntitySource[] = [];
 
+  // --- pętla meczu FFA (faza 13) ---
+  /** Limit zestrzeleń kończący mecz (ustawiany przez hosta przy tworzeniu pokoju; klampowany). */
+  scoreLimit = MATCH_DEFAULT_SCORE_LIMIT;
+  /** Upływ czasu bieżącego meczu [s] — autorytatywny zegar (klient tylko wyświetla). */
+  private matchClockS = 0;
+  /** Czas spędzony w stanie 'ended' [s] — po MATCH_RESULTS_LINGER_S pokój wraca do 'waiting'. */
+  private endedTimerS = 0;
+  /** Wynik ostatniego meczu (ekran wyników / diagnostyka). */
+  winnerId: number | null = null;
+  lastEndReason: MatchEndReason | null = null;
+  /** Pierścień slotów startowych (pozycja + nos ku środkowi) — kandydaci wyboru spawnu. */
+  private readonly spawnRing: { pos: Vector3; dir: Vector3 }[] = buildSpawnRing();
+  private readonly spawnRingPositions: Vector3[] = this.spawnRing.map((s) => s.pos);
+  /** Scratch pozycji żywych wrogów do wyboru spawnu (zero alokacji per respawn). */
+  private readonly occupantScratch: Vector3[] = [];
+  /** Scratch tablicy wyników do oceny końca meczu (zero alokacji per tick). */
+  private readonly ffaScratch: FfaScore[] = [];
+
   // --- walka (faza 11): autorytatywne pociski + lag-comp + kolejka eventów ---
   /** Pociski autorytatywne (wszyscy gracze w pokoju dzielą pulę — kill credit po ownerId). */
   private readonly pool = new BulletPool(BULLET_POOL_CAPACITY);
@@ -157,6 +214,8 @@ export class GameRoom {
     readonly code: string,
     seed?: number,
     private readonly onError?: (msg: string) => void,
+    /** Kanał logów informacyjnych (start/koniec meczu) — konsola serwera. */
+    private readonly onInfo?: (msg: string) => void,
   ) {
     this.terrain = createTerrain(seed);
   }
@@ -245,6 +304,9 @@ export class GameRoom {
       rng: createRng((id + 1) ^ 0x9e37),
       kills: 0,
       assists: 0,
+      deaths: 0,
+      protectionTimerS: 0,
+      pingMs: 0,
       damagedBy: new Set<number>(),
       nick,
       sessionToken,
@@ -290,20 +352,30 @@ export class GameRoom {
     return false;
   }
 
-  /** Host startuje mecz: waiting → playing, wszyscy gracze spawnują od nowa. */
+  /**
+   * Host startuje mecz (waiting → playing) albo rewanż (ended → playing, faza 13). Zeruje
+   * wynik, zegar meczu i licznik ekranu wyników; wszyscy gracze spawnują od nowa na swoich
+   * slotach (rozrzut), z ochroną respawnu. Z innych stanów = no-op (idempotentne).
+   */
   start(): void {
-    if (this.state !== 'waiting') return;
+    if (this.state !== 'waiting' && this.state !== 'ended') return;
     this.state = 'playing';
+    this.matchClockS = 0;
+    this.endedTimerS = 0;
+    this.winnerId = null;
+    this.lastEndReason = null;
     // czysty stan walki na nowy mecz: żadnych zalegających pocisków ani eventów
     for (const b of this.pool.bullets) b.active = false;
     this.pendingEvents.length = 0;
     for (const player of this.players.values()) {
       player.kills = 0;
       player.assists = 0;
+      player.deaths = 0;
       this.spawn(player);
     }
     this.broadcastControl({ t: 'matchStarted' });
     this.broadcastRoomUpdate();
+    this.onInfo?.(`pokój ${this.code}: start meczu (do ${String(this.scoreLimit)} zestrzeleń, ${String(this.players.size)} uczestników)`);
   }
 
   /** Odłącza połączenie gracza, trzymając slot na reconnect (okno RECONNECT_WINDOW_MS). */
@@ -404,8 +476,14 @@ export class GameRoom {
     return this.players.get(id)?.lastProcessedSeq ?? 0;
   }
 
-  /** Jeden krok fizyki świata (stały dt). No-op poza stanem 'playing'. */
+  /** Jeden krok fizyki świata (stały dt). No-op poza stanem 'playing' (poza odliczaniem 'ended'). */
   step(dtS: number): void {
+    if (this.state === 'ended') {
+      // ekran wyników utrzymujemy MATCH_RESULTS_LINGER_S, potem pokój wraca do poczekalni
+      this.endedTimerS += dtS;
+      if (this.endedTimerS >= MATCH_RESULTS_LINGER_S) this.returnToWaiting();
+      return;
+    }
     if (this.state !== 'playing') return;
     this.tick = (this.tick + 1) >>> 0;
 
@@ -420,7 +498,7 @@ export class GameRoom {
         // ale spreparowany input jednego gracza (lub pech bota) NIE kładzie serwera dla
         // pozostałych (niezmiennik nr 11). Logujemy zrzut i respawnujemy winowajcę.
         this.onError?.(`pokój ${this.code} gracz ${String(player.id)}: ${err instanceof Error ? err.message : String(err)}`);
-        this.spawn(player);
+        this.spawn(player, true);
       }
     }
 
@@ -437,12 +515,17 @@ export class GameRoom {
     const arm = this.plane.armament;
     this.pool.update(arm.bulletDragK, arm.bulletLifetimeS, dtS);
     this.resolveHits();
+
+    // 6) zegar meczu + rozstrzygnięcie (po rozliczeniu trafień tego ticku) — faza 13
+    this.matchClockS += dtS;
+    this.checkMatchEnd();
   }
 
   private stepPlayer(player: ServerPlayer, dtS: number): void {
     const state = player.sim.state;
 
     if (state.life === 'alive') {
+      if (player.protectionTimerS > 0) player.protectionTimerS = Math.max(0, player.protectionTimerS - dtS);
       const input = player.latestInput;
       if (input) player.lastProcessedSeq = input.sequence;
       // ta sama autorytatywna ścieżka co predykcja klienta (shared/world/piloted-plane).
@@ -458,7 +541,7 @@ export class GameRoom {
       );
       if (event === 'crashed') this.onGroundDeath(player);
     } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
-      this.spawn(player);
+      this.spawn(player, true);
     }
   }
 
@@ -471,6 +554,7 @@ export class GameRoom {
   private stepBot(player: ServerPlayer, dtS: number): void {
     const state = player.sim.state;
     if (state.life === 'alive') {
+      if (player.protectionTimerS > 0) player.protectionTimerS = Math.max(0, player.protectionTimerS - dtS);
       if ((this.tick + player.slot) % BOT_THINK_INTERVAL === 0) {
         this.botManager.think(
           player.id,
@@ -488,7 +572,7 @@ export class GameRoom {
       validatePlaneState(state, `serwer ${this.code}: bot ${String(player.id)}`);
       if (updateLifecycle(state, this.terrain, dtS) === 'crashed') this.onGroundDeath(player);
     } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
-      this.spawn(player);
+      this.spawn(player, true);
     }
   }
 
@@ -507,6 +591,8 @@ export class GameRoom {
     const state = player.sim.state;
     if (state.life !== 'alive') return;
     const triggerHeld = player.isBot ? this.botManager.fireOf(player.id) : (player.latestInput?.fire ?? false);
+    // otwarcie ognia oddaje ochronę respawnu (nietykalny nie może też zadawać — faza 13)
+    if (triggerHeld && player.protectionTimerS > 0) player.protectionTimerS = 0;
     const rewindTicks = this.computeRewindTicks(player);
     // state spełnia FiringPlatform (position/velocity/orientation); pociski lecą z TERAŹNIEJSZEJ
     // pozycji strzelca (nie cofamy strzelca — pułapka faza-11.md), cele cofamy w resolveHits.
@@ -550,7 +636,8 @@ export class GameRoom {
       if (!b.active) continue;
       for (const target of this.players.values()) {
         const ts = target.sim.state;
-        if (ts.life !== 'alive' || target.id === b.ownerId) continue;
+        // cel pod ochroną respawnu jest nietykalny (faza 13) — pocisk go ignoruje
+        if (ts.life !== 'alive' || target.id === b.ownerId || target.protectionTimerS > 0) continue;
         const targetTick = (this.tick - b.rewindTicks) >>> 0;
         const center = this.history.sample(target.id, targetTick, scratchHitCenter)
           ? scratchHitCenter
@@ -568,18 +655,20 @@ export class GameRoom {
     }
   }
 
-  /** Zestrzelenie w powietrzu: śmierć, event KILL, kredyt zabójcy i asysty. */
+  /** Zestrzelenie w powietrzu: śmierć, event KILL, kredyt zabójcy, asysty, śmierć ofiary. */
   private onAirKill(victim: ServerPlayer, killerId: number): void {
     victim.sim.state.life = 'dead';
     victim.sim.state.lifeTimerS = 0;
+    victim.deaths++;
     this.queueEvent({ kind: 'kill', killerId, victimId: victim.id, cause: 'air' });
     const killer = this.players.get(killerId);
     if (killer && killer !== victim) killer.kills++;
     this.creditAssists(victim, killerId);
   }
 
-  /** Rozbicie o teren: event KILL bez sprawcy + asysty dla wszystkich wcześniejszych napastników. */
+  /** Rozbicie o teren: śmierć, event KILL bez sprawcy + asysty dla wcześniejszych napastników. */
   private onGroundDeath(victim: ServerPlayer): void {
+    victim.deaths++;
     this.queueEvent({ kind: 'kill', killerId: NO_KILLER, victimId: victim.id, cause: 'ground' });
     this.creditAssists(victim, null);
   }
@@ -599,16 +688,16 @@ export class GameRoom {
     if (this.pendingEvents.length < MAX_EVENTS_PER_FRAME) this.pendingEvents.push(ev);
   }
 
-  /** Ustawia gracza na jego slocie startowym i zeruje stan symulacji (spawn/respawn). */
-  private spawn(player: ServerPlayer): void {
-    const angle = (player.slot / SPAWN_RING_SLOTS) * Math.PI * 2;
-    player.spawnPos.set(
-      Math.cos(angle) * SPAWN_RING_RADIUS_M,
-      SPAWN_ALTITUDE_M + player.slot * 60,
-      Math.sin(angle) * SPAWN_RING_RADIUS_M,
-    );
-    // nos poziomo ku środkowi areny (strefa kontroli w centrum)
-    player.spawnDir.set(-Math.cos(angle), 0, -Math.sin(angle)).normalize();
+  /**
+   * Ustawia gracza na slocie startowym i zeruje stan symulacji (spawn/respawn). `useSelection`
+   * (respawn w trakcie meczu) wybiera slot najdalej od żywych wrogów (anty-spawn-kill, faza 13);
+   * bez niego (start meczu / wejście do poczekalni) bierze stały slot gracza (równy rozrzut).
+   */
+  private spawn(player: ServerPlayer, useSelection = false): void {
+    const slotIndex = useSelection ? this.chooseSpawnSlot(player) : player.slot;
+    const ring = this.spawnRing[slotIndex]!;
+    player.spawnPos.copy(ring.pos);
+    player.spawnDir.copy(ring.dir);
 
     const state = player.sim.state;
     state.position.copy(player.spawnPos);
@@ -637,9 +726,118 @@ export class GameRoom {
     player.fire.ammoRemaining = totalAmmo(this.plane.armament);
     player.fire.shotCounter = 0;
     player.damagedBy.clear();
+    // nietykalność po (re)spawnie (anty-spawn-kill); znika po czasie albo gdy gracz strzeli
+    player.protectionTimerS = SPAWN_PROTECTION_S;
 
     // bot: zeruj filtry kontrolera i celownik na nowy nos (nie myśli starym stanem po respawnie)
     if (player.isBot) this.botManager.reset(player.id, state);
+  }
+
+  /** Indeks slotu startowego najdalej od żywych wrogów (anty-spawn-kill); fallback = stały slot. */
+  private chooseSpawnSlot(player: ServerPlayer): number {
+    this.occupantScratch.length = 0;
+    for (const p of this.players.values()) {
+      if (p !== player && p.sim.state.life === 'alive') this.occupantScratch.push(p.sim.state.position);
+    }
+    const idx = chooseSpawnIndex(this.spawnRingPositions, this.occupantScratch);
+    return idx >= 0 ? idx : player.slot;
+  }
+
+  /** Pozostały czas meczu [s] — autorytatywny zegar; klient tylko wyświetla (faza 13). */
+  get timeLeftS(): number {
+    return Math.max(0, MATCH_TIME_LIMIT_S - this.matchClockS);
+  }
+
+  /** Liczba śmierci gracza w meczu — diagnostyka/testy. */
+  deathsOf(id: number): number {
+    return this.players.get(id)?.deaths ?? 0;
+  }
+
+  /**
+   * Rozstrzyga koniec meczu po stanie wyniku i zegarze (shared/world/ffa). Boty są pełnymi
+   * uczestnikami (mogą wygrać — protokołowo nieodróżnialne, faza 12). Wołane co tick po
+   * rozliczeniu trafień; pierwszy spełniony warunek (limit zestrzeleń / czasu) kończy mecz.
+   */
+  private checkMatchEnd(): void {
+    this.ffaScratch.length = 0;
+    for (const p of this.players.values()) {
+      this.ffaScratch.push({ id: p.id, kills: p.kills, deaths: p.deaths });
+    }
+    const result = evaluateFfa(this.ffaScratch, this.matchClockS, this.scoreLimit, MATCH_TIME_LIMIT_S);
+    if (result.ended && result.reason) this.endMatch(result.winnerId, result.reason);
+  }
+
+  /** Kończy mecz: playing → ended, gasi walkę, rozsyła finalną tabelę i loguje wynik. */
+  private endMatch(winnerId: number | null, reason: MatchEndReason): void {
+    this.state = 'ended';
+    this.endedTimerS = 0;
+    this.winnerId = winnerId;
+    this.lastEndReason = reason;
+    for (const b of this.pool.bullets) b.active = false;
+    this.pendingEvents.length = 0;
+    const rows = this.buildStandings();
+    this.broadcastControl({ t: 'matchEnded', winnerId, reason, rows });
+    this.broadcastRoomUpdate();
+    const winnerNick = winnerId !== null ? (this.players.get(winnerId)?.nick ?? `#${String(winnerId)}`) : 'brak';
+    this.onInfo?.(
+      `pokój ${this.code}: koniec meczu (${reason}), zwycięzca ${winnerNick}; ` +
+        rows.map((r) => `${r.nick} ${String(r.kills)}/${String(r.deaths)}`).join(', '),
+    );
+  }
+
+  /** Po wygaśnięciu ekranu wyników: ended → waiting (pokój znów dołączalny). */
+  private returnToWaiting(): void {
+    this.state = 'waiting';
+    this.endedTimerS = 0;
+    this.broadcastRoomUpdate();
+  }
+
+  /** Buduje tabelę wyników posortowaną rankingiem FFA (najlepszy pierwszy). */
+  buildStandings(): StandingRow[] {
+    const rows: StandingRow[] = [...this.players.values()].map((p) => ({
+      id: p.id,
+      nick: p.nick,
+      kills: p.kills,
+      deaths: p.deaths,
+      assists: p.assists,
+      pingMs: p.pingMs,
+      isBot: p.isBot,
+    }));
+    rows.sort(compareFfa); // StandingRow spełnia FfaScore strukturalnie (id/kills/deaths)
+    return rows;
+  }
+
+  /**
+   * Rozsyła tabelę wyników do podłączonych członków (JSON, poza hot pathem). Wołane przez
+   * pętlę serwera z częstotliwością STANDINGS_BROADCAST_HZ. No-op poza 'playing'.
+   */
+  broadcastStandings(): void {
+    if (this.state !== 'playing') return;
+    this.updatePings();
+    this.broadcastControl({
+      t: 'standings',
+      rows: this.buildStandings(),
+      scoreLimit: this.scoreLimit,
+      timeLeftS: Math.round(this.timeLeftS),
+    });
+  }
+
+  /**
+   * Szacuje ping graczy z echa ticku (sinceAck = tick − ostatni potwierdzony tick): pełna
+   * droga serwer→klient→serwer + bufor snapshotu, bez synchronizacji zegarów (jak rewind
+   * lag-comp). EMA wygładza jitter (snapshot 30 Hz wprowadza ~±33 ms w echu). Bot = 0.
+   */
+  private updatePings(): void {
+    for (const p of this.players.values()) {
+      if (p.isBot) {
+        p.pingMs = 0;
+        continue;
+      }
+      if (!p.member || p.lastAckServerTick === 0) continue; // brak danych — trzymaj ostatni
+      const sinceTicks = (this.tick - p.lastAckServerTick) >>> 0;
+      const sampleMs = Math.min(2000, Math.round(sinceTicks * (1000 / PHYSICS_HZ)));
+      p.pingMs = p.pingMs === 0 ? sampleMs : Math.round(p.pingMs * 0.7 + sampleMs * 0.3);
+    }
   }
 
   private rebuildSnapshotSources(): void {

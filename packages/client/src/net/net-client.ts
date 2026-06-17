@@ -10,10 +10,13 @@ import {
   type DifficultyLevel,
   type GameEvent,
   type InputFrame,
+  type MatchEndedMessage,
   type RoomJoinedMessage,
   type RoomListMessage,
   type RoomUpdateMessage,
+  type ServerShutdownMessage,
   type Snapshot,
+  type StandingsMessage,
   type WelcomeMessage,
 } from '@air-combat/shared';
 import { defaultNetConditions, rollDelayMs, type NetConditionsConfig } from './net-conditions';
@@ -49,6 +52,12 @@ export class NetClient {
   onRoomJoined: ((msg: RoomJoinedMessage) => void) | undefined;
   onRoomUpdate: ((msg: RoomUpdateMessage) => void) | undefined;
   onMatchStarted: (() => void) | undefined;
+  /** Tabela wyników (faza 13) — rozsyłana ~STANDINGS_BROADCAST_HZ w trakcie meczu. */
+  onStandings: ((msg: StandingsMessage) => void) | undefined;
+  /** Koniec meczu (faza 13) — zwycięzca + finalna tabela (ekran wyników). */
+  onMatchEnded: ((msg: MatchEndedMessage) => void) | undefined;
+  /** Serwer się zamyka (faza 13) — klient pokazuje komunikat zamiast wiecznego spinnera. */
+  onServerShutdown: ((msg: ServerShutdownMessage) => void) | undefined;
   /** Błąd lobby (badCode/full/notHost/…) — NIE zamyka połączenia, klient zostaje w lobby. */
   onLobbyError: ((code: string, message: string) => void) | undefined;
 
@@ -141,6 +150,18 @@ export class NetClient {
       case 'matchStarted':
         this.onMatchStarted?.();
         break;
+      case 'standings':
+        this.onStandings?.(msg);
+        break;
+      case 'matchEnded':
+        this.onMatchEnded?.(msg);
+        break;
+      case 'serverShutdown':
+        // pokaż komunikat (nie spinner): status 'error' utrzyma się mimo następującego close
+        this.status = 'error';
+        this.statusMessage = msg.message;
+        this.onServerShutdown?.(msg);
+        break;
       case 'error':
         if (msg.code === 'version') {
           this.status = 'error';
@@ -184,8 +205,8 @@ export class NetClient {
     this.sendControl({ t: 'listRooms' });
   }
 
-  createRoom(bots = 0, difficulty?: DifficultyLevel): void {
-    this.sendControl({ t: 'createRoom', bots, difficulty });
+  createRoom(bots = 0, difficulty?: DifficultyLevel, scoreLimit?: number): void {
+    this.sendControl({ t: 'createRoom', bots, difficulty, scoreLimit });
   }
 
   joinRoom(code: string): void {
@@ -234,10 +255,15 @@ function tickNewer(a: number, b: number): boolean {
   return ((a - b) >>> 0) < 0x80000000 && a !== b;
 }
 
-/** Domyślny URL serwera gry: ten sam host co strona, port WS serwera (dev). */
+/**
+ * Domyślny URL serwera gry. Na PRODUKCJI (https) backend stoi za reverse proxy nginx pod
+ * ścieżką `/ws` — bez osobnego publicznego portu i wyłącznie wss:// (niezmiennik nr 10).
+ * W DEV (http) łączymy się wprost do portu serwera WS na tym samym hoście. `?server=` w URL
+ * nadpisuje oba (debug / wskazanie zdalnego serwera).
+ */
 export function defaultServerUrl(port: number): string {
   const override = new URLSearchParams(location.search).get('server');
   if (override) return override;
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${location.hostname}:${String(port)}`;
+  if (location.protocol === 'https:') return `wss://${location.host}/ws`;
+  return `ws://${location.hostname}:${String(port)}`;
 }

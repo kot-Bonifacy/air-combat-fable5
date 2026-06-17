@@ -170,6 +170,15 @@ describe('serwer — hit detection, HP i kredyt zestrzeleń', () => {
     room.applyInput(victim, input({ fire: false }));
     room.applyInput(c, input({ fire: false }));
 
+    // faza 0: odczekaj ochronę respawnu (SPAWN_PROTECTION_S, faza 13) — w realnej grze
+    // zwarcie następuje długo po jej wygaśnięciu; bez tego pierwsze salwy A nie zadają obrażeń
+    for (let i = 0; i < 190; i++) {
+      repose(room, a, aPos, false);
+      repose(room, victim, vPos, false);
+      repose(room, c, cPos, true);
+      room.step(FIXED_DT_S);
+    }
+
     // faza 1: tylko A strzela krótko, potem przestaje; kilka ticków na dolot jego pocisków
     room.applyInput(a, input({ fire: true }));
     for (let i = 0; i < 16; i++) {

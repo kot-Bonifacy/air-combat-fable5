@@ -1,5 +1,7 @@
 import {
   DIFFICULTY_LEVELS,
+  MATCH_DEFAULT_SCORE_LIMIT,
+  MATCH_SCORE_LIMIT_OPTIONS,
   MAX_NICK_LENGTH,
   MAX_PLAYERS_PER_ROOM,
   ROOM_CODE_LENGTH,
@@ -28,7 +30,7 @@ const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
 
 export interface LobbyCallbacks {
   onQuickPlay(): void;
-  onCreateRoom(bots: number, difficulty: DifficultyLevel): void;
+  onCreateRoom(bots: number, difficulty: DifficultyLevel, scoreLimit: number): void;
   onJoinRoom(code: string): void;
   onRefreshList(): void;
   onStartMatch(): void;
@@ -52,6 +54,7 @@ export class LobbyUI {
   private readonly nickInput: HTMLInputElement;
   private readonly botCountSelect: HTMLSelectElement;
   private readonly difficultySelect: HTMLSelectElement;
+  private readonly scoreLimitSelect: HTMLSelectElement;
   private readonly codeInput: HTMLInputElement;
   private readonly roomListEl: HTMLDivElement;
   private readonly errorEl: HTMLDivElement;
@@ -104,9 +107,22 @@ export class LobbyUI {
     );
     botRow.append(botLabel, this.botCountSelect, diffLabel, this.difficultySelect);
 
+    // limit zestrzeleń kończący mecz (faza 13): host wybiera 5/10/20
+    const matchRow = el('div', 'lobby-row lobby-bot-row');
+    const matchLabel = el('label', 'lobby-label');
+    matchLabel.textContent = 'Mecz do';
+    this.scoreLimitSelect = selectEl(
+      'lobby-select lobby-select-bots',
+      MATCH_SCORE_LIMIT_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
+      String(MATCH_DEFAULT_SCORE_LIMIT),
+    );
+    const matchUnit = el('label', 'lobby-label');
+    matchUnit.textContent = 'zestrzeleń';
+    matchRow.append(matchLabel, this.scoreLimitSelect, matchUnit);
+
     const createBtn = button('Utwórz pokój', 'lobby-btn', () => {
       this.beforeAction();
-      this.cb.onCreateRoom(this.botCount, this.difficulty);
+      this.cb.onCreateRoom(this.botCount, this.difficulty, this.scoreLimit);
     });
 
     const joinRow = el('div', 'lobby-row lobby-join-row');
@@ -139,6 +155,7 @@ export class LobbyUI {
       nickRow,
       quickBtn,
       botRow,
+      matchRow,
       createBtn,
       joinRow,
       this.errorEl,
@@ -176,6 +193,10 @@ export class LobbyUI {
 
   private get difficulty(): DifficultyLevel {
     return this.difficultySelect.value as DifficultyLevel;
+  }
+
+  private get scoreLimit(): number {
+    return Number(this.scoreLimitSelect.value) || MATCH_DEFAULT_SCORE_LIMIT;
   }
 
   private beforeAction(): void {

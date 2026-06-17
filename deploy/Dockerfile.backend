@@ -1,0 +1,43 @@
+# Faza 13 — autorytatywny serwer WebSocket (backend). Multi-stage: build bundluje
+# serwer esbuildem (z fizyką z `shared`), runtime instaluje TYLKO zależności runtime.
+# Build context = KORZEŃ repo (patrz docker-compose.yml: `context: ..`), bo monorepo
+# npm workspaces wymaga manifestów z korzenia + pakietu `shared` obok `server`.
+
+# --- etap build: bundle serwera (esbuild) ---
+FROM node:20-alpine AS build
+WORKDIR /app
+
+# Manifesty najpierw — warstwa instalacji cache'uje się, póki nie zmienią się zależności.
+# WSZYSTKIE workspace'y muszą mieć package.json (package-lock odwołuje się do każdego).
+COPY package.json package-lock.json ./
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/client/package.json packages/client/package.json
+COPY packages/server/package.json packages/server/package.json
+# `npm install`, NIE `npm ci`: package-lock generowany na Windows nie ma bindingów
+# linux-musl (alpine) — `npm ci` przerywa na „Missing ... from lock file" (lekcja z fazy 7).
+RUN npm install --no-audit --no-fund
+
+# Źródła serwera + współdzielona fizyka (klient i assety niepotrzebne do backendu).
+COPY tsconfig.base.json ./
+COPY packages/shared packages/shared
+COPY packages/server packages/server
+
+# esbuild bundluje `@air-combat/shared` do build/index.js; `ws` i `pino` zostają external
+# (mają natywne/worker-thread części — instalujemy je w runtime). Skrypt: server/package.json.
+RUN npm run build -w @air-combat/server
+
+# --- etap runtime: cienki obraz z bundlem + tylko zależności runtime ---
+FROM node:20-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+# tylko zależności runtime serwera (ws + pino); devDeps pomijamy (esbuild już zbundlowany).
+# Standalone package.json (bez workspace'ów) — `@air-combat/shared` jest w bundlu, nie w deps.
+COPY packages/server/package.json ./package.json
+RUN npm install --omit=dev --no-audit --no-fund
+
+COPY --from=build /app/packages/server/build ./build
+
+# Port WS serwera (shared/constants PORT = 3001); na produkcji za reverse proxy nginx (/ws).
+EXPOSE 3001
+CMD ["node", "build/index.js"]

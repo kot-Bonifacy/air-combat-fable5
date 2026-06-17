@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import {
+  MATCH_DEFAULT_SCORE_LIMIT,
   RECONNECT_WINDOW_MS,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
+  clampScoreLimit,
   isValidRoomCode,
   type DifficultyLevel,
   type RoomSummary,
@@ -38,6 +40,8 @@ export class Lobby {
   constructor(
     private readonly seed?: number,
     private readonly onRoomError?: (msg: string) => void,
+    /** Kanał logów informacyjnych pokoi (start/koniec meczu) — konsola serwera (faza 13). */
+    private readonly onRoomInfo?: (msg: string) => void,
   ) {}
 
   /** Świeży token sesji dla nowego połączenia (klient zapisze go w localStorage). */
@@ -87,8 +91,10 @@ export class Lobby {
     member: RoomMember,
     botCount = 0,
     difficulty: DifficultyLevel = QUICKPLAY_DIFFICULTY,
+    scoreLimit: number = MATCH_DEFAULT_SCORE_LIMIT,
   ): { room: GameRoom; playerId: number } {
-    const room = new GameRoom(this.uniqueCode(), this.seed, this.onRoomError);
+    const room = new GameRoom(this.uniqueCode(), this.seed, this.onRoomError, this.onRoomInfo);
+    room.scoreLimit = clampScoreLimit(scoreLimit);
     this.rooms.set(room.code, room);
     const playerId = room.addPlayer(nick, token, member);
     this.sessions.set(token, room.code);

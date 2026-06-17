@@ -1,8 +1,9 @@
-# Deploy — `dogfight.tatanga.eu` (Faza 7: publiczne demo single-player)
+# Deploy — `dogfight.tatanga.eu` (Faza 13: pełny multiplayer)
 
-Statyczny frontend (bez backendu) w Dockerze, wzorzec **C** z `C:\AI\vps_home_pl_konfiguracja.md`.
-Port zewnętrzny **8087**. Backend (serwer WS) dojdzie w fazie 13 — szkielet jest już
-zakomentowany w `docker-compose.yml` i `nginx.conf`.
+Frontend (statyczne SPA) + backend (autorytatywny serwer WS) w Dockerze, wzorzec **C** z
+`C:\AI\vps_home_pl_konfiguracja.md`. Port zewnętrzny **8087** (tylko frontend); backend jest
+wewnętrzny, nginx proxuje do niego `/ws`. Procedura krok-po-kroku: **`WDROZENIE-NA-VPS.md`**
+(sekcja „Faza 13 — backend multiplayer"). Ten plik to referencja artefaktów.
 
 ## Pliki
 
@@ -10,11 +11,17 @@ zakomentowany w `docker-compose.yml` i `nginx.conf`.
 | --- | --- |
 | `Dockerfile.frontend` | multi-stage: `node:20-alpine` buduje klienta (Vite) → `nginx:alpine` serwuje `dist/` |
 | `Dockerfile.frontend.dockerignore` | wyklucza `node_modules`/`dist`/`.git` z kontekstu builda |
-| `docker-compose.yml` | usługa `frontend` (8087:80); zakomentowany `backend` na fazę 13 |
-| `nginx.conf` | SPA + cache assetów; zakomentowany `location /ws` na fazę 13 |
-| `.env.example` | pusty szkielet pod fazę 13 (demo nie używa env) |
+| `Dockerfile.backend` | multi-stage: esbuild bundluje serwer (z `shared`) → cienki `node:20-alpine` (ws+pino) |
+| `Dockerfile.backend.dockerignore` | jak wyżej + pomija `assets/` (backend ich nie buduje) |
+| `docker-compose.yml` | `frontend` (8087:80) + `backend` (wewn. 3001, `mem_limit`/`cpus`/healthcheck) |
+| `nginx.conf` | SPA + cache assetów + `location /ws` → `backend:3001` (`proxy_read_timeout 86400`) |
+| `.env.example` | `LOG_LEVEL`, `NODE_ENV` (skopiuj do `.env` na VPS) |
 
 **Build context = korzeń repo** (`context: ..`), bo monorepo workspaces wymaga `shared` + manifestów z korzenia. Dlatego na VPS musi wylądować **całe repo**, nie tylko `deploy/`.
+
+Architektura ruchu: przeglądarka → NPM (SSL, Websockets ON) → `frontend:8087` →
+nginx `/ws` → `backend:3001`. Klient buduje URL jako `wss://<host>/ws` na produkcji
+(`net-client.ts` `defaultServerUrl`), `ws://<host>:3001` w dev.
 
 ---
 
@@ -111,3 +118,5 @@ docker compose up -d --build
 | Biała strona, w konsoli MIME error na `.js` | Nie dodawaj bloku `types {}` w `nginx.conf` (nadpisuje MIME). |
 | Certyfikat SSL się nie wydaje | DNS jeszcze nie sportagowany — sprawdź `dig`, poczekaj do 1 h. |
 | Model się nie ładuje, leci bryła-stożek | `assets/models/spitfire/` nie trafił do kontekstu builda — sprawdź, czy repo wgrane w całości. |
+| Gra w spinnerze, `/ws` → 502 | `backend` nie żyje/`unhealthy` — `docker compose logs backend`; frontend czeka na `service_healthy`. |
+| WS pada co ~60 s | Websockets Support OFF w NPM albo brak `proxy_read_timeout 86400` (jest w `nginx.conf` od fazy 13). |

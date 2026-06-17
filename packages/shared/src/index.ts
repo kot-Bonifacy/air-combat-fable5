@@ -24,6 +24,8 @@ export * from './world/arena';
 export * from './world/lifecycle';
 export * from './world/piloted-plane';
 export * from './world/match';
+export * from './world/ffa';
+export * from './world/spawn';
 export * from './world/zone';
 export * from './world/scoreboard';
 export * from './combat/ballistics';

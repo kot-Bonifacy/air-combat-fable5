@@ -1,7 +1,7 @@
-# Faza 7: publiczne demo single-player — dogfight.tatanga.eu, port zewn. 8087.
-# Build context = korzeń repo (..), bo monorepo workspaces (shared + client).
-# Bez klucza `version:` (przestarzały — ostrzeżenie). Backend (serwer WS) dojdzie
-# w fazie 13 — szkielet niżej, zakomentowany (wtedy też odkomentować /ws w nginx.conf).
+# Faza 13: pełny stack multiplayer — frontend (statyczny SPA) + backend (serwer WS).
+# Build context = korzeń repo (..), bo monorepo workspaces (shared + client + server).
+# Bez klucza `version:` (przestarzały — ostrzeżenie). Port zewn. 8087 → frontend:80;
+# backend NIE jest wystawiony na zewnątrz — nginx proxuje do niego /ws (sieć dockera).
 services:
   frontend:
     build:
@@ -11,14 +11,30 @@ services:
     ports:
       - '8087:80'
     restart: unless-stopped
+    # nginx (proxy_pass http://backend) rozwiązuje nazwę przy starcie — czekamy, aż backend
+    # będzie zdrowy, inaczej kontener frontu może się wywrócić na nieznanym upstreamie.
+    depends_on:
+      backend:
+        condition: service_healthy
 
-  # --- faza 13: autorytatywny serwer WebSocket ---
-  # backend:
-  #   build:
-  #     context: ..
-  #     dockerfile: deploy/Dockerfile.backend
-  #   container_name: dogfight-backend
-  #   environment:
-  #     - NODE_ENV=production
-  #     - CLIENT_ORIGIN=https://dogfight.tatanga.eu
-  #   restart: unless-stopped
+  # --- autorytatywny serwer WebSocket (faza 13) ---
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    container_name: dogfight-backend
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    # współdzielony VPS: limity USTAWIONE ZANIM coś pójdzie nie tak (OOM killer wybiera
+    # ofiary nieprzewidywalnie — pułapka faza-13.md). 8 graczy 60 Hz to ułamek rdzenia.
+    mem_limit: 256m
+    cpus: 0.50
+    # healthcheck = endpoint HTTP /health serwera (busybox wget jest w obrazie alpine)
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

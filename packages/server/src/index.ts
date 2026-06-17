@@ -13,9 +13,15 @@ void server.ready.then((port) => {
   log.info({ port }, 'serwer gry nasłuchuje (protokół binarny fazy 8)');
 });
 
+// Graceful shutdown (faza 13): powiadom graczy (komunikat zamiast wiecznego spinnera) i
+// zapisz log meczu do konsoli, daj chwilę na wysłanie ramek, dopiero zamknij gniazda.
+const SHUTDOWN_GRACE_MS = 300;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    log.info({ signal }, 'zamykanie serwera');
-    void server.close().then(() => process.exit(0));
+    log.info({ signal }, 'zamykanie serwera — powiadamiam graczy');
+    server.notifyShutdown();
+    setTimeout(() => {
+      void server.close().then(() => process.exit(0));
+    }, SHUTDOWN_GRACE_MS);
   });
 }
