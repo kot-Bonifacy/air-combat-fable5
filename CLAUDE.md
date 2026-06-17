@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0–11. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
+Fazy ukończone: 0–12. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
 + snapshoty 30 Hz. Faza 9 (2026-06-16): client prediction + reconciliation własnego samolotu
@@ -27,7 +27,13 @@ asysty serwerowo; eventy binarne MUZZLE/HIT/KILL (`MSG_EVENT`, protokół v2); k
 kosmetyczne smugacze z eventu MUZZLE (RNG z seeda = strumień serwera), hit marker/kill feed = echo
 serwera. Benchmark 8 graczy ognia = 0,476 ms/tick (dev). **OTWARTE dla użytkownika po deployu:
 sesja 2-os. ping ~150 ms (ocena „co widzę, to trafiam") + pomiar CPU 8 graczy na VPS → memory.**
-Następna: Faza 12 — boty na serwerze (dopełnianie pokoi, pełnoprawni uczestnicy walki sieciowej).
+Faza 12 (2026-06-17): boty na serwerze — bot = `ServerPlayer` (member=null, isBot), protokołowo
+nieodróżnialny od gracza (te same ścieżki combat/HP/snapshot/eventy); `server/bot-manager.ts` =
+kontrolery AI (`Bot` z fazy 6) + decymacja myślenia 10 Hz (`BOT_THINK_INTERVAL=6`, sterowanie co tick),
+unikanie ziemi też 10 Hz; host wybiera 0–7 botów + poziom przy tworzeniu pokoju (`CreateRoomMessage`
++bots/+difficulty, connection klampuje); sprzątanie pokoi po `humanCount` (boty nie trzymają pokoju);
+„Szybka gra" zasiewa 3 boty. Benchmark 1 gracz + 7 botów = 0,309 ms/tick (dev). **OTWARTE: formalny
+pomiar CPU w Dockerze/na VPS.** Następna: Faza 13 — pętla meczu: FFA + scoreboard + deploy multiplayer (kamień milowy).
 
 ## Stack (skrót)
 

@@ -4,9 +4,15 @@ import {
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
   isValidRoomCode,
+  type DifficultyLevel,
   type RoomSummary,
 } from '@air-combat/shared';
+import { MAX_BOTS_PER_ROOM } from './bot-manager';
 import { GameRoom, type RoomMember } from './game-room';
+
+/** Boty seedowane do pokoju utworzonego przez „Szybką grę" — żeby mecz nie był pusty. */
+const QUICKPLAY_BOTS = 3;
+const QUICKPLAY_DIFFICULTY: DifficultyLevel = 'normalny';
 
 // Rejestr pokoi (faza 10). Trzyma żywe pokoje po kodzie, generuje kody (alfabet bez
 // mylących znaków) i tokeny sesji, kojarzy token→pokój dla reconnectu. Sprzątanie:
@@ -71,12 +77,23 @@ export class Lobby {
     return { room, playerId: player.id };
   }
 
-  /** Tworzy nowy pokój i wprowadza gracza jako hosta. */
-  createRoom(nick: string, token: string, member: RoomMember): { room: GameRoom; playerId: number } {
+  /**
+   * Tworzy nowy pokój, wprowadza gracza jako hosta i dokłada `botCount` botów (faza 12).
+   * `botCount` jest klampowany do [0, MAX_BOTS_PER_ROOM] (obrona — connection waliduje wcześniej).
+   */
+  createRoom(
+    nick: string,
+    token: string,
+    member: RoomMember,
+    botCount = 0,
+    difficulty: DifficultyLevel = QUICKPLAY_DIFFICULTY,
+  ): { room: GameRoom; playerId: number } {
     const room = new GameRoom(this.uniqueCode(), this.seed, this.onRoomError);
     this.rooms.set(room.code, room);
     const playerId = room.addPlayer(nick, token, member);
     this.sessions.set(token, room.code);
+    const n = Math.max(0, Math.min(MAX_BOTS_PER_ROOM, Math.floor(botCount)));
+    for (let i = 0; i < n; i++) room.addBot(difficulty);
     return { room, playerId };
   }
 
@@ -110,10 +127,11 @@ export class Lobby {
       this.sessions.set(token, target.code);
       return { room: target, playerId };
     }
-    return this.createRoom(nick, token, member);
+    // brak otwartego pokoju → utwórz i zasiej botami (mecz nigdy nie jest pusty — faza 12)
+    return this.createRoom(nick, token, member, QUICKPLAY_BOTS, QUICKPLAY_DIFFICULTY);
   }
 
-  /** Trwale usuwa gracza z jego pokoju (wyjście) i czyści sesję. Pusty pokój znika. */
+  /** Trwale usuwa gracza z jego pokoju (wyjście) i czyści sesję. Pokój bez ludzi znika (też z botami). */
   leave(token: string, playerId: number): void {
     const code = this.sessions.get(token);
     this.sessions.delete(token);
@@ -121,7 +139,8 @@ export class Lobby {
     const room = this.rooms.get(code);
     if (!room) return;
     room.removePlayer(playerId);
-    if (room.playerCount === 0) this.rooms.delete(code);
+    // boty nie utrzymują pokoju przy życiu — gdy wyszedł ostatni człowiek, kasujemy pokój (i jego boty)
+    if (room.humanCount === 0) this.rooms.delete(code);
   }
 
   /**
@@ -133,7 +152,9 @@ export class Lobby {
       if (room.connectedCount === 0) {
         room.pruneExpiredReconnects(nowMs, RECONNECT_WINDOW_MS);
       }
-      if (room.playerCount === 0) {
+      // pokój żyje, dopóki jest w nim choć jeden człowiek (połączony lub w oknie reconnectu);
+      // sam-boty nie utrzymują pokoju (inaczej wyciek: boty latałyby po wyjściu wszystkich ludzi)
+      if (room.humanCount === 0) {
         this.rooms.delete(code);
         for (const [token, c] of this.sessions) if (c === code) this.sessions.delete(token);
       }

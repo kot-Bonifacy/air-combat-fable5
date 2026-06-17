@@ -21,6 +21,7 @@ import {
   encodeEvents,
   encodeSnapshot,
   eventsByteLength,
+  pilotStep,
   resetHealth,
   segmentSphereHit,
   snapshotByteLength,
@@ -28,13 +29,17 @@ import {
   totalAmmo,
   updateFire,
   updateLifecycle,
+  validatePlaneState,
+  wrapToArena,
   type ControlMessage,
+  type DifficultyLevel,
   type FireControl,
   type GameEvent,
   type Health,
   type InputFrame,
   type PilotDemands,
   type PlaneConfig,
+  type PlaneState,
   type RoomPlayer,
   type RoomState,
   type RoomSummary,
@@ -42,6 +47,7 @@ import {
   type SnapshotEntitySource,
   type Terrain,
 } from '@air-combat/shared';
+import { BOT_THINK_INTERVAL, BotManager } from './bot-manager';
 
 // Autorytatywny pokój gry. Faza 8 wprowadziła symulację (niezmiennik nr 5: serwer jest
 // autorytetem), faza 10 dokłada maszynę stanów lobby: waiting (poczekalnia, nikt nie lata)
@@ -69,6 +75,8 @@ const MAX_REWIND_TICKS = Math.round((LAGCOMP_MAX_REWIND_MS / 1000) * PHYSICS_HZ)
 const NO_KILLER = 0;
 
 const scratchHitCenter = new Vector3();
+/** Bufor zawinięcia torusa dla kroku bota (caller `wrapToArena` go nie czyta). */
+const scratchBotWrap = new Vector3();
 
 /**
  * Połączenie widziane przez pokój — tylko to, co potrzebne do rozsyłki. Interfejs
@@ -112,6 +120,8 @@ interface ServerPlayer {
   readonly spawnPos: Vector3;
   readonly spawnDir: Vector3;
   readonly slot: number;
+  /** Bot serwerowy (faza 12): sterowany przez AI, member zawsze null. */
+  readonly isBot: boolean;
 }
 
 export class GameRoom {
@@ -138,6 +148,11 @@ export class GameRoom {
   /** Bufor wyjściowy ramki EVENT (alokowany leniwie pod największą paczkę). */
   private eventScratch = new Uint8Array(0);
 
+  // --- boty (faza 12): kontrolery AI dla encji bez połączenia ---
+  private readonly botManager = new BotManager();
+  /** Scratch listy celów bota (żywe stany innych uczestników) — zero alokacji per decyzja. */
+  private readonly botTargetScratch: PlaneState[] = [];
+
   constructor(
     readonly code: string,
     seed?: number,
@@ -162,6 +177,18 @@ export class GameRoom {
     return this.players.size < MAX_PLAYERS_PER_ROOM;
   }
 
+  /** Liczba ludzi (graczy z połączeniem lub w oknie reconnectu) — boty NIE trzymają pokoju przy życiu. */
+  get humanCount(): number {
+    let n = 0;
+    for (const p of this.players.values()) if (!p.isBot) n++;
+    return n;
+  }
+
+  /** Liczba botów w pokoju — diagnostyka/testy. */
+  get botCount(): number {
+    return this.botManager.count;
+  }
+
   summary(): RoomSummary {
     return {
       code: this.code,
@@ -181,6 +208,31 @@ export class GameRoom {
    * MVP fazy 10 nie czeka na koniec meczu). Pierwszy gracz w pokoju zostaje hostem.
    */
   addPlayer(nick: string, sessionToken: string, member: RoomMember | null): number {
+    const player = this.createPlayer(nick, sessionToken, member, false);
+    if (this.hostId === null) this.hostId = player.id;
+    this.enterWorld(player);
+    return player.id;
+  }
+
+  /**
+   * Dokłada bota jako pełnoprawną encję pokoju (member=null, sterowany przez AI). Bot NIGDY
+   * nie zostaje hostem ani nie trzyma pokoju przy życiu (patrz humanCount). Nick z puli [BOT].
+   */
+  addBot(difficulty: DifficultyLevel): number {
+    const player = this.createPlayer(this.botManager.nextName(), '', null, true);
+    // strumień RNG bota osobny od strumienia rozrzutu ognia (inna stała mieszająca)
+    this.botManager.add(player.id, difficulty, (player.id + 1) ^ 0x0b07);
+    this.enterWorld(player); // spawn() zresetuje też kontroler AI (isBot)
+    return player.id;
+  }
+
+  /** Tworzy encję (gracz lub bot) i wpisuje do mapy; nie spawnuje ani nie ustawia hosta. */
+  private createPlayer(
+    nick: string,
+    sessionToken: string,
+    member: RoomMember | null,
+    isBot: boolean,
+  ): ServerPlayer {
     const id = this.nextId++;
     const slot = this.nextSlot++ % SPAWN_RING_SLOTS;
     const player: ServerPlayer = {
@@ -204,17 +256,20 @@ export class GameRoom {
       spawnPos: new Vector3(),
       spawnDir: new Vector3(),
       slot,
+      isBot,
     };
     this.players.set(id, player);
-    if (this.hostId === null) this.hostId = id;
+    return player;
+  }
+
+  /** Spawnuje świeżą encję; w trakcie meczu wchodzi jako late join (dead → spawn po RESPAWN_DELAY_S). */
+  private enterWorld(player: ServerPlayer): void {
     this.spawn(player);
     if (this.state === 'playing') {
-      // late join: poczekaj RESPAWN_DELAY_S zanim samolot wejdzie do gry
       player.sim.state.life = 'dead';
       player.sim.state.lifeTimerS = 0;
     }
     this.rebuildSnapshotSources();
-    return id;
   }
 
   /** Czy gracz o tym id istnieje (np. po reconnect/leave). */
@@ -278,6 +333,7 @@ export class GameRoom {
   /** Trwałe usunięcie gracza (wyjście z pokoju albo wygaśnięcie okna reconnectu). */
   removePlayer(id: number): void {
     if (!this.players.delete(id)) return;
+    this.botManager.remove(id); // no-op dla człowieka
     if (this.hostId === id) this.reassignHost();
     this.rebuildSnapshotSources();
     this.broadcastRoomUpdate();
@@ -353,14 +409,16 @@ export class GameRoom {
     if (this.state !== 'playing') return;
     this.tick = (this.tick + 1) >>> 0;
 
-    // 1) ruch wszystkich graczy (alive: fizyka+ogień-cykl-życia; dead: timer respawnu)
+    // 1) ruch wszystkich uczestników (alive: fizyka+cykl-życia; dead: timer respawnu).
+    // Bot i gracz różnią się TYLKO źródłem sterowania (AI vs input) — dalej identyczna ścieżka.
     for (const player of this.players.values()) {
       try {
-        this.stepPlayer(player, dtS);
+        if (player.isBot) this.stepBot(player, dtS);
+        else this.stepPlayer(player, dtS);
       } catch (err) {
         // Niezmiennik nr 7: NaN/Infinity wykryty i zrzucony (validatePlaneState),
-        // ale spreparowany input jednego gracza NIE kładzie serwera dla pozostałych
-        // (niezmiennik nr 11). Logujemy zrzut i respawnujemy winowajcę.
+        // ale spreparowany input jednego gracza (lub pech bota) NIE kładzie serwera dla
+        // pozostałych (niezmiennik nr 11). Logujemy zrzut i respawnujemy winowajcę.
         this.onError?.(`pokój ${this.code} gracz ${String(player.id)}: ${err instanceof Error ? err.message : String(err)}`);
         this.spawn(player);
       }
@@ -404,11 +462,51 @@ export class GameRoom {
     }
   }
 
-  /** Krok kontroli ognia gracza: spust z inputu, rewind lag-comp, event MUZZLE przy salwie. */
+  /**
+   * Jeden tick bota: decyzja AI (z decymacją 10 Hz) → ta sama sekwencja co stepPilotedPlane
+   * (pilotStep → zawinięcie torusa → strażnik NaN → cykl życia), tylko żądania pochodzą z
+   * instruktora bota, nie z inputu sieciowego. Faza decyzji offsetowana slotem, żeby nie
+   * wszystkie boty myślały w tym samym ticku (rozłożenie CPU — pułapka faza-12.md).
+   */
+  private stepBot(player: ServerPlayer, dtS: number): void {
+    const state = player.sim.state;
+    if (state.life === 'alive') {
+      if ((this.tick + player.slot) % BOT_THINK_INTERVAL === 0) {
+        this.botManager.think(
+          player.id,
+          state,
+          this.plane,
+          this.collectBotTargets(player),
+          this.terrain,
+          player.demands,
+          dtS * BOT_THINK_INTERVAL,
+        );
+      }
+      state.throttle = this.botManager.controlOf(player.id).throttle;
+      pilotStep(player.sim, this.plane, player.demands, dtS);
+      wrapToArena(state.position, scratchBotWrap);
+      validatePlaneState(state, `serwer ${this.code}: bot ${String(player.id)}`);
+      if (updateLifecycle(state, this.terrain, dtS) === 'crashed') this.onGroundDeath(player);
+    } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
+      this.spawn(player);
+    }
+  }
+
+  /** Żywe stany INNYCH uczestników jako kandydaci na cel bota (FFA: każdy poza nim samym). */
+  private collectBotTargets(self: ServerPlayer): readonly PlaneState[] {
+    this.botTargetScratch.length = 0;
+    for (const p of this.players.values()) {
+      if (p === self || p.sim.state.life !== 'alive') continue;
+      this.botTargetScratch.push(p.sim.state);
+    }
+    return this.botTargetScratch;
+  }
+
+  /** Krok kontroli ognia: spust z inputu (gracz) albo z decyzji AI (bot); rewind lag-comp, event MUZZLE. */
   private fireWeapon(player: ServerPlayer, dtS: number): void {
     const state = player.sim.state;
     if (state.life !== 'alive') return;
-    const triggerHeld = player.latestInput?.fire ?? false;
+    const triggerHeld = player.isBot ? this.botManager.fireOf(player.id) : (player.latestInput?.fire ?? false);
     const rewindTicks = this.computeRewindTicks(player);
     // state spełnia FiringPlatform (position/velocity/orientation); pociski lecą z TERAŹNIEJSZEJ
     // pozycji strzelca (nie cofamy strzelca — pułapka faza-11.md), cele cofamy w resolveHits.
@@ -539,6 +637,9 @@ export class GameRoom {
     player.fire.ammoRemaining = totalAmmo(this.plane.armament);
     player.fire.shotCounter = 0;
     player.damagedBy.clear();
+
+    // bot: zeruj filtry kontrolera i celownik na nowy nos (nie myśli starym stanem po respawnie)
+    if (player.isBot) this.botManager.reset(player.id, state);
   }
 
   private rebuildSnapshotSources(): void {

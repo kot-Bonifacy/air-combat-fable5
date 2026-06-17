@@ -1,11 +1,24 @@
 import {
+  DIFFICULTY_LEVELS,
   MAX_NICK_LENGTH,
+  MAX_PLAYERS_PER_ROOM,
   ROOM_CODE_LENGTH,
   sanitizeNick,
+  type DifficultyLevel,
   type RoomPlayer,
   type RoomState,
   type RoomSummary,
 } from '@air-combat/shared';
+
+/** Maks. botów do dołożenia = pojemność pokoju − 1 slot na hosta (zgodnie z serwerem). */
+const MAX_BOTS = MAX_PLAYERS_PER_ROOM - 1;
+
+/** Etykiety poziomów trudności dla UI (klucze JSON są bez polskich znaków). */
+const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
+  latwy: 'łatwy',
+  normalny: 'normalny',
+  trudny: 'trudny',
+};
 
 // Ekrany lobby (faza 10) jako vanilla DOM nad canvasem (decyzja PLAN.md — Preact dopiero,
 // gdy vanilla zaboli). Dwa widoki: 'entry' (nick + szybka gra / utwórz / dołącz kodem +
@@ -15,7 +28,7 @@ import {
 
 export interface LobbyCallbacks {
   onQuickPlay(): void;
-  onCreateRoom(): void;
+  onCreateRoom(bots: number, difficulty: DifficultyLevel): void;
   onJoinRoom(code: string): void;
   onRefreshList(): void;
   onStartMatch(): void;
@@ -37,6 +50,8 @@ export class LobbyUI {
   private readonly entry: HTMLDivElement;
   private readonly waiting: HTMLDivElement;
   private readonly nickInput: HTMLInputElement;
+  private readonly botCountSelect: HTMLSelectElement;
+  private readonly difficultySelect: HTMLSelectElement;
   private readonly codeInput: HTMLInputElement;
   private readonly roomListEl: HTMLDivElement;
   private readonly errorEl: HTMLDivElement;
@@ -71,9 +86,27 @@ export class LobbyUI {
       this.beforeAction();
       this.cb.onQuickPlay();
     });
+    // konfiguracja botów hosta (faza 12): liczba 0..MAX_BOTS + poziom trudności
+    const botRow = el('div', 'lobby-row lobby-bot-row');
+    const botLabel = el('label', 'lobby-label');
+    botLabel.textContent = 'Boty';
+    this.botCountSelect = selectEl(
+      'lobby-select lobby-select-bots',
+      Array.from({ length: MAX_BOTS + 1 }, (_, i) => ({ value: String(i), label: String(i) })),
+      '3',
+    );
+    const diffLabel = el('label', 'lobby-label');
+    diffLabel.textContent = 'poziom';
+    this.difficultySelect = selectEl(
+      'lobby-select',
+      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: DIFFICULTY_LABELS[lvl] })),
+      'normalny',
+    );
+    botRow.append(botLabel, this.botCountSelect, diffLabel, this.difficultySelect);
+
     const createBtn = button('Utwórz pokój', 'lobby-btn', () => {
       this.beforeAction();
-      this.cb.onCreateRoom();
+      this.cb.onCreateRoom(this.botCount, this.difficulty);
     });
 
     const joinRow = el('div', 'lobby-row lobby-join-row');
@@ -105,6 +138,7 @@ export class LobbyUI {
       sub,
       nickRow,
       quickBtn,
+      botRow,
       createBtn,
       joinRow,
       this.errorEl,
@@ -134,6 +168,14 @@ export class LobbyUI {
 
   get nick(): string {
     return sanitizeNick(this.nickInput.value);
+  }
+
+  private get botCount(): number {
+    return Number(this.botCountSelect.value) || 0;
+  }
+
+  private get difficulty(): DifficultyLevel {
+    return this.difficultySelect.value as DifficultyLevel;
   }
 
   private beforeAction(): void {
@@ -252,6 +294,23 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
   return b;
 }
 
+function selectEl(
+  className: string,
+  options: readonly { value: string; label: string }[],
+  selected: string,
+): HTMLSelectElement {
+  const sel = document.createElement('select');
+  sel.className = className;
+  for (const o of options) {
+    const opt = document.createElement('option');
+    opt.value = o.value;
+    opt.textContent = o.label;
+    if (o.value === selected) opt.selected = true;
+    sel.append(opt);
+  }
+  return sel;
+}
+
 let stylesInjected = false;
 function injectStyles(): void {
   if (stylesInjected) return;
@@ -291,6 +350,14 @@ const LOBBY_CSS = `
 }
 .lobby-input:focus { border-color: #6aa8da; }
 .lobby-code-input { min-width: 110px; text-transform: uppercase; letter-spacing: 3px; text-align: center; }
+.lobby-bot-row { gap: 8px; }
+.lobby-select {
+  font: 15px monospace; padding: 8px 10px; cursor: pointer;
+  color: #eaf3ff; background: rgba(10,20,32,0.9);
+  border: 1px solid #345; border-radius: 6px; outline: none;
+}
+.lobby-select:focus { border-color: #6aa8da; }
+.lobby-select-bots { min-width: 56px; }
 .lobby-btn {
   font: 600 15px/1 monospace; padding: 11px 22px; cursor: pointer;
   color: #eaf3ff; background: rgba(40,60,80,0.92);

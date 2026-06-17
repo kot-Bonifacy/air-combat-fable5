@@ -1,5 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import { NetError } from '../errors';
+import type { DifficultyLevel } from '../ai/difficulty';
 import type { LifePhase, PlaneState } from '../physics/state';
 
 // Protokół sieciowy fazy 8 (docs/phases/faza-08.md).
@@ -567,9 +568,13 @@ export interface ListRoomsMessage {
   t: 'listRooms';
 }
 
-/** Klient → serwer: utwórz nowy pokój (zostajesz hostem). */
+/** Klient → serwer: utwórz nowy pokój (zostajesz hostem). Host konfiguruje boty (faza 12). */
 export interface CreateRoomMessage {
   t: 'createRoom';
+  /** Liczba botów do dołożenia (0..MAX_BOTS_PER_ROOM). Brak/poza zakresem → serwer klampuje. */
+  bots?: number;
+  /** Poziom trudności botów; brak/nieznany → serwerowy domyślny. */
+  difficulty?: DifficultyLevel;
 }
 
 /** Klient → serwer: dołącz do pokoju o podanym kodzie. */

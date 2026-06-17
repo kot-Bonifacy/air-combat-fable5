@@ -1,5 +1,6 @@
 import type { RawData, WebSocket } from 'ws';
 import {
+  DIFFICULTY_LEVELS,
   INPUT_BYTES,
   INPUT_HZ,
   PHYSICS_HZ,
@@ -10,12 +11,28 @@ import {
   sanitizeNick,
   validateInputFrame,
   type ControlMessage,
+  type DifficultyLevel,
   type ErrorMessage,
   type RoomJoinedMessage,
   type WelcomeMessage,
 } from '@air-combat/shared';
+import { MAX_BOTS_PER_ROOM } from './bot-manager';
 import type { GameRoom, RoomMember } from './game-room';
 import type { Lobby } from './lobby';
+
+/** Domyślny poziom trudności botów, gdy host nie poda (lub poda nieznany). */
+const DEFAULT_BOT_DIFFICULTY: DifficultyLevel = 'normalny';
+
+/** Klampuje liczbę botów żądaną przez hosta do [0, MAX_BOTS_PER_ROOM] (niezmiennik nr 11). */
+function clampBotCount(raw: unknown): number {
+  const n = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : 0;
+  return Math.max(0, Math.min(MAX_BOTS_PER_ROOM, n));
+}
+
+/** Przyjmuje poziom trudności tylko z listy znanych — inaczej domyślny (brak zaufania do klienta). */
+function validDifficulty(raw: unknown): DifficultyLevel {
+  return DIFFICULTY_LEVELS.includes(raw as DifficultyLevel) ? (raw as DifficultyLevel) : DEFAULT_BOT_DIFFICULTY;
+}
 
 // Jedno połączenie WS. Maszyna stanów: handshaking → lobby → inRoom → closed (faza 10).
 // Handshake JSON niesie wersję protokołu, nick i opcjonalny token reconnectu. Po przyjęciu
@@ -163,7 +180,9 @@ export class Connection implements RoomMember {
         return;
       case 'createRoom': {
         if (this.state === 'inRoom') return;
-        const { room, playerId } = this.lobby.createRoom(this.nick, this.token, this);
+        const bots = clampBotCount(msg.bots);
+        const difficulty = validDifficulty(msg.difficulty);
+        const { room, playerId } = this.lobby.createRoom(this.nick, this.token, this, bots, difficulty);
         this.enterRoom(room, playerId);
         return;
       }

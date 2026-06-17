@@ -311,7 +311,7 @@ function playerName(id: number): string {
 // --- lobby UI + sieć ---
 const lobby = new LobbyUI({
   onQuickPlay: () => withConnection((c) => c.quickPlay()),
-  onCreateRoom: () => withConnection((c) => c.createRoom()),
+  onCreateRoom: (bots, difficulty) => withConnection((c) => c.createRoom(bots, difficulty)),
   onJoinRoom: (code) => withConnection((c) => c.joinRoom(code)),
   onRefreshList: () => withConnection((c) => c.requestRoomList()),
   onStartMatch: () => net?.startMatch(),
