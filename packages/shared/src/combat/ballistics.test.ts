@@ -20,6 +20,7 @@ function makeBullet(velocity: Vector3): Bullet {
     damage: 0,
     ownerId: 0,
     tracer: false,
+    rewindTicks: 0,
   };
 }
 

@@ -44,6 +44,7 @@ function entityOf(s: PlaneState): EntitySnapshot {
     orientation: s.orientation.clone(),
     velocity: s.velocity.clone(),
     throttle: s.throttle,
+    healthFrac: 1,
   };
 }
 

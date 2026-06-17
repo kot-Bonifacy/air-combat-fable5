@@ -9,18 +9,28 @@ import {
 } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
+  BULLET_POOL_CAPACITY,
+  BulletPool,
   INPUT_HZ,
+  MRAD_TO_RAD,
   MS_TO_KMH,
   MouseAimCore,
   PORT,
   SPITFIRE_MK2,
+  aimDirectionBody,
+  applyDispersion,
+  createRng,
   createTerrain,
   getForward,
   type EntitySnapshot,
+  type GameEvent,
   type InputFrame,
+  type KillCause,
   type RoomJoinedMessage,
+  type RoomPlayer,
   type Snapshot,
 } from '@air-combat/shared';
+import { BulletTracers } from './bullet-tracers';
 import { ChaseCamera } from './chase-camera';
 import { KeyboardInput } from './input';
 import { MouseAim } from './mouse-aim';
@@ -37,7 +47,9 @@ import { createWorld } from './world';
 // w lobby), dzięki czemu hello niesie aktualny nick. Token sesji z welcome trzymamy w
 // localStorage → przy odświeżeniu próbujemy reconnectu do tego samego samolotu. Render +
 // input + predykcja działają tylko w fazie 'playing'; w lobby pokazujemy ekrany DOM.
-// Predykcja/interpolacja jak w fazie 9 (broń wciąż wyłączona — wraca w fazie 11).
+// Predykcja/interpolacja jak w fazie 9. Faza 11: broń online — spust w INPUT, pociski
+// autorytatywne na serwerze; klient rysuje smugacze z eventu MUZZLE i pokazuje hit marker /
+// kill feed z eventów HIT / KILL (zero hit-detekcji po stronie klienta).
 
 const plane = SPITFIRE_MK2;
 const wingspanM = Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
@@ -110,6 +122,26 @@ const aimCore = new MouseAimCore();
 const mouseAim = new MouseAim(renderer.domElement, aimCore);
 renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
 
+// spust (faza 11): LPM przy aktywnej myszy albo Spacja. Pierwsze kliknięcie wchodzi
+// w pointer lock i NIE strzela (triggerHeld bramkuje LPM na mouseAim.locked) — jak offline.
+let triggerMouse = false;
+let triggerKey = false;
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button === 0) triggerMouse = true;
+});
+window.addEventListener('pointerup', (e) => {
+  if (e.button === 0) triggerMouse = false;
+});
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') triggerKey = true;
+});
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'Space') triggerKey = false;
+});
+function triggerHeld(): boolean {
+  return (mouseAim.locked && triggerMouse) || triggerKey;
+}
+
 // --- stan sieci/lobby ---
 let net: NetClient | null = null;
 let phase: Phase = 'lobby';
@@ -128,6 +160,32 @@ const presentIds = new Set<number>();
 const remoteScratch: EntitySnapshot[] = [];
 let remoteCount = 0;
 let extrapolatingCount = 0;
+
+// --- walka (faza 11): pociski są autorytatywne na serwerze; klient rysuje WYŁĄCZNIE
+//     kosmetyczne smugacze z eventu MUZZLE (z pozy strzelca), a hit marker / kill feed
+//     z eventów HIT / KILL. Żadnej hit-detekcji po stronie klienta. ---
+const arm = plane.armament;
+const cosmeticPool = new BulletPool(BULLET_POOL_CAPACITY);
+const tracers = new BulletTracers(scene, BULLET_POOL_CAPACITY);
+const tracerCounter = new Map<number, number>(); // ciągłość kadencji smugaczy per strzelec
+const cosmDir = new Vector3();
+const cosmMuzzle = new Vector3();
+const cosmVel = new Vector3();
+
+const hitMarkerEl = requireEl('hit-marker');
+const killFeedEl = requireEl('kill-feed');
+const HIT_MARKER_S = 0.12;
+const HIT_MARKER_KILL_S = 0.5;
+const KILL_FEED_TTL_S = 6;
+let hitMarkerTimerS = 0;
+let hitMarkerKill = false;
+interface KillFeedLine {
+  text: string;
+  ageS: number;
+}
+const killFeed: KillFeedLine[] = [];
+/** Ułamek HP własnego samolotu z ostatniego snapshotu (HUD) — HP jest autorytetem serwera. */
+let localHealthFrac = 1;
 
 function ensureMesh(id: number): PlaneModel {
   let m = meshes.get(id);
@@ -152,6 +210,13 @@ function resetGameState(): void {
   interpolator = new SnapshotInterpolator();
   hasPrevLocal = false;
   chaseCamera.reset();
+  // czysty stan walki: zgaś smugacze, wyczyść feed/marker (nowy mecz / reconnect)
+  for (const b of cosmeticPool.bullets) b.active = false;
+  tracerCounter.clear();
+  killFeed.length = 0;
+  hitMarkerTimerS = 0;
+  hitMarkerKill = false;
+  localHealthFrac = 1;
 }
 
 function handleSnapshot(snap: Snapshot): void {
@@ -161,8 +226,12 @@ function handleSnapshot(snap: Snapshot): void {
   for (const e of snap.entities) {
     presentIds.add(e.id);
     ensureMesh(e.id);
-    if (e.isLocal) predictor.reconcile(e, snap.ackSeq);
-    else remoteScratch.push(e);
+    if (e.isLocal) {
+      predictor.reconcile(e, snap.ackSeq);
+      localHealthFrac = e.healthFrac;
+    } else {
+      remoteScratch.push(e);
+    }
   }
   interpolator.ingest(snap.serverTick, remoteScratch);
   for (const [id, m] of meshes) {
@@ -170,6 +239,73 @@ function handleSnapshot(snap: Snapshot): void {
     scene.remove(m.object);
     meshes.delete(id);
   }
+}
+
+// --- zdarzenia walki (faza 11): MUZZLE → smugacze, HIT → marker, KILL → feed/marker ---
+function handleEvents(events: GameEvent[]): void {
+  if (phase !== 'playing') return;
+  const localId = net?.localPlayerId ?? null;
+  for (const ev of events) {
+    if (ev.kind === 'muzzle') {
+      spawnCosmeticVolley(ev.ownerId, ev.seed, ev.shots);
+    } else if (ev.kind === 'hit') {
+      // hit marker dopiero z potwierdzenia serwera (uczciwość > responsywność) — gdy to JA trafiłem
+      if (ev.shooterId === localId && !hitMarkerKill) hitMarkerTimerS = HIT_MARKER_S;
+    } else {
+      onKill(ev.killerId, ev.victimId, ev.cause, localId);
+    }
+  }
+}
+
+/**
+ * Kosmetyczna salwa smugaczy z pozy RENDEROWANEJ strzelca (mesh). Pociski autorytatywne
+ * liczy serwer — te tu nie mają hit-detekcji, gasną po czasie życia. Rozrzut z seeda eventu
+ * (stabilny per salwa); prędkość płatowca pomijamy (muzzleVelocity dominuje — kosmetyka).
+ */
+function spawnCosmeticVolley(ownerId: number, seed: number, shots: number): void {
+  const mesh = meshes.get(ownerId);
+  if (!mesh) return;
+  const rng = createRng(seed);
+  const dispersionRad = arm.dispersionMrad * MRAD_TO_RAD;
+  let counter = tracerCounter.get(ownerId) ?? 0;
+  const pos = mesh.object.position;
+  const quat = mesh.object.quaternion;
+  for (let i = 0; i < shots; i++) {
+    const m = arm.muzzles[i % arm.muzzles.length]!;
+    cosmMuzzle.set(m[0], m[1], m[2]);
+    aimDirectionBody(cosmMuzzle, arm.convergenceM, arm.convergenceRiseM, cosmDir);
+    applyDispersion(cosmDir, dispersionRad, rng);
+    cosmDir.applyQuaternion(quat);
+    cosmMuzzle.applyQuaternion(quat).add(pos);
+    cosmVel.copy(cosmDir).multiplyScalar(arm.muzzleVelocityMs);
+    const tracer = counter % 3 === 0;
+    counter++;
+    cosmeticPool.spawn(cosmMuzzle, cosmVel, 0, ownerId, tracer);
+  }
+  tracerCounter.set(ownerId, counter);
+}
+
+function onKill(killerId: number, victimId: number, cause: KillCause, localId: number | null): void {
+  const victim = playerName(victimId);
+  if (cause === 'air') {
+    pushKillFeed(`✕ ${playerName(killerId)} → ${victim}`);
+    if (killerId === localId) {
+      hitMarkerTimerS = HIT_MARKER_KILL_S;
+      hitMarkerKill = true;
+    }
+  } else {
+    pushKillFeed(`✕ ${victim} — ${cause === 'collision' ? 'kolizja' : 'rozbicie'}`);
+  }
+}
+
+function pushKillFeed(text: string): void {
+  killFeed.push({ text, ageS: 0 });
+  if (killFeed.length > 5) killFeed.shift();
+}
+
+function playerName(id: number): string {
+  const found = roomView?.players.find((p: RoomPlayer) => p.id === id);
+  return found?.nick ?? `#${String(id)}`;
 }
 
 // --- lobby UI + sieć ---
@@ -220,6 +356,7 @@ let pendingAction: ((c: NetClient) => void) | null = null;
 function createNet(nick: string, token: string | null): NetClient {
   const c = new NetClient(defaultServerUrl(PORT), nick, token);
   c.onSnapshot = handleSnapshot;
+  c.onEvents = handleEvents;
   c.onWelcome = (msg) => {
     saveToken(msg.sessionToken);
     // świeże połączenie (nie reconnect) → pokaż lobby i pobierz listę pokoi
@@ -285,7 +422,7 @@ const scratchAim = new Vector3();
 let sequence = 0;
 const inputFrame: InputFrame = {
   sequence: 0,
-  clientTimeMs: 0,
+  ackServerTick: 0,
   throttle: 0.8,
   pitchUp: 0,
   rollRight: 0,
@@ -316,12 +453,13 @@ function sendInputTick(dtS: number): void {
   }
 
   inputFrame.sequence = ++sequence;
-  inputFrame.clientTimeMs = Date.now() >>> 0;
+  // echo najnowszego ticku serwera → serwer liczy z niego rewind lag-comp (faza 11)
+  inputFrame.ackServerTick = net.latestSnapshot?.serverTick ?? 0;
   inputFrame.throttle = keyboard.throttle;
   inputFrame.pitchUp = pitchUp;
   inputFrame.rollRight = rollRight;
   inputFrame.yawRight = yawRight;
-  inputFrame.fire = false; // broń online wyłączona w fazie 10 (wraca w fazie 11)
+  inputFrame.fire = triggerHeld();
   inputFrame.aimX = scratchAim.x;
   inputFrame.aimY = scratchAim.y;
   inputFrame.aimZ = scratchAim.z;
@@ -340,6 +478,7 @@ function updateHud(): void {
       `prędkość ${tasKmh.toFixed(0).padStart(4)} km/h`,
       `wysokość ${s.position.y.toFixed(0).padStart(5)} m`,
       `gaz      ${(s.throttle * 100).toFixed(0).padStart(3)} %`,
+      `HP       ${(localHealthFrac * 100).toFixed(0).padStart(3)} %`,
       `stan     ${s.life}${s.stalled ? '  PRZECIĄGNIĘCIE' : ''}`,
     );
   }
@@ -347,7 +486,7 @@ function updateHud(): void {
     '',
     `ping ${String(net?.rttMs ?? 0).padStart(3)} ms   id ${net?.localPlayerId ?? '—'}   gracze ${describePlayers()}`,
     mouseAim.locked ? '[mysz aktywna]' : '[kliknij, by przejąć celowanie myszą]',
-    'WSAD/strzałki — ster • Q/E — kierunek • Shift/Ctrl — gaz • [N] sieć',
+    'WSAD/strzałki — ster • Q/E — kierunek • Shift/Ctrl — gaz • LPM/Spacja — ogień • [N] sieć',
   );
   hudEl.textContent = lines.join('\n');
 }
@@ -379,6 +518,40 @@ function updateConnOverlay(): void {
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
+}
+
+// --- render walki (faza 11): smugacze, hit marker, kill feed ---
+function updateCombatVisuals(frameDtS: number): void {
+  cosmeticPool.update(arm.bulletDragK, arm.bulletLifetimeS, frameDtS);
+  tracers.update(cosmeticPool.bullets, 1);
+
+  if (hitMarkerTimerS > 0) {
+    const dur = hitMarkerKill ? HIT_MARKER_KILL_S : HIT_MARKER_S;
+    hitMarkerEl.className = hitMarkerKill ? 'kill' : '';
+    hitMarkerEl.style.opacity = Math.min(1, hitMarkerTimerS / dur).toFixed(2);
+    hitMarkerTimerS -= frameDtS;
+    if (hitMarkerTimerS <= 0) hitMarkerKill = false;
+  } else {
+    hitMarkerEl.style.opacity = '0';
+  }
+
+  if (killFeed.length > 0) {
+    for (let i = killFeed.length - 1; i >= 0; i--) {
+      const line = killFeed[i]!;
+      line.ageS += frameDtS;
+      if (line.ageS >= KILL_FEED_TTL_S) killFeed.splice(i, 1);
+    }
+    killFeedEl.replaceChildren(
+      ...killFeed.map((line) => {
+        const div = document.createElement('div');
+        div.textContent = line.text;
+        div.style.opacity = Math.min(1, KILL_FEED_TTL_S - line.ageS).toFixed(2);
+        return div;
+      }),
+    );
+  } else if (killFeedEl.childElementCount > 0) {
+    killFeedEl.replaceChildren();
+  }
 }
 
 // --- przełączniki debug: [N] overlay sieci, [P] panel symulatora (tylko dev) ---
@@ -457,6 +630,7 @@ renderer.setAnimationLoop(() => {
         loadingHidden = true;
       }
     }
+    updateCombatVisuals(frameDtS);
     updateHud();
   }
 

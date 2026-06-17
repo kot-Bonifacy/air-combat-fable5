@@ -31,6 +31,7 @@ export * from './combat/hit';
 export * from './combat/collision';
 export * from './combat/health';
 export * from './combat/fire';
+export * from './combat/lag-comp';
 export * from './ai/geometry';
 export * from './ai/lead';
 export * from './ai/difficulty';

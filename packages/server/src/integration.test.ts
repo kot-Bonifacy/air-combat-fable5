@@ -3,12 +3,15 @@ import { Vector3 } from 'three';
 import { WebSocket } from 'ws';
 import {
   INPUT_BYTES,
+  MSG_EVENT,
   PROTOCOL_VERSION,
+  decodeEvents,
   decodeSnapshot,
   encodeInput,
   parseControlMessage,
   type ControlMessage,
   type EntitySnapshot,
+  type GameEvent,
   type InputFrame,
   type RoomJoinedMessage,
   type Snapshot,
@@ -44,6 +47,7 @@ class TestClient {
   readonly ws: WebSocket;
   private readonly control: ControlMessage[] = [];
   latestSnapshot: Snapshot | undefined;
+  readonly events: GameEvent[] = [];
 
   constructor(port: number) {
     this.ws = new WebSocket(`ws://localhost:${port}`);
@@ -51,7 +55,10 @@ class TestClient {
     clients.push(this.ws);
     this.ws.on('message', (data, isBinary) => {
       if (isBinary) {
-        this.latestSnapshot = decodeSnapshot(new DataView(data as ArrayBuffer));
+        const view = new DataView(data as ArrayBuffer);
+        // ramki binarne: snapshot albo paczka EVENT — rozróżniamy po pierwszym bajcie
+        if (view.getUint8(0) === MSG_EVENT) this.events.push(...decodeEvents(view));
+        else this.latestSnapshot = decodeSnapshot(view);
         return;
       }
       const msg = parseControlMessage(data.toString());
@@ -101,7 +108,7 @@ class TestClient {
 function makeInput(over: Partial<InputFrame>): InputFrame {
   return {
     sequence: 1,
-    clientTimeMs: Date.now() >>> 0,
+    ackServerTick: 0,
     throttle: 1,
     pitchUp: 0,
     rollRight: 0,
@@ -173,6 +180,25 @@ describe('integracja klient↔serwer (faza 10: lobby + gra)', () => {
     // pull-up: nos zadarty → składowa „w górę" wektora czołowego dodatnia
     const fwd = new Vector3(0, 0, 1).applyQuaternion(me!.orientation);
     expect(fwd.y).toBeGreaterThan(0.1);
+  });
+
+  it('spust w INPUT → serwer odsyła binarny event MUZZLE (faza 11, ogień end-to-end)', async () => {
+    const port = await startServer();
+    const client = new TestClient(port);
+    await client.open();
+    const { joined } = await client.hostMatch();
+
+    // ~0,5 s trzymania spustu — serwer strzela wg kadencji i broadcastuje paczki MUZZLE
+    for (let seq = 1; seq <= 30; seq++) {
+      client.sendInput(makeInput({ sequence: seq, fire: true }));
+      await sleep(16);
+    }
+    await sleep(60); // domknij ostatnie eventy
+
+    const muzzle = client.events.find((e) => e.kind === 'muzzle');
+    if (muzzle?.kind !== 'muzzle') throw new Error('serwer nie odesłał eventu MUZZLE');
+    expect(muzzle.ownerId).toBe(joined.youId); // to MÓJ błysk
+    expect(muzzle.shots).toBeGreaterThan(0);
   });
 
   it('spreparowane pakiety (zły rozmiar) odrzucone, serwer żyje i nadal symuluje', async () => {

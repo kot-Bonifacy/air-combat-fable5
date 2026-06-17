@@ -169,3 +169,22 @@ export const RECONCILE_SNAP_DIST_M = 50;
  * w ~tej skali czasu; za duża = obcy „guma", za mała = widoczne mikro-szarpnięcia.
  */
 export const RECONCILE_SMOOTH_TAU_S = 0.1;
+
+// --- walka sieciowa (faza 11): serwerowy hit detection + lag compensation ---
+
+/**
+ * Pojemność historii pozycji do lag-compensation [ticki]. ~333 ms @ 60 Hz — z zapasem
+ * nad capem rewindu (250 ms = 15 ticków), żeby potrzebna klatka nigdy nie była nadpisana
+ * (margines pokrywa też tick tuż po zawinięciu u32). Patrz shared/combat/lag-comp.ts.
+ */
+export const LAGCOMP_HISTORY_TICKS = 20;
+
+/**
+ * Górny limit rewindu celów przy hit-detekcji [ms] (faza-11.md, decyzja designerska):
+ * gracze z bardzo wysokim pingiem muszą wyprzedzać, ale dla pozostałych nie istnieje
+ * „śmierć zza ściany czasu". Łączny rewind liczymy DOKŁADNIE z echa ticku (server/game-room.ts
+ * computeRewindTicks): rewind = (tick − ostatni potwierdzony tick) + bufor interpolacji =
+ * RTT + bufor (wierne odtworzenie tego, co strzelec WIDZIAŁ — nie przybliżenie ping/2).
+ * 250 ms pokrywa w pełni ping ≤ 150 ms przy buforze 100 ms (kryterium fazy „co widzę, to trafiam").
+ */
+export const LAGCOMP_MAX_REWIND_MS = 250;

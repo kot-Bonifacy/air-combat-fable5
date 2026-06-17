@@ -6,7 +6,7 @@ import { GameRoom } from './game-room';
 function input(over: Partial<InputFrame> = {}): InputFrame {
   return {
     sequence: 1,
-    clientTimeMs: 0,
+    ackServerTick: 0,
     throttle: 0.9,
     pitchUp: 0,
     rollRight: 0,

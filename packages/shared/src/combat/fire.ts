@@ -100,6 +100,7 @@ function fireVolley(
   ownerId: number,
   rng: () => number,
   pool: BulletPool,
+  rewindTicks: number,
 ): number {
   const dispersionRad = armament.dispersionMrad * MRAD_TO_RAD;
   let fired = 0;
@@ -114,7 +115,7 @@ function fireVolley(
     scratchVel.copy(platform.velocity).addScaledVector(scratchDir, armament.muzzleVelocityMs);
     const tracer = fc.shotCounter % 3 === 0;
     fc.shotCounter++;
-    pool.spawn(scratchMuzzleWorld, scratchVel, armament.damagePerHit, ownerId, tracer);
+    pool.spawn(scratchMuzzleWorld, scratchVel, armament.damagePerHit, ownerId, tracer, rewindTicks);
     fc.ammoRemaining--;
     fired++;
   }
@@ -136,6 +137,9 @@ export function updateFire(
   pool: BulletPool,
   triggerHeld: boolean,
   dtS: number,
+  // lag-compensation (faza 11): o ile ticków cofać cele dla pocisków z tej salwy.
+  // 0 = offline/serwer lokalny (zachowanie z fazy 5 bez zmian).
+  rewindTicks = 0,
 ): number {
   fc.cooldownS -= dtS;
   if (!triggerHeld) {
@@ -146,7 +150,7 @@ export function updateFire(
   let fired = 0;
   // limit iteracji = bezpiecznik przed pętlą przy patologicznym dtS
   for (let guard = 0; guard < 32 && fc.cooldownS <= 0 && fc.ammoRemaining > 0; guard++) {
-    fired += fireVolley(fc, armament, platform, ownerId, rng, pool);
+    fired += fireVolley(fc, armament, platform, ownerId, rng, pool, rewindTicks);
     fc.cooldownS += interval;
   }
   return fired;

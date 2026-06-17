@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0–10. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
+Fazy ukończone: 0–11. Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
 + snapshoty 30 Hz. Faza 9 (2026-06-16): client prediction + reconciliation własnego samolotu
@@ -20,7 +20,14 @@ Faza 10 (2026-06-16): lobby i pokoje — rejestr wielu pokoi (`server/lobby.ts`)
 quickPlay/startMatch + roomJoined/roomUpdate/matchStarted); token sesji + reconnect (okno 60 s,
 brak wycieku pokoi); klient: leniwe łączenie, ekrany lobby vanilla DOM (`client/src/net/lobby-ui.ts`),
 poczekalnia na tle `/dogfight-splash.jpg`. **Przed deployem: wrzucić `assets/dogfight-splash.jpg`.**
-Następna: Faza 11 — broń online + hit detection na serwerze.
+Faza 11 (2026-06-17): walka sieciowa autorytatywna — pociski na serwerze (pula per-pokój) +
+hit detection z lag-compensation (`shared/combat/lag-comp.ts` `PositionHistory`; rewind celów =
+echo ticku `ackServerTick` + bufor interpolacji, cap 250 ms; cofamy TYLKO cele); HP/kill credit/
+asysty serwerowo; eventy binarne MUZZLE/HIT/KILL (`MSG_EVENT`, protokół v2); klient: spust w INPUT,
+kosmetyczne smugacze z eventu MUZZLE (RNG z seeda = strumień serwera), hit marker/kill feed = echo
+serwera. Benchmark 8 graczy ognia = 0,476 ms/tick (dev). **OTWARTE dla użytkownika po deployu:
+sesja 2-os. ping ~150 ms (ocena „co widzę, to trafiam") + pomiar CPU 8 graczy na VPS → memory.**
+Następna: Faza 12 — boty na serwerze (dopełnianie pokoi, pełnoprawni uczestnicy walki sieciowej).
 
 ## Stack (skrót)
 

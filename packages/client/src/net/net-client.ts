@@ -1,10 +1,13 @@
 import {
   INPUT_BYTES,
+  MSG_EVENT,
   PROTOCOL_VERSION,
+  decodeEvents,
   decodeSnapshot,
   encodeInput,
   parseControlMessage,
   type ControlMessage,
+  type GameEvent,
   type InputFrame,
   type RoomJoinedMessage,
   type RoomListMessage,
@@ -38,6 +41,8 @@ export class NetClient {
 
   /** Wywoływane dla KAŻDEGO zdekodowanego snapshotu (po symulowanym opóźnieniu). */
   onSnapshot: ((snap: Snapshot) => void) | undefined;
+  /** Wywoływane dla każdej paczki zdarzeń walki (MUZZLE/HIT/KILL) — po symulowanym opóźnieniu. */
+  onEvents: ((events: GameEvent[]) => void) | undefined;
   onWelcome: ((msg: WelcomeMessage) => void) | undefined;
   onRoomList: ((msg: RoomListMessage) => void) | undefined;
   onRoomJoined: ((msg: RoomJoinedMessage) => void) | undefined;
@@ -88,12 +93,29 @@ export class NetClient {
       return;
     }
     if (data instanceof ArrayBuffer) {
-      // symulator RX: opóźnij/odrzuć przychodzący snapshot (każda ramka to świeży ArrayBuffer)
+      // symulator RX: opóźnij/odrzuć przychodzącą ramkę (każda to świeży ArrayBuffer)
       const delay = rollDelayMs(this.conditions);
-      if (delay === null) return; // zgubiony snapshot (symulacja) — gap złapie metryka
-      if (delay <= 0) this.handleSnapshot(data);
-      else setTimeout(() => this.handleSnapshot(data), delay);
+      if (delay === null) return; // zgubiona ramka (symulacja) — gap złapie metryka
+      if (delay <= 0) this.handleBinary(data);
+      else setTimeout(() => this.handleBinary(data), delay);
     }
+  }
+
+  /** Ramka binarna: snapshot albo paczka EVENT — rozróżniamy po pierwszym bajcie (faza 11). */
+  private handleBinary(buffer: ArrayBuffer): void {
+    if (buffer.byteLength === 0) return;
+    if (new DataView(buffer).getUint8(0) === MSG_EVENT) this.handleEvents(buffer);
+    else this.handleSnapshot(buffer);
+  }
+
+  private handleEvents(buffer: ArrayBuffer): void {
+    let events: GameEvent[];
+    try {
+      events = decodeEvents(new DataView(buffer));
+    } catch {
+      return; // uszkodzona paczka — pomiń
+    }
+    this.onEvents?.(events);
   }
 
   private onControl(text: string): void {

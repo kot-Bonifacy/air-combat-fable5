@@ -4,14 +4,18 @@ import { NetError } from '../errors';
 import { createPlaneState, type PlaneState } from '../physics/state';
 import {
   INPUT_BYTES,
+  MSG_EVENT,
   MSG_INPUT,
   MSG_SNAPSHOT,
   PROTOCOL_VERSION,
   VELOCITY_QUANT_RANGE_MS,
+  decodeEvents,
   decodeInput,
   decodeSnapshot,
+  encodeEvents,
   encodeInputToBytes,
   encodeSnapshot,
+  eventsByteLength,
   isValidRoomCode,
   sanitizeNick,
   MAX_NICK_LENGTH,
@@ -20,6 +24,7 @@ import {
   parseControlMessage,
   snapshotByteLength,
   validateInputFrame,
+  type GameEvent,
   type InputFrame,
   type SnapshotEntitySource,
 } from './protocol';
@@ -27,7 +32,7 @@ import {
 function makeInput(over: Partial<InputFrame> = {}): InputFrame {
   return {
     sequence: 12345,
-    clientTimeMs: 6789,
+    ackServerTick: 6789,
     throttle: 0.5,
     pitchUp: 0.25,
     rollRight: -0.75,
@@ -49,7 +54,7 @@ describe('protokół INPUT round-trip', () => {
   it('zachowuje pola w granicach kwantyzacji', () => {
     const out = roundTripInput(makeInput());
     expect(out.sequence).toBe(12345);
-    expect(out.clientTimeMs).toBe(6789);
+    expect(out.ackServerTick).toBe(6789);
     expect(out.fire).toBe(true);
     expect(out.throttle).toBeCloseTo(0.5, 4);
     expect(out.pitchUp).toBeCloseTo(0.25, 3);
@@ -118,13 +123,17 @@ describe('validateInputFrame', () => {
   });
 });
 
-function makeEntity(id: number, over: Partial<PlaneState> = {}): SnapshotEntitySource {
+function makeEntity(
+  id: number,
+  over: Partial<PlaneState> = {},
+  health = { hp: 120, maxHp: 120 },
+): SnapshotEntitySource {
   const state = createPlaneState();
   state.position.set(1234.5, 678.25, -9000.75);
   state.orientation.set(0.1, 0.2, 0.3, 0.9).normalize();
   state.velocity.set(120, -5, 30);
   state.throttle = 0.8;
-  return { id, state: Object.assign(state, over) };
+  return { id, state: Object.assign(state, over), health };
 }
 
 describe('protokół SNAPSHOT round-trip', () => {
@@ -160,6 +169,14 @@ describe('protokół SNAPSHOT round-trip', () => {
     expect(b?.stalled).toBe(true);
   });
 
+  it('koduje ułamek HP encji (połowa zdrowia ≈ 0.5)', () => {
+    const half = makeEntity(2, {}, { hp: 60, maxHp: 120 });
+    const buf = new Uint8Array(snapshotByteLength(1));
+    encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, [half]);
+    const snap = decodeSnapshot(new DataView(buf.buffer));
+    expect(snap.entities[0]?.healthFrac).toBeCloseTo(0.5, 2);
+  });
+
   it('clampuje prędkość na granicy zakresu kwantyzacji', () => {
     const fast = makeEntity(1, { velocity: new Vector3(VELOCITY_QUANT_RANGE_MS + 200, 0, 0) });
     const buf = new Uint8Array(snapshotByteLength(1));
@@ -178,6 +195,45 @@ describe('protokół SNAPSHOT round-trip', () => {
     // podmień licznik encji na 5 — bufor już go nie pomieści
     new DataView(buf.buffer).setUint8(9, 5);
     expect(() => decodeSnapshot(new DataView(buf.buffer))).toThrow(NetError);
+  });
+});
+
+describe('protokół EVENT round-trip', () => {
+  const events: GameEvent[] = [
+    { kind: 'muzzle', ownerId: 3, seed: 0xdeadbeef, shots: 8 },
+    { kind: 'hit', shooterId: 3, victimId: 5 },
+    { kind: 'kill', killerId: 3, victimId: 5, cause: 'air' },
+    { kind: 'kill', killerId: 0, victimId: 7, cause: 'ground' },
+    { kind: 'kill', killerId: 0, victimId: 2, cause: 'collision' },
+  ];
+
+  it('koduje i dekoduje paczkę zdarzeń bez straty', () => {
+    const buf = new Uint8Array(eventsByteLength(events));
+    const written = encodeEvents(new DataView(buf.buffer), events);
+    expect(written).toBe(eventsByteLength(events));
+    expect(buf[0]).toBe(MSG_EVENT);
+    expect(decodeEvents(new DataView(buf.buffer))).toEqual(events);
+  });
+
+  it('seed u32 zachowuje pełny zakres', () => {
+    const buf = new Uint8Array(eventsByteLength([events[0]!]));
+    encodeEvents(new DataView(buf.buffer), [events[0]!]);
+    const [m] = decodeEvents(new DataView(buf.buffer));
+    expect(m?.kind === 'muzzle' && m.seed).toBe(0xdeadbeef);
+  });
+
+  it('pusta paczka = sam nagłówek (2 B), dekoduje się do []', () => {
+    const buf = new Uint8Array(eventsByteLength([]));
+    expect(buf.byteLength).toBe(2);
+    encodeEvents(new DataView(buf.buffer), []);
+    expect(decodeEvents(new DataView(buf.buffer))).toEqual([]);
+  });
+
+  it('odrzuca ramkę o złym tagu typu', () => {
+    const buf = new Uint8Array(eventsByteLength(events));
+    encodeEvents(new DataView(buf.buffer), events);
+    buf[0] = 99;
+    expect(() => decodeEvents(new DataView(buf.buffer))).toThrow(NetError);
   });
 });
 

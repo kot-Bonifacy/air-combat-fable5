@@ -32,6 +32,13 @@ export interface Bullet {
   ownerId: number;
   /** Czy klient ma rysować ten pocisk jako smugę (co N-ty — ustawia spawner). */
   tracer: boolean;
+  /**
+   * Lag-compensation (faza 11): o tyle ticków cofamy CELE przy hit-detekcji tego
+   * pocisku (= opóźnienie strzelca w chwili strzału). 0 = bez rewindu (offline/serwer
+   * lokalny). Stałe przez całe życie pocisku — tor leci w „teraźniejszości", a cel jest
+   * porównywany w pozycji opóźnionej o tę samą wartość („co widzę, to trafiam").
+   */
+  rewindTicks: number;
 }
 
 function createBullet(): Bullet {
@@ -45,6 +52,7 @@ function createBullet(): Bullet {
     damage: 0,
     ownerId: 0,
     tracer: false,
+    rewindTicks: 0,
   };
 }
 
@@ -110,6 +118,7 @@ export class BulletPool {
     damage: number,
     ownerId: number,
     tracer: boolean,
+    rewindTicks = 0,
   ): Bullet | null {
     const slot = this.freeSlot();
     if (slot === null) return null;
@@ -122,6 +131,7 @@ export class BulletPool {
     slot.damage = damage;
     slot.ownerId = ownerId;
     slot.tracer = tracer;
+    slot.rewindTicks = rewindTicks;
     return slot;
   }
 

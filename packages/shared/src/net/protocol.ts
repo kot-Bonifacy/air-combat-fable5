@@ -18,13 +18,19 @@ import type { LifePhase, PlaneState } from '../physics/state';
 // jako int16 w [−1, 1]. Pozycja zostaje pełnym float32 (zakres areny ±10 km i wysokość
 // nie mieszczą się wygodnie w jednej skali int16 bez utraty precyzji nisko nad ziemią).
 
-/** Wersja protokołu — niezgodność klient/serwer = czytelny błąd w handshake. */
-export const PROTOCOL_VERSION = 1;
+/**
+ * Wersja protokołu — niezgodność klient/serwer = czytelny błąd w handshake.
+ * v2 (faza 11): INPUT niesie `ackServerTick` zamiast `clientTimeMs`; snapshot
+ * encji dokłada bajt HP; doszła binarna ramka EVENT (muzzle/hit/kill).
+ */
+export const PROTOCOL_VERSION = 2;
 
 /** Tag pierwszego bajtu ramki binarnej: wejście gracza (klient → serwer). */
 export const MSG_INPUT = 1;
 /** Tag pierwszego bajtu ramki binarnej: snapshot świata (serwer → klient). */
 export const MSG_SNAPSHOT = 2;
+/** Tag pierwszego bajtu ramki binarnej: paczka zdarzeń walki (serwer → klient, faza 11). */
+export const MSG_EVENT = 3;
 
 const I16_MAX = 32767;
 
@@ -79,8 +85,13 @@ export function lifePhaseFromCode(code: number): LifePhase {
 export interface InputFrame {
   /** Numer kolejny ramki (u32, monotoniczny) — serwer odsyła ack w snapshocie. */
   sequence: number;
-  /** Znacznik czasu klienta [ms] (u32) — do pomiaru RTT po acku. */
-  clientTimeMs: number;
+  /**
+   * Najnowszy serverTick, jaki klient już otrzymał i zastosował (u32). Serwer liczy
+   * z niego opóźnienie strzelca do lag-compensation (faza 11): rewind ≈ (tick bieżący −
+   * ackServerTick) + bufor interpolacji. Echo ticku zamiast znacznika czasu — żadnej
+   * synchronizacji zegarów między maszynami (RTT klient mierzy osobno mapą sentTimes).
+   */
+  ackServerTick: number;
   /** Przepustnica 0..1. */
   throttle: number;
   /** Wychylenie steru wysokości −1..1 (+ = nos w górę). */
@@ -97,11 +108,11 @@ export interface InputFrame {
   aimZ: number;
 }
 
-// layout: u8 type | u32 seq | u32 clientTimeMs | u16 throttle | i16×3 deflekcje |
+// layout: u8 type | u32 seq | u32 ackServerTick | u16 throttle | i16×3 deflekcje |
 //         i16×3 aim | u8 flags(bit0=fire)
 const OFF_TYPE = 0;
 const OFF_SEQ = 1;
-const OFF_TIME = 5;
+const OFF_ACK_TICK = 5;
 const OFF_THROTTLE = 9;
 const OFF_PITCH = 11;
 const OFF_ROLL = 13;
@@ -120,7 +131,7 @@ const FIRE_BIT = 0b1;
 export function encodeInput(view: DataView, frame: InputFrame): void {
   view.setUint8(OFF_TYPE, MSG_INPUT);
   view.setUint32(OFF_SEQ, frame.sequence >>> 0, true);
-  view.setUint32(OFF_TIME, frame.clientTimeMs >>> 0, true);
+  view.setUint32(OFF_ACK_TICK, frame.ackServerTick >>> 0, true);
   view.setUint16(OFF_THROTTLE, Math.round(clamp(frame.throttle, 0, 1) * 65535), true);
   view.setInt16(OFF_PITCH, quantizeUnit(frame.pitchUp), true);
   view.setInt16(OFF_ROLL, quantizeUnit(frame.rollRight), true);
@@ -151,7 +162,7 @@ export function decodeInput(view: DataView): InputFrame {
   }
   return {
     sequence: view.getUint32(OFF_SEQ, true),
-    clientTimeMs: view.getUint32(OFF_TIME, true),
+    ackServerTick: view.getUint32(OFF_ACK_TICK, true),
     throttle: view.getUint16(OFF_THROTTLE, true) / 65535,
     pitchUp: dequantizeUnit(view.getInt16(OFF_PITCH, true)),
     rollRight: dequantizeUnit(view.getInt16(OFF_ROLL, true)),
@@ -201,6 +212,8 @@ export interface EntitySnapshot {
   orientation: Quaternion;
   velocity: Vector3;
   throttle: number;
+  /** Ułamek HP 0..1 (faza 11) — HP jest autorytetem serwera; klient tylko pokazuje. */
+  healthFrac: number;
 }
 
 export interface Snapshot {
@@ -214,10 +227,13 @@ export interface Snapshot {
 export interface SnapshotEntitySource {
   id: number;
   state: PlaneState;
+  /** Żywe HP encji (faza 11) — kodowane jako ułamek hp/maxHp. Struktura zamiast typu
+   *  Health, by protokół nie zależał od modułu combat. */
+  health: { hp: number; maxHp: number };
 }
 
 export const SNAPSHOT_HEADER_BYTES = 10; // u8 type | u32 tick | u32 ack | u8 count
-export const SNAPSHOT_ENTITY_BYTES = 29; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle
+export const SNAPSHOT_ENTITY_BYTES = 30; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp
 
 /** Rozmiar snapshotu [bajty] dla zadanej liczby encji — do budżetu pasma. */
 export function snapshotByteLength(entityCount: number): number {
@@ -262,6 +278,8 @@ export function encodeSnapshot(
     view.setInt16(o + 24, quantizeVelocity(s.velocity.y), true);
     view.setInt16(o + 26, quantizeVelocity(s.velocity.z), true);
     view.setUint8(o + 28, Math.round(clamp(s.throttle, 0, 1) * 255));
+    const hpFrac = e.health.maxHp > 0 ? e.health.hp / e.health.maxHp : 0;
+    view.setUint8(o + 29, Math.round(clamp(hpFrac, 0, 1) * 255));
     o += SNAPSHOT_ENTITY_BYTES;
   }
   return o;
@@ -303,6 +321,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
       dequantizeVelocity(view.getInt16(o + 26, true)),
     );
     const throttle = view.getUint8(o + 28) / 255;
+    const healthFrac = view.getUint8(o + 29) / 255;
     entities.push({
       id,
       life: lifePhaseFromCode(flags),
@@ -312,10 +331,160 @@ export function decodeSnapshot(view: DataView): Snapshot {
       orientation,
       velocity,
       throttle,
+      healthFrac,
     });
     o += SNAPSHOT_ENTITY_BYTES;
   }
   return { serverTick, ackSeq, entities };
+}
+
+// =========================== EVENTY WALKI (serwer → klient, binarne) ===========================
+//
+// Faza 11: zdarzenia walki są BINARNE (niezmiennik nr 6 — strzał z kadencją to hot path,
+// nie „rzadki event JSON" jak w fazie 8). Jedna ramka MSG_EVENT pakuje wiele zdarzeń z
+// jednego interwału snapshotu (count). Zdarzenia są BROADCASTOWE (jeden bufor dla całego
+// pokoju) — klient sam filtruje po id (czy to ja strzelam / ja oberwałem).
+//
+//  - MUZZLE: błysk wylotu — klient renderuje WŁASNE, kosmetyczne smugacze od pozy danej
+//    encji (pociski autorytatywne lecą tylko na serwerze; snapshot ich NIE niesie —
+//    pułapka faza-11.md „eksplozja rozmiaru”). `seed` deterministyzuje rozrzut wizualny.
+//  - HIT: trafienie niezabijające — hit marker u strzelca, błysk u ofiary.
+//  - KILL: zestrzelenie — kill feed; rodzaj śmierci rozróżnia źródło (pocisk/ziemia/kolizja).
+
+/** Tag podtypu zdarzenia w ramce MSG_EVENT. */
+export const EV_MUZZLE = 1;
+export const EV_HIT = 2;
+export const EV_KILL = 3;
+
+/** Rodzaj śmierci w zdarzeniu KILL. */
+export type KillCause = 'air' | 'ground' | 'collision';
+const KILL_CAUSES: readonly KillCause[] = ['air', 'ground', 'collision'];
+
+export interface MuzzleEvent {
+  kind: 'muzzle';
+  /** Id strzelca. */
+  ownerId: number;
+  /** Seed rozrzutu wizualnego (deterministyczny strumień smugaczy u klienta). */
+  seed: number;
+  /** Liczba pocisków wystrzelonych w tym ticku (do odtworzenia salwy kosmetycznie). */
+  shots: number;
+}
+
+export interface HitEvent {
+  kind: 'hit';
+  shooterId: number;
+  victimId: number;
+}
+
+export interface KillEvent {
+  kind: 'kill';
+  /** Strzelec (znaczący tylko dla cause='air'; dla ziemi/kolizji bez sprawcy). */
+  killerId: number;
+  victimId: number;
+  cause: KillCause;
+}
+
+export type GameEvent = MuzzleEvent | HitEvent | KillEvent;
+
+// rozmiary z bajtem podtypu: muzzle 7, hit 3, kill 4
+function eventByteLength(ev: GameEvent): number {
+  switch (ev.kind) {
+    case 'muzzle':
+      return 7;
+    case 'hit':
+      return 3;
+    case 'kill':
+      return 4;
+  }
+}
+
+/** Maksymalna liczba zdarzeń w jednej ramce (count to u8). */
+export const MAX_EVENTS_PER_FRAME = 255;
+
+/** Rozmiar ramki EVENT [bajty] dla danej listy zdarzeń (nagłówek u8 type + u8 count). */
+export function eventsByteLength(events: readonly GameEvent[]): number {
+  let n = 2;
+  for (const ev of events) n += eventByteLength(ev);
+  return n;
+}
+
+/**
+ * Zapisuje paczkę zdarzeń do `view` (offset 0) i zwraca liczbę zapisanych bajtów.
+ * `events.length` musi być ≤ MAX_EVENTS_PER_FRAME (caller dzieli na ramki, gdy więcej).
+ */
+export function encodeEvents(view: DataView, events: readonly GameEvent[]): number {
+  if (events.length > MAX_EVENTS_PER_FRAME) {
+    throw new NetError(`EVENT: za dużo zdarzeń w ramce (${String(events.length)})`);
+  }
+  view.setUint8(0, MSG_EVENT);
+  view.setUint8(1, events.length);
+  let o = 2;
+  for (const ev of events) {
+    switch (ev.kind) {
+      case 'muzzle':
+        view.setUint8(o, EV_MUZZLE);
+        view.setUint8(o + 1, ev.ownerId & 0xff);
+        view.setUint32(o + 2, ev.seed >>> 0, true);
+        view.setUint8(o + 6, clamp(ev.shots, 0, 255));
+        o += 7;
+        break;
+      case 'hit':
+        view.setUint8(o, EV_HIT);
+        view.setUint8(o + 1, ev.shooterId & 0xff);
+        view.setUint8(o + 2, ev.victimId & 0xff);
+        o += 3;
+        break;
+      case 'kill':
+        view.setUint8(o, EV_KILL);
+        view.setUint8(o + 1, ev.killerId & 0xff);
+        view.setUint8(o + 2, ev.victimId & 0xff);
+        view.setUint8(o + 3, KILL_CAUSES.indexOf(ev.cause));
+        o += 4;
+        break;
+    }
+  }
+  return o;
+}
+
+/** Dekoduje paczkę zdarzeń. Rzuca NetError przy złym tagu/obciętej ramce. */
+export function decodeEvents(view: DataView): GameEvent[] {
+  if (view.byteLength < 2) throw new NetError(`EVENT: zbyt krótki (${String(view.byteLength)} B)`);
+  if (view.getUint8(0) !== MSG_EVENT) throw new NetError(`EVENT: zły tag typu ${String(view.getUint8(0))}`);
+  const count = view.getUint8(1);
+  const events: GameEvent[] = [];
+  let o = 2;
+  for (let i = 0; i < count; i++) {
+    if (o >= view.byteLength) throw new NetError('EVENT: ramka obcięta');
+    const evType = view.getUint8(o);
+    switch (evType) {
+      case EV_MUZZLE:
+        if (o + 7 > view.byteLength) throw new NetError('EVENT: MUZZLE obcięty');
+        events.push({
+          kind: 'muzzle',
+          ownerId: view.getUint8(o + 1),
+          seed: view.getUint32(o + 2, true),
+          shots: view.getUint8(o + 6),
+        });
+        o += 7;
+        break;
+      case EV_HIT:
+        if (o + 3 > view.byteLength) throw new NetError('EVENT: HIT obcięty');
+        events.push({ kind: 'hit', shooterId: view.getUint8(o + 1), victimId: view.getUint8(o + 2) });
+        o += 3;
+        break;
+      case EV_KILL: {
+        if (o + 4 > view.byteLength) throw new NetError('EVENT: KILL obcięty');
+        const cause = KILL_CAUSES[view.getUint8(o + 3)];
+        if (!cause) throw new NetError(`EVENT: nieznany cause ${String(view.getUint8(o + 3))}`);
+        events.push({ kind: 'kill', killerId: view.getUint8(o + 1), victimId: view.getUint8(o + 2), cause });
+        o += 4;
+        break;
+      }
+      default:
+        throw new NetError(`EVENT: nieznany podtyp ${String(evType)}`);
+    }
+  }
+  return events;
 }
 
 // =========================== HANDSHAKE / EVENTY / LOBBY (JSON, tekst) ===========================

@@ -21,6 +21,7 @@ function ent(x: number, vx = V): EntitySnapshot {
     orientation: new Quaternion(),
     velocity: new Vector3(vx, 0, 0),
     throttle: 0.8,
+    healthFrac: 1,
   };
 }
 
