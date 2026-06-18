@@ -7,6 +7,8 @@ import {
   createSimPlane,
   createTerrain,
   stepPilotedPlane,
+  stepWreckPiloted,
+  surfaceHeightM,
   type EntitySnapshot,
   type PilotCommand,
   type PlaneState,
@@ -62,6 +64,14 @@ function makeServer() {
     sim,
     step(c: PilotCommand): void {
       stepPilotedPlane(sim, instructor, SPITFIRE_MK2, demands, c, terrain, DT, 'srv');
+    },
+    // zestrzelenie: serwer czyni z samolotu spadający wrak (faza 15) — life 'dying'
+    enterWreck(): void {
+      sim.state.life = 'dying';
+      sim.state.lifeTimerS = 0;
+    },
+    stepWreck(c: PilotCommand): void {
+      stepWreckPiloted(sim, SPITFIRE_MK2, demands, c, terrain, DT, 'srv-wrak');
     },
     entity(): EntitySnapshot {
       return entityOf(sim.state);
@@ -162,5 +172,55 @@ describe('Predictor — predykcja i reconciliation', () => {
     expect(p.renderPosition.distanceTo(p.sim.state.position)).toBeGreaterThan(0.5); // offset jest
     for (let i = 0; i < 60; i++) p.updateRender(DT); // ~1 s wygładzania
     expect(p.renderPosition.distanceTo(p.sim.state.position)).toBeLessThan(0.05); // zanikł
+  });
+
+  // --- faza 16: predykcja spadającego wraku gracza (life 'dying') ---
+
+  it('zestrzelenie: reconcile przyjmuje „dying", a predykcja steruje spadającym wrakiem', () => {
+    const server = makeServer();
+    const p = new Predictor(SPITFIRE_MK2, terrain);
+    p.reconcile(server.entity(), 0);
+    server.enterWreck();
+    p.reconcile(server.entity(), 0); // alive→dying = nieciągłość: przyjmij stan, wyczyść bufor
+    expect(p.sim.state.life).toBe('dying');
+
+    const altStart = p.sim.state.position.y;
+    const L = 6;
+    const delayed: { ack: number; entity: EntitySnapshot }[] = [];
+    for (let t = 1; t <= 150; t++) {
+      const c = cmd({ rollRight: 0.4 }); // gracz steruje wrakiem (lotki); silnik martwy → opada
+      p.predict(c, t);
+      server.stepWreck(c);
+      delayed.push({ ack: t, entity: server.entity() });
+      if (delayed.length > L) {
+        const past = delayed.shift();
+        if (past) p.reconcile(past.entity, past.ack); // wrak→wrak = ciągłość: replay wraku
+      }
+    }
+    expect(p.sim.state.life).toBe('dying');
+    expect(p.sim.state.position.y).toBeLessThan(altStart); // wrak opadł
+    // klient zreplayowany do „teraz" pokrywa się z serwerem (mała korekta — ta sama fizyka wraku)
+    expect(p.sim.state.position.distanceTo(server.sim.state.position)).toBeLessThan(15);
+  });
+
+  it('wrak gracza: po uderzeniu w ziemię predykcja przechodzi w „dead" i przestaje liczyć', () => {
+    const server = makeServer();
+    const surf = surfaceHeightM(terrain, server.sim.state.position.x, server.sim.state.position.z);
+    server.sim.state.position.y = surf + 60; // nisko → wrak szybko uderzy
+    const p = new Predictor(SPITFIRE_MK2, terrain);
+    p.reconcile(server.entity(), 0);
+    server.enterWreck();
+    p.reconcile(server.entity(), 0);
+
+    let deadAt = -1;
+    for (let t = 1; t <= 600 && deadAt < 0; t++) {
+      p.predict(cmd(), t);
+      if (p.sim.state.life === 'dead') deadAt = t;
+    }
+    expect(deadAt).toBeGreaterThan(0);
+    // po 'dead' predykcja jest no-op (stan autorytatywny serwera — czekamy na respawn)
+    const before = p.sim.state.position.clone();
+    p.predict(cmd(), deadAt + 1);
+    expect(p.sim.state.position.distanceTo(before)).toBeLessThan(1e-9);
   });
 });

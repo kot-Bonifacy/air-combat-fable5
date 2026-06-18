@@ -3,6 +3,7 @@ import {
   DirectionalLight,
   PerspectiveCamera,
   PMREMGenerator,
+  Quaternion,
   Scene,
   Vector3,
   WebGLRenderer,
@@ -31,6 +32,7 @@ import {
   getRight,
   getUp,
   nAvailG,
+  surfaceHeightM,
   totalAmmo,
   type EntitySnapshot,
   type GameEvent,
@@ -46,8 +48,10 @@ import {
 } from '@air-combat/shared';
 import { BulletTracers } from './bullet-tracers';
 import { ChaseCamera } from './chase-camera';
+import { DownedOverlay } from './downed-overlay';
 import { EnemyMarker } from './enemy-marker';
 import { Explosions } from './explosion';
+import { OrbitCamera } from './orbit-camera';
 import { GreyoutOverlay } from './greyout-overlay';
 import { Hud, hudRow } from './hud';
 import { KeyboardInput } from './input';
@@ -61,7 +65,7 @@ import { LobbyUI, type WaitingView } from './net/lobby-ui';
 import { ResultsOverlay, ScoreboardOverlay } from './net/match-ui';
 import type { NetConditionsPanel } from './net/net-conditions-panel';
 import { RosterOverlay, type RosterRow } from './roster-overlay';
-import { SmokeTrails, damageSmokeTier, type SmokeTier } from './smoke';
+import { SmokeTrails, WRECK_TIER, damageSmokeTier, type SmokeTier } from './smoke';
 import { createPlaneMesh, type PlaneModel } from './plane-mesh';
 import { createWorld } from './world';
 
@@ -79,6 +83,12 @@ import { createWorld } from './world';
 // granicy areny, lista uczestników i pełny HUD-G (G-LOC/stall/szarzenie + sztuczny horyzont).
 // Dane lotu z lokalnej predykcji (Predictor.sim — bez zmiany protokołu); amunicja ze
 // snapshotu (protokół v3: +1 bajt) — predykcja nie symuluje ognia.
+// Faza 16: kliencka warstwa śmierci (parytet z SP) — zestrzelony gracz STERUJE własnym
+// spadającym wrakiem (lokalna predykcja `stepWreckPiloted` dla 'dying', ta sama ścieżka co
+// serwer), dym wraku (WRECK_TIER), wybuch dopiero przy uderzeniu w ziemię (dying→dead),
+// nakładka decyzji (DownedOverlay: obserwator / tabela / opuść pokój), tryb obserwatora
+// (LPM cyklicznie zmienia oglądany samolot) i kamera orbitalna (klawisz C). Brak „pustego
+// kadru" po zestrzeleniu. Bez zmian protokołu.
 
 const plane = SPITFIRE_MK2;
 const wingspanM = Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
@@ -91,6 +101,7 @@ const PLAYER_COLOR = 0xffd24a;
 const FFA_FACTION_COLORS = [0xff3b30, 0xff8c1a, 0xff4fd8, 0x32d0ff, 0xa56bff, 0xff6ea0];
 const SMOKE_BACK_OFFSET_M = 3; // punkt emisji dymu cofnięty ZA ogon (nie ze środka kadłuba)
 const AMMO_MAX = totalAmmo(plane.armament);
+const AIR_KILL_FLASH_SCALE = 0.4; // mały błysk przy zestrzeleniu w locie (duży wybuch dopiero o ziemię)
 
 function cssColor(hex: number): string {
   return `#${hex.toString(16).padStart(6, '0')}`;
@@ -141,6 +152,22 @@ const camera = new PerspectiveCamera(60, 1, 0.5, 30000);
 camera.position.set(0, 1500, -1000);
 camera.lookAt(0, 800, 0);
 const chaseCamera = new ChaseCamera(camera);
+const orbit = new OrbitCamera(camera, renderer.domElement);
+let cameraMode: 'pościgowa' | 'orbitalna' = 'pościgowa';
+
+// --- stan śmierci gracza (faza 16, parytet z SP) ---
+// 'none' — żyje; 'wreck' — spadający wrak gracza (steruje klawiaturą) lub po jego rozbiciu,
+// czeka na respawn (overlay decyzji); 'spectating' — wybrał tryb obserwatora (LPM cyklicznie).
+type PlayerDeath = 'none' | 'wreck' | 'spectating';
+let playerDeath: PlayerDeath = 'none';
+let prevLocalLife: LifePhase = 'alive';
+/** Id obserwowanego pilota po wejściu w tryb obserwatora; null = wybór automatyczny (pierwszy żywy). */
+let spectatorTargetId: number | null = null;
+// poza obserwowanego (z interpolacji) do kamery — wypełniane w pętli renderu, gdy obserwujemy
+const spectatedPos = new Vector3();
+const spectatedQuat = new Quaternion();
+const spectatedVel = new Vector3();
+let spectatedValid = false;
 
 // teren z TYM SAMYM seedem co serwer (TERRAIN_SEED) — świat zgodny po obu stronach
 const terrain = createTerrain();
@@ -173,7 +200,11 @@ renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefa
 let triggerMouse = false;
 let triggerKey = false;
 renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (e.button === 0) triggerMouse = true;
+  if (e.button !== 0) return;
+  // w trybie obserwatora LPM przełącza oglądany samolot; żywy gracz: spust (po przejęciu
+  // pointer locka). Wrak ma kursor wolny (mysz wyłączona) → triggerMouse i tak nie strzela.
+  if (isSpectating()) cycleSpectatorTarget(1);
+  else triggerMouse = true;
 });
 window.addEventListener('pointerup', (e) => {
   if (e.button === 0) triggerMouse = false;
@@ -195,6 +226,23 @@ window.addEventListener('keyup', (e) => {
 });
 function triggerHeld(): boolean {
   return (mouseAim.locked && triggerMouse) || triggerKey;
+}
+
+// kamera: C przełącza pościgową ↔ orbitalną (parytet z SP). Orbitalna = rozglądanie myszą,
+// lot tylko z klawiatury (mysz-celownik wyłączona); pościgowa wraca do celowania myszą,
+// gdy gracz żyje. updateMouseAimEnabled spina stan myszy z trybem kamery i stanem śmierci.
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyC' && phase === 'playing') {
+    cameraMode = cameraMode === 'pościgowa' ? 'orbitalna' : 'pościgowa';
+    updateMouseAimEnabled();
+  }
+});
+
+/** Mysz-celownik aktywna tylko w kamerze pościgowej i gdy gracz żyje (nie wrak/obserwator). */
+function updateMouseAimEnabled(): void {
+  const wantEnabled = cameraMode === 'pościgowa' && playerDeath === 'none';
+  mouseAim.enabled = wantEnabled;
+  if (!wantEnabled && document.pointerLockElement) document.exitPointerLock();
 }
 
 // --- stan sieci/lobby ---
@@ -307,6 +355,13 @@ function resetGameState(): void {
   lifeById.clear();
   smokeAccumById.clear();
   latestStandings = null;
+  // stan śmierci/obserwatora/kamery do wartości startowych (nowy mecz / reconnect / poczekalnia)
+  playerDeath = 'none';
+  prevLocalLife = 'alive';
+  spectatorTargetId = null;
+  spectatedValid = false;
+  cameraMode = 'pościgowa';
+  updateMouseAimEnabled();
   hideCombatOverlays();
 }
 
@@ -315,6 +370,7 @@ function hideCombatOverlays(): void {
   for (const m of markers) m.hide();
   roster.hide();
   greyoutOverlay.hide();
+  downedOverlay.hide();
   reticleEl.style.display = 'none';
   noseMarkerEl.style.display = 'none';
   alertEl.style.opacity = '0';
@@ -404,10 +460,14 @@ function onKill(killerId: number, victimId: number, cause: KillCause, localId: n
   } else {
     pushKillFeed(`✕ ${victim} — ${cause === 'collision' ? 'kolizja' : 'rozbicie'}`);
   }
-  // wybuch w ostatniej znanej pozycji ofiary; w f14 serwer ustawia od razu 'dead' (mesh
-  // znika), więc to jedyny moment efektu — pełny wrak ze spadaniem dopiero w fazie 16
+  // efekt śmierci (parytet z SP, faza 15/16): zestrzelenie w locie / kolizja → ofiara staje
+  // się spadającym wrakiem ('dying'), więc TERAZ tylko mały błysk, a duży wybuch dopiero przy
+  // uderzeniu wraku w ziemię (dying→dead, pętla renderu). Rozbicie o teren ('ground') → serwer
+  // od razu 'dead' (bez fazy wraku) → pełny wybuch tutaj.
   const victimMesh = meshes.get(victimId);
-  if (victimMesh) explosions.spawn(victimMesh.object.position, cause === 'air' ? 0.8 : 1);
+  if (victimMesh) {
+    explosions.spawn(victimMesh.object.position, cause === 'ground' ? 1 : AIR_KILL_FLASH_SCALE);
+  }
 }
 
 function pushKillFeed(text: string): void {
@@ -446,6 +506,96 @@ const results = new ResultsOverlay({
 let latestStandings: StandingsMessage | null = null;
 /** Czy widać ekran wyników (blokuje scoreboard na Tab — tabela jest już na ekranie). */
 let matchResultsShown = false;
+
+// --- warstwa śmierci gracza (faza 16): nakładka decyzji + tryb obserwatora ---
+const downedOverlay = new DownedOverlay(
+  () => choosePlayerSpectate(), // tryb obserwatora (gdy jest kogo oglądać)
+  () => scoreboard.toggle(), // tabela wyników (poza tym też na Tab)
+  () => {
+    // „zakończ misję" online = opuść pokój i wróć do lobby
+    net?.leaveRoom();
+    enterLobby();
+  },
+);
+
+/** Wejście w stan spadającego wraku gracza (lokalna predykcja 'dying' już steruje meshem). */
+function enterPlayerWreck(): void {
+  playerDeath = 'wreck';
+  spectatorTargetId = null;
+  updateMouseAimEnabled(); // wrak: kursor wolny do nakładki, ster z klawiatury
+}
+
+/** Respawn gracza (serwer dał 'alive' po cyklu wraku): powrót do normalnej gry. */
+function onLocalRespawn(): void {
+  playerDeath = 'none';
+  spectatorTargetId = null;
+  downedOverlay.hide();
+  updateMouseAimEnabled();
+}
+
+/** Gracz (wrak / po rozbiciu) wybiera tryb obserwatora — ogląda pozostałych przy życiu. */
+function choosePlayerSpectate(): void {
+  if (playerDeath !== 'wreck') return;
+  playerDeath = 'spectating';
+  spectatorTargetId = firstSpectatable();
+  downedOverlay.hide();
+}
+
+function isSpectating(): boolean {
+  return phase === 'playing' && playerDeath === 'spectating';
+}
+
+/** Czy encję można obserwować: obca (nie własna) i żywa. */
+function isSpectatable(id: number): boolean {
+  const localId = net?.localPlayerId ?? null;
+  return id !== localId && meshes.has(id) && lifeById.get(id) === 'alive';
+}
+
+function firstSpectatable(): number | null {
+  for (const [id] of meshes) if (isSpectatable(id)) return id;
+  return null;
+}
+
+function spectatableCount(): number {
+  let n = 0;
+  for (const [id] of meshes) if (isSpectatable(id)) n++;
+  return n;
+}
+
+function canSpectate(): boolean {
+  return spectatableCount() > 0;
+}
+
+/** Obecnie obserwowany id (wybrany, póki żywy; inaczej pierwszy obserwowalny — fallback). */
+function currentSpectateId(): number | null {
+  if (spectatorTargetId !== null && isSpectatable(spectatorTargetId)) return spectatorTargetId;
+  spectatorTargetId = firstSpectatable();
+  return spectatorTargetId;
+}
+
+/** Przełącza oglądany samolot na następny obserwowalny (cyklicznie, stała kolejność wg id). */
+function cycleSpectatorTarget(dir: 1 | -1): void {
+  if (!isSpectating()) return;
+  const ids: number[] = [];
+  for (const [id] of meshes) if (isSpectatable(id)) ids.push(id);
+  if (ids.length === 0) {
+    spectatorTargetId = null;
+    return;
+  }
+  ids.sort((a, b) => a - b);
+  const cur = spectatorTargetId === null ? -1 : ids.indexOf(spectatorTargetId);
+  const next = ((cur < 0 ? (dir === 1 ? 0 : ids.length - 1) : cur + dir) + ids.length) % ids.length;
+  spectatorTargetId = ids[next] ?? null;
+}
+
+/** Maszyna stanu śmierci gracza (co klatkę): wykrywa zestrzelenie i respawn po lokalnym życiu. */
+function updateDeathState(): void {
+  if (!predictor.ready) return;
+  const life = predictor.sim.state.life;
+  if (prevLocalLife === 'alive' && life === 'dying') enterPlayerWreck();
+  else if (life === 'alive' && prevLocalLife !== 'alive') onLocalRespawn();
+  prevLocalLife = life;
+}
 
 function loadToken(): string | null {
   try {
@@ -758,12 +908,14 @@ function updateCombatVisuals(frameDtS: number): void {
 function updateWorldVisuals(frameDtS: number): void {
   explosions.update(frameDtS);
 
-  // dym: każda ŻYWA, trafiona maszyna dymi tym mocniej/ciemniej, im mniej HP (próg w
-  // damageSmokeTier). healthFrac jest już ułamkiem 0..1, więc maxHp = 1. Punkt emisji
-  // cofnięty ZA ogon (mesh już zinterpolowany). Spadający wrak ('dying') → faza 16.
+  // dym: spadający wrak ('dying') ciągnie gęstą czarną smugę (WRECK_TIER); żywa, trafiona
+  // maszyna dymi tym mocniej/ciemniej, im mniej HP (próg w damageSmokeTier). healthFrac jest
+  // ułamkiem 0..1, więc maxHp = 1. Punkt emisji cofnięty ZA ogon (mesh już zinterpolowany).
   for (const [id, m] of meshes) {
-    const tier: SmokeTier | null =
-      lifeById.get(id) === 'alive' ? damageSmokeTier(healthFracById.get(id) ?? 1, 1) : null;
+    const life = lifeById.get(id);
+    let tier: SmokeTier | null = null;
+    if (life === 'dying') tier = WRECK_TIER;
+    else if (life === 'alive') tier = damageSmokeTier(healthFracById.get(id) ?? 1, 1);
     if (tier === null) {
       smokeAccumById.set(id, 0); // nieuszkodzony — nie kumuluj długu do kolejnego trafienia
       continue;
@@ -795,16 +947,20 @@ function updateHudOverlays(): void {
   const w = app.clientWidth;
   const h = app.clientHeight;
   const localId = net?.localPlayerId ?? null;
-  const viewPos = predictor.renderPosition;
   const s = predictor.sim.state;
   const localAlive = s.life === 'alive';
+  const wreck = s.life === 'dying'; // własny spadający wrak (steruje nim gracz)
+  // perspektywa, z której patrzymy: obserwowany samolot albo własny (żywy / wrak / katastrofa)
+  const spectate = isSpectating() && spectatedValid;
+  const viewPos = spectate ? spectatedPos : predictor.renderPosition;
+  const viewId = spectate ? currentSpectateId() : localId;
 
-  // markery wrogów: TYLKO żywe, obce, w zasięgu wykrycia (≤ SPOT_RANGE_M). Poza zasięgiem
-  // widać goły mesh — trzeba wypatrzyć wroga, nie lecieć na gotowy znacznik (jak SP).
+  // markery wrogów: TYLKO żywe, obce względem obserwowanej maszyny, w zasięgu (≤ SPOT_RANGE_M).
+  // Poza zasięgiem widać goły mesh — trzeba wypatrzyć wroga, nie lecieć na gotowy znacznik (jak SP).
   const spotSqM = SPOT_RANGE_M * SPOT_RANGE_M;
   let mi = 0;
   for (const [id, m] of meshes) {
-    if (id === localId || lifeById.get(id) !== 'alive') continue;
+    if (id === viewId || lifeById.get(id) !== 'alive') continue;
     if (m.object.position.distanceToSquared(viewPos) > spotSqM || mi >= markers.length) continue;
     const marker = markers[mi]!;
     mi++;
@@ -813,7 +969,7 @@ function updateHudOverlays(): void {
   }
   for (; mi < markers.length; mi++) markers[mi]!.hide();
 
-  // celownik myszy + znacznik nosa — żywy gracz z aktywną myszą
+  // celownik myszy — tylko żywy gracz z aktywną myszą (wrak strzela Spacją, bez celownika myszy)
   const reticlePos = mouseAim.locked && localAlive ? mouseAim.reticleScreenPos(viewPos, camera, w, h) : null;
   if (reticlePos) {
     reticleEl.style.display = 'block';
@@ -822,8 +978,11 @@ function updateHudOverlays(): void {
   } else {
     reticleEl.style.display = 'none';
   }
+  // znacznik nosa: żywy gracz z myszą ORAZ spadający wrak (celuje nosem, ogień Spacją) — jak SP.
+  // Wrak rysujemy z własnej pozy (predictor), nie z obserwowanej.
   getForward(s.orientation, scratchFwd);
-  const nosePos = mouseAim.locked && localAlive ? projectDirToScreen(scratchFwd, viewPos, camera, w, h) : null;
+  const showNose = wreck || (mouseAim.locked && localAlive);
+  const nosePos = showNose ? projectDirToScreen(scratchFwd, predictor.renderPosition, camera, w, h) : null;
   if (nosePos) {
     noseMarkerEl.style.display = 'block';
     noseMarkerEl.style.left = `${nosePos.x.toFixed(0)}px`;
@@ -832,9 +991,16 @@ function updateHudOverlays(): void {
     noseMarkerEl.style.display = 'none';
   }
 
-  // alert pełnoekranowy: rozbicie/respawn > ostrzeżenie o granicy (obserwator/wrak → faza 16)
-  if (!localAlive) {
-    alertEl.textContent = 'ROZBICIE — oczekiwanie na respawn';
+  // alert pełnoekranowy: obserwator / wrak (środek czysty — sterowanie + nakładka) / oczekiwanie
+  // na respawn > ostrzeżenie o granicy areny (tylko żywy gracz)
+  if (playerDeath === 'spectating') {
+    alertEl.textContent = spectatableCount() > 1 ? 'OBSERWUJESZ   [LPM] zmień samolot' : 'OBSERWUJESZ';
+    alertEl.className = 'crash';
+    alertEl.style.opacity = '1';
+  } else if (wreck) {
+    alertEl.style.opacity = '0'; // komunikat i akcje są w nakładce u dołu
+  } else if (!localAlive) {
+    alertEl.textContent = 'ZESTRZELONY — oczekiwanie na respawn';
     alertEl.className = 'crash';
     alertEl.style.opacity = '1';
   } else {
@@ -848,8 +1014,16 @@ function updateHudOverlays(): void {
     }
   }
 
-  // wygaszanie obrazu przy przeciążeniu (G-LOC) — tylko żywy gracz
-  greyoutOverlay.update(localAlive ? predictor.sim.gLoadEffects.blackoutFactor : 0);
+  // nakładka decyzji po zestrzeleniu (steruj wrakiem / obserwator / tabela / opuść pokój) —
+  // dopóki gracz nie wrócił do gry (wrak lub czeka na respawn) i nie ogląda tabeli/wyników
+  if (playerDeath === 'wreck' && !scoreboard.visible && !matchResultsShown) {
+    downedOverlay.show(canSpectate());
+  } else {
+    downedOverlay.hide();
+  }
+
+  // wygaszanie obrazu przy przeciążeniu (G-LOC) — tylko żywy gracz (patrząc z własnego)
+  greyoutOverlay.update(localAlive && !spectate ? predictor.sim.gLoadEffects.blackoutFactor : 0);
 
   // lista uczestników (kille/asysty) z tabeli wyników serwera, kolory spójne z markerami
   roster.update(rosterRows());
@@ -917,34 +1091,59 @@ renderer.setAnimationLoop(() => {
     remoteCount = 0;
     extrapolatingCount = 0;
     const localId = net?.localPlayerId ?? null;
+    const spectateId = isSpectating() ? currentSpectateId() : null;
+    spectatedValid = false;
     for (const [id, m] of meshes) {
+      let newLife: LifePhase;
       if (id === localId) {
         if (!predictor.ready) continue;
         const s = predictor.sim.state;
         m.object.position.copy(predictor.renderPosition);
         m.object.quaternion.copy(predictor.renderOrientation);
-        m.object.visible = s.life !== 'dead';
-        m.update(frameDtS, s.throttle, s.life === 'alive');
-        lifeById.set(id, s.life);
+        newLife = s.life;
+        m.object.visible = newLife !== 'dead';
+        m.update(frameDtS, s.throttle, newLife === 'alive');
       } else if (interpolator.sample(id, interpOut)) {
         remoteCount++;
         if (interpOut.extrapolated) extrapolatingCount++;
         m.object.position.copy(interpOut.position);
         m.object.quaternion.copy(interpOut.orientation);
-        m.object.visible = interpOut.life !== 'dead';
-        m.update(frameDtS, interpOut.throttle, interpOut.life === 'alive');
-        lifeById.set(id, interpOut.life);
+        newLife = interpOut.life;
+        m.object.visible = newLife !== 'dead';
+        m.update(frameDtS, interpOut.throttle, newLife === 'alive');
+        if (id === spectateId) {
+          spectatedPos.copy(interpOut.position);
+          spectatedQuat.copy(interpOut.orientation);
+          spectatedVel.copy(interpOut.velocity);
+          spectatedValid = true;
+        }
+      } else {
+        continue;
       }
+      // wybuch przy uderzeniu wraku w ziemię (dying→dead) — duży, w miejscu mesha (parytet z SP);
+      // dla zestrzelenia/kolizji to moment „dużego" wybuchu (mały błysk był przy zestrzeleniu)
+      if (lifeById.get(id) === 'dying' && newLife === 'dead') explosions.spawn(m.object.position, 1);
+      lifeById.set(id, newLife);
     }
+    updateDeathState();
 
     if (predictor.ready) {
       const s = predictor.sim.state;
-      if (hasPrevLocal && prevLocalPos.distanceTo(predictor.renderPosition) > TELEPORT_JUMP_M) {
-        chaseCamera.reset();
-      }
-      prevLocalPos.copy(predictor.renderPosition);
+      // źródło widoku: obserwowany samolot (po wyborze trybu obserwatora), inaczej własny
+      // (żywy / spadający wrak / miejsce katastrofy). Bufory spectated* wypełnia pętla meshy.
+      const spectate = isSpectating() && spectatedValid;
+      const viewPos = spectate ? spectatedPos : predictor.renderPosition;
+      const viewQuat = spectate ? spectatedQuat : predictor.renderOrientation;
+      const viewVel = spectate ? spectatedVel : s.velocity;
+      // zawinięcie torusa / przeskok na innego obserwowanego = teleport → reset kamery (bez smużenia)
+      if (hasPrevLocal && prevLocalPos.distanceTo(viewPos) > TELEPORT_JUMP_M) chaseCamera.reset();
+      prevLocalPos.copy(viewPos);
       hasPrevLocal = true;
-      chaseCamera.update(frameDtS, predictor.renderPosition, predictor.renderOrientation, s.velocity, 0);
+      if (cameraMode === 'orbitalna') orbit.update(viewPos);
+      else chaseCamera.update(frameDtS, viewPos, viewQuat, viewVel, 0);
+      // kamera nigdy pod powierzchnią (wrak/orbita nisko nad ziemią wbijały ją w teren)
+      const cameraFloorM = surfaceHeightM(terrain, camera.position.x, camera.position.z) + 3;
+      if (camera.position.y < cameraFloorM) camera.position.y = cameraFloorM;
       if (!loadingHidden) {
         document.getElementById('loading')?.classList.add('hidden');
         loadingHidden = true;

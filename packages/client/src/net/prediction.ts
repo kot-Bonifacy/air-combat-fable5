@@ -9,6 +9,7 @@ import {
   createSimPlane,
   nearestToroidalImage,
   stepPilotedPlane,
+  stepWreckPiloted,
   tasToIasMs,
   toroidalDistanceSqM,
   type EntitySnapshot,
@@ -98,21 +99,30 @@ export class Predictor {
 
   /**
    * Tick predykcji: zastosuj komendę lokalnie (ta sama ścieżka co serwer) i dopisz
-   * do bufora replay. No-op zanim przyjdzie pierwszy snapshot lub gdy nie żyjemy
-   * (martwy/respawn jest autorytatywny — czekamy na serwer).
+   * do bufora replay. Żywy samolot → stepPilotedPlane; spadający wrak gracza ('dying',
+   * faza 16) → stepWreckPiloted (sterowanie wprost wychyleniami, bez instruktora/myszy —
+   * jak na serwerze). No-op zanim przyjdzie pierwszy snapshot oraz gdy martwy/respawn
+   * (autorytatywne — czekamy na serwer).
    */
   predict(command: PilotCommand, sequence: number): void {
-    if (!this.hasServer || this.sim.state.life !== 'alive') return;
-    stepPilotedPlane(
-      this.sim,
-      this.instructor,
-      this.plane,
-      this.demands,
-      command,
-      this.terrain,
-      FIXED_DT_S,
-      'predykcja',
-    );
+    if (!this.hasServer) return;
+    const life = this.sim.state.life;
+    if (life === 'alive') {
+      stepPilotedPlane(
+        this.sim,
+        this.instructor,
+        this.plane,
+        this.demands,
+        command,
+        this.terrain,
+        FIXED_DT_S,
+        'predykcja',
+      );
+    } else if (life === 'dying') {
+      stepWreckPiloted(this.sim, this.plane, this.demands, command, this.terrain, FIXED_DT_S, 'predykcja-wrak');
+    } else {
+      return; // dead/respawning: stan autorytatywny serwera, brak predykcji
+    }
     this.pending.push({ sequence, command: { ...command } });
   }
 
@@ -130,10 +140,18 @@ export class Predictor {
     }
 
     const state = this.sim.state;
-    const wasAlive = this.hasServer && state.life === 'alive';
-    const serverAlive = server.life === 'alive';
     const firstState = !this.hasServer;
-    const freshSpawn = serverAlive && !wasAlive; // ożył (spawn/respawn) albo pierwszy stan
+    // faza życia PRZED przyjęciem autorytetu (decyduje, czy predykcja ma ciągłość)
+    const wasAlive = this.hasServer && state.life === 'alive';
+    const wasDying = this.hasServer && state.life === 'dying';
+    const serverAlive = server.life === 'alive';
+    const serverDying = server.life === 'dying';
+    // ciągłość predykcji = ta sama faza po obu stronach (żywy→żywy / wrak→wrak): wtedy
+    // odtwarzamy bufor inputów tą samą ścieżką. Każda zmiana fazy (spawn, zestrzelenie
+    // alive→dying, uderzenie wraku dying→dead, respawn) = brak ciągłości → snap + reset.
+    const continuesAlive = serverAlive && wasAlive;
+    const continuesDying = serverDying && wasDying;
+    const continues = continuesAlive || continuesDying;
 
     // zapamiętaj bieżący RENDER (autorytet ⊕ offset) — utrzymamy ciągłość obrazu
     this.renderedPos.copy(state.position).add(this.posError);
@@ -151,9 +169,10 @@ export class Predictor {
     // bo koperta (maxRollRate) czyta state.iasMs już w PIERWSZYM kroku replay
     state.iasMs = tasToIasMs(server.velocity.length(), airDensityKgM3(server.position.y));
 
-    if (freshSpawn || !serverAlive) {
-      // świeży spawn lub śmierć: brak ciągłości predykcji — czyść bufor i odśwież maszyny
-      // (mirror serwerowego spawn: instruktor + tolerancja G; stall machine self-corrects)
+    if (!continues) {
+      // zmiana fazy życia (spawn/zestrzelenie/uderzenie wraku/respawn): brak ciągłości
+      // predykcji — czyść bufor i odśwież maszyny (mirror serwerowego spawn: instruktor
+      // + tolerancja G; stall machine self-corrects)
       this.pending.length = 0;
       this.instructor.reset();
       this.sim.gLoadMachine.reset();
@@ -161,8 +180,9 @@ export class Predictor {
       this.sim.gLoadEffects.blackoutFactor = 0;
     }
 
-    // replay inputów nowszych niż ack (tylko gdy żywy)
-    if (serverAlive) {
+    // replay inputów nowszych niż ack TĄ SAMĄ ścieżką co predict: żywy → stepPilotedPlane,
+    // wrak → stepWreckPiloted. Przerwij, gdy przewidziana zmiana fazy w trakcie replay.
+    if (continuesAlive) {
       for (const p of this.pending) {
         stepPilotedPlane(
           this.sim,
@@ -174,14 +194,21 @@ export class Predictor {
           FIXED_DT_S,
           'predykcja-replay',
         );
-        if (state.life !== 'alive') break; // przewidziana kolizja w trakcie replay
+        if (state.life !== 'alive') break; // przewidziana kolizja/zestrzelenie w trakcie replay
+      }
+    } else if (continuesDying) {
+      for (const p of this.pending) {
+        stepWreckPiloted(this.sim, this.plane, this.demands, p.command, this.terrain, FIXED_DT_S, 'predykcja-replay-wrak');
+        if (state.life !== 'dying') break; // wrak uderzył w ziemię w trakcie replay
       }
     }
 
     this.hasServer = true;
 
-    // korekta = rozjazd predykcji: stary predykowany-najnowszy vs nowy (po acku + replay)
-    const measurable = !firstState && wasAlive && serverAlive && !freshSpawn;
+    // korekta = rozjazd predykcji: stary predykowany-najnowszy vs nowy (po acku + replay).
+    // Mierzalna i wygładzana przy ciągłości fazy (żywy lub wrak); metryki Fazy 9 liczymy
+    // tylko dla LOTU (żywy), żeby wrak nie zaniżał udziału korekt < próg.
+    const measurable = !firstState && continues;
     const correctionM = measurable ? Math.sqrt(toroidalDistanceSqM(this.oldPos, state.position)) : 0;
     const snap = !measurable || correctionM >= RECONCILE_SNAP_DIST_M;
 
@@ -195,7 +222,7 @@ export class Predictor {
       this.quatError.copy(this.renderedQuat).multiply(this.tmpQ.copy(state.orientation).invert());
     }
 
-    if (measurable) this.recordCorrection(correctionM);
+    if (continuesAlive) this.recordCorrection(correctionM); // metryki Fazy 9 = lot żywego samolotu
   }
 
   /** Aktualizacja renderu (każda klatka): offset zanika wykładniczo do zera. */

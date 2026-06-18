@@ -28,7 +28,6 @@ import {
   encodeSnapshot,
   evaluateFfa,
   eventsByteLength,
-  keyboardDemands,
   nearestToroidalImage,
   pilotStep,
   planesCollide,
@@ -36,7 +35,7 @@ import {
   segmentSphereHit,
   snapshotByteLength,
   stepPilotedPlane,
-  stepWreck,
+  stepWreckPiloted,
   totalAmmo,
   updateFire,
   updateLifecycle,
@@ -93,10 +92,8 @@ const MAX_REWIND_TICKS = Math.round((LAGCOMP_MAX_REWIND_MS / 1000) * PHYSICS_HZ)
 const NO_KILLER = 0;
 
 const scratchHitCenter = new Vector3();
-/** Bufor zawinięcia torusa dla kroku bota/wraku (caller `wrapToArena` go nie czyta). */
+/** Bufor zawinięcia torusa dla kroku bota (caller `wrapToArena` go nie czyta). */
 const scratchBotWrap = new Vector3();
-/** Bufor wychyleń steru do sterowania spadającym wrakiem gracza (zero alokacji per tick). */
-const scratchWreckDefl = { pitchUp: 0, rollRight: 0, yawRight: 0 };
 
 /**
  * Buduje pierścień slotów startowych: pozycja na obrzeżach areny, nos poziomo ku środkowi
@@ -560,11 +557,22 @@ export class GameRoom {
       if (event === 'crashed') this.onGroundDeath(player);
     } else if (state.life === 'dying') {
       // spadający wrak gracza (faza 15): silnik martwy, ster ograniczony; steruje gracz
-      // klawiaturą (faza 16 doda predykcję wraku po stronie klienta — ta sama ścieżka co tu).
-      this.stepWreckEntity(player, dtS);
+      // klawiaturą wprost. TA SAMA ścieżka co predykcja wraku u klienta (faza 16,
+      // shared/world/piloted-plane: stepWreckPiloted) — niezmiennik reconciliation.
+      // Ack sekwencji tu, by replay wraku po stronie klienta miał punkt odniesienia.
+      // wreckImpact w środku → 'dead' i start odliczania respawnu (buchalteria była przy zestrzeleniu).
+      const input = player.latestInput;
+      if (input) player.lastProcessedSeq = input.sequence;
+      stepWreckPiloted(
+        player.sim,
+        this.plane,
+        player.demands,
+        input,
+        this.terrain,
+        dtS,
+        `serwer ${this.code}: wrak ${String(player.id)}`,
+      );
       this.fixWrapPrev(player);
-      // wrak dotknął ziemi → 'dead' i start odliczania respawnu (buchalteria była przy zestrzeleniu)
-      updateLifecycle(state, this.terrain, dtS);
     } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
       this.spawn(player, true);
     }
@@ -578,31 +586,6 @@ export class GameRoom {
    */
   private fixWrapPrev(player: ServerPlayer): void {
     nearestToroidalImage(player.prevPos, player.sim.state.position, player.prevPos);
-  }
-
-  /**
-   * Jeden tick SPADAJĄCEGO WRAKU (life 'dying'): silnik martwy + ster ograniczony (stepWreck).
-   * Gracz steruje wrakiem wychyleniami z inputu (jak klawiatura, bez instruktora/myszy); bot-wrak
-   * leci neutralnie (czysty opad — jak w SP). Ack sekwencji także tu, żeby reconciliation wraku
-   * po stronie klienta (faza 16) miała punkt odniesienia. Po kroku caller koryguje prevPos i cykl życia.
-   */
-  private stepWreckEntity(player: ServerPlayer, dtS: number): void {
-    const state = player.sim.state;
-    const input = player.isBot ? null : player.latestInput;
-    if (input) {
-      player.lastProcessedSeq = input.sequence;
-      scratchWreckDefl.pitchUp = input.pitchUp;
-      scratchWreckDefl.rollRight = input.rollRight;
-      scratchWreckDefl.yawRight = input.yawRight;
-      keyboardDemands(state, this.plane, scratchWreckDefl, player.demands);
-    } else {
-      player.demands.nDemandG = 1;
-      player.demands.rollRateRadS = 0;
-      player.demands.yawRateRadS = 0;
-    }
-    stepWreck(player.sim, this.plane, player.demands, dtS);
-    wrapToArena(state.position, scratchBotWrap);
-    validatePlaneState(state, `serwer ${this.code}: wrak ${String(player.id)}`);
   }
 
   /**
@@ -634,9 +617,18 @@ export class GameRoom {
       this.fixWrapPrev(player);
       if (updateLifecycle(state, this.terrain, dtS) === 'crashed') this.onGroundDeath(player);
     } else if (state.life === 'dying') {
-      this.stepWreckEntity(player, dtS); // wrak bota: neutralny opad balistyczny (bez AI)
+      // wrak bota: neutralny opad balistyczny (bez AI) — command null; wreckImpact w środku
+      // → 'dead' → odliczanie respawnu. Ta sama ścieżka co wrak gracza (stepWreckPiloted).
+      stepWreckPiloted(
+        player.sim,
+        this.plane,
+        player.demands,
+        null,
+        this.terrain,
+        dtS,
+        `serwer ${this.code}: wrak ${String(player.id)}`,
+      );
       this.fixWrapPrev(player);
-      updateLifecycle(state, this.terrain, dtS); // wreckImpact → 'dead' → odliczanie respawnu
     } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
       this.spawn(player, true);
     }
