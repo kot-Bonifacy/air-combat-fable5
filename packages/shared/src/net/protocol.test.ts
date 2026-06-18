@@ -127,13 +127,15 @@ function makeEntity(
   id: number,
   over: Partial<PlaneState> = {},
   health = { hp: 120, maxHp: 120 },
+  fire = { ammoRemaining: 2400 },
+  ammoMax = 2400,
 ): SnapshotEntitySource {
   const state = createPlaneState();
   state.position.set(1234.5, 678.25, -9000.75);
   state.orientation.set(0.1, 0.2, 0.3, 0.9).normalize();
   state.velocity.set(120, -5, 30);
   state.throttle = 0.8;
-  return { id, state: Object.assign(state, over), health };
+  return { id, state: Object.assign(state, over), health, fire, ammoMax };
 }
 
 describe('protokół SNAPSHOT round-trip', () => {
@@ -175,6 +177,14 @@ describe('protokół SNAPSHOT round-trip', () => {
     encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, [half]);
     const snap = decodeSnapshot(new DataView(buf.buffer));
     expect(snap.entities[0]?.healthFrac).toBeCloseTo(0.5, 2);
+  });
+
+  it('koduje ułamek amunicji encji (ćwierć zapasu ≈ 0.25)', () => {
+    const quarter = makeEntity(2, {}, { hp: 120, maxHp: 120 }, { ammoRemaining: 600 }, 2400);
+    const buf = new Uint8Array(snapshotByteLength(1));
+    encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, [quarter]);
+    const snap = decodeSnapshot(new DataView(buf.buffer));
+    expect(snap.entities[0]?.ammoFrac).toBeCloseTo(0.25, 2);
   });
 
   it('clampuje prędkość na granicy zakresu kwantyzacji', () => {

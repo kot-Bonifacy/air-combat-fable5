@@ -23,8 +23,10 @@ import type { LifePhase, PlaneState } from '../physics/state';
  * Wersja protokołu — niezgodność klient/serwer = czytelny błąd w handshake.
  * v2 (faza 11): INPUT niesie `ackServerTick` zamiast `clientTimeMs`; snapshot
  * encji dokłada bajt HP; doszła binarna ramka EVENT (muzzle/hit/kill).
+ * v3 (faza 14): snapshot encji dokłada bajt amunicji (ułamek) — klient online nie
+ * symuluje ognia lokalnie, więc HUD czyta amunicję z autorytetu serwera.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Tag pierwszego bajtu ramki binarnej: wejście gracza (klient → serwer). */
 export const MSG_INPUT = 1;
@@ -215,6 +217,8 @@ export interface EntitySnapshot {
   throttle: number;
   /** Ułamek HP 0..1 (faza 11) — HP jest autorytetem serwera; klient tylko pokazuje. */
   healthFrac: number;
+  /** Ułamek amunicji 0..1 (faza 14) — ogień liczy serwer; klient tylko pokazuje w HUD. */
+  ammoFrac: number;
 }
 
 export interface Snapshot {
@@ -231,10 +235,15 @@ export interface SnapshotEntitySource {
   /** Żywe HP encji (faza 11) — kodowane jako ułamek hp/maxHp. Struktura zamiast typu
    *  Health, by protokół nie zależał od modułu combat. */
   health: { hp: number; maxHp: number };
+  /** Żywy stan ognia (faza 14) — kodujemy ułamek ammoRemaining/ammoMax. Struktura zamiast
+   *  typu FireControl, by protokół nie zależał od modułu combat. */
+  fire: { ammoRemaining: number };
+  /** Pełny zapas amunicji [pociski] — stały per płatowiec (do ułamka amunicji). */
+  ammoMax: number;
 }
 
 export const SNAPSHOT_HEADER_BYTES = 10; // u8 type | u32 tick | u32 ack | u8 count
-export const SNAPSHOT_ENTITY_BYTES = 30; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp
+export const SNAPSHOT_ENTITY_BYTES = 31; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp | u8 ammo
 
 /** Rozmiar snapshotu [bajty] dla zadanej liczby encji — do budżetu pasma. */
 export function snapshotByteLength(entityCount: number): number {
@@ -281,6 +290,8 @@ export function encodeSnapshot(
     view.setUint8(o + 28, Math.round(clamp(s.throttle, 0, 1) * 255));
     const hpFrac = e.health.maxHp > 0 ? e.health.hp / e.health.maxHp : 0;
     view.setUint8(o + 29, Math.round(clamp(hpFrac, 0, 1) * 255));
+    const ammoFrac = e.ammoMax > 0 ? e.fire.ammoRemaining / e.ammoMax : 0;
+    view.setUint8(o + 30, Math.round(clamp(ammoFrac, 0, 1) * 255));
     o += SNAPSHOT_ENTITY_BYTES;
   }
   return o;
@@ -323,6 +334,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
     );
     const throttle = view.getUint8(o + 28) / 255;
     const healthFrac = view.getUint8(o + 29) / 255;
+    const ammoFrac = view.getUint8(o + 30) / 255;
     entities.push({
       id,
       life: lifePhaseFromCode(flags),
@@ -333,6 +345,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
       velocity,
       throttle,
       healthFrac,
+      ammoFrac,
     });
     o += SNAPSHOT_ENTITY_BYTES;
   }

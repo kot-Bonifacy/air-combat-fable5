@@ -45,6 +45,7 @@ function entityOf(s: PlaneState): EntitySnapshot {
     velocity: s.velocity.clone(),
     throttle: s.throttle,
     healthFrac: 1,
+    ammoFrac: 1,
   };
 }
 

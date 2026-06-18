@@ -181,6 +181,11 @@ export class SmokeTrails {
     this.puffs.push({ points, velocities, ageS: 0, profile });
   }
 
+  /** Natychmiast usuwa wszystkie żywe kłęby dymu (reset meczu / reconnect — bez artefaktów). */
+  clear(): void {
+    for (let p = this.puffs.length - 1; p >= 0; p--) this.disposePuff(p);
+  }
+
   update(dtS: number): void {
     for (let p = this.puffs.length - 1; p >= 0; p--) {
       const puff = this.puffs[p];

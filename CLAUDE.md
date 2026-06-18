@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0–13 (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP i pomiary
+Fazy ukończone: 0–14 (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP i pomiary
 na VPS po stronie użytkownika** — brak SSH z sesji). Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
@@ -47,10 +47,18 @@ shutdown (`notifyShutdown` → komunikat zamiast spinnera). **Błąd naprawiony*
 (esbuild bundle, ws+pino external) + compose backend (mem_limit 256m/cpus 0.5/healthcheck) +
 runbook `deploy/WDROZENIE-NA-VPS.md` sekcja „Faza 13". **OTWARTE (użytkownik): deploy na VPS,
 smoke 2 os. przez wss://, `docker stats` przy pełnym pokoju → memory; tag `mp-1`.**
-Następna: Faza 14 — parytet multiplayera cz.1 (wizualia i HUD online). Decyzja 2026-06-18:
-blok parytetu MP↔SP (Fazy 14–18: wizualia/HUD → obserwator → kolizje+wrak → strefa KotH →
-tryb drużynowy) PRZED Bf 109; dotychczasowe fazy przesunięte (Bf 109→19, teren→20, dźwięk→21,
-uszkodzenia→22). Szczegóły: sekcja „Parytet multiplayera" w PLAN.md.
+Faza 14 (2026-06-18): parytet wizualny MP↔SP — klient online dostał te same moduły co SP:
+wybuchy (event KILL), dym uszkodzeń wg `healthFrac` (`damageSmokeTier`), błysk luf własnego
+samolotu (lokalny MUZZLE), markery wrogów ze spottingiem `SPOT_RANGE_M` (kolor FFA per id),
+celownik + znacznik nosa, ostrzeżenie granicy areny, lista uczestników (`RosterOverlay` ze
+`standings`) i pełny HUD-G (G-LOC/stall/szarzenie + sztuczny horyzont) — dane lotu z lokalnej
+predykcji (`Predictor.sim`), amunicja ze snapshotu. **Protokół v3** (`PROTOCOL_VERSION` 2→3):
+encja snapshotu +1 bajt amunicji (`ammoFrac`), `SNAPSHOT_ENTITY_BYTES` 30→31; `Explosions`/
+`SmokeTrails` dostały `clear()` (reset meczu). Elementy DOM/CSS przeniesione do `online.html`.
+Następna: Faza 15 — parytet MP cz.2 (kolizje samolotów + serwerowy `'dying'`/spadający wrak).
+Decyzja 2026-06-18: blok parytetu MP↔SP (Fazy 14–18: wizualia/HUD → kolizje+wrak → obserwator →
+strefa KotH → tryb drużynowy) PRZED Bf 109; dotychczasowe fazy przesunięte (Bf 109→19, teren→20,
+dźwięk→21, uszkodzenia→22). Szczegóły: sekcja „Parytet multiplayera" w PLAN.md.
 
 ## Stack (skrót)
 

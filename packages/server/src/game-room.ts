@@ -841,10 +841,15 @@ export class GameRoom {
   }
 
   private rebuildSnapshotSources(): void {
+    const ammoMax = totalAmmo(this.plane.armament);
     this.snapshotSources = [...this.players.values()].map((p) => ({
       id: p.id,
       state: p.sim.state,
       health: p.health,
+      // żywe referencje (state/health/fire) — pole `ammoRemaining` mutuje się co tick,
+      // więc snapshot zawsze koduje aktualny stan bez przebudowy źródeł
+      fire: p.fire,
+      ammoMax,
     }));
   }
 

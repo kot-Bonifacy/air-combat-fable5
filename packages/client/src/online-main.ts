@@ -9,33 +9,50 @@ import {
 } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
+  ARENA_WARNING_DISTANCE_M,
   BULLET_POOL_CAPACITY,
   BulletPool,
   INPUT_HZ,
+  MAX_PLAYERS_PER_ROOM,
   MRAD_TO_RAD,
   MS_TO_KMH,
   MouseAimCore,
   PORT,
   SPITFIRE_MK2,
+  SPOT_RANGE_M,
   aimDirectionBody,
+  airDensityKgM3,
   applyDispersion,
   createRng,
   createTerrain,
+  distanceToArenaEdgeM,
+  dynamicPressurePa,
   getForward,
+  getRight,
+  getUp,
+  nAvailG,
+  totalAmmo,
   type EntitySnapshot,
   type GameEvent,
   type InputFrame,
   type KillCause,
+  type LifePhase,
   type MatchEndedMessage,
   type RoomJoinedMessage,
   type RoomPlayer,
   type Snapshot,
+  type StandingRow,
   type StandingsMessage,
 } from '@air-combat/shared';
 import { BulletTracers } from './bullet-tracers';
 import { ChaseCamera } from './chase-camera';
+import { EnemyMarker } from './enemy-marker';
+import { Explosions } from './explosion';
+import { GreyoutOverlay } from './greyout-overlay';
+import { Hud, hudRow } from './hud';
 import { KeyboardInput } from './input';
-import { MouseAim } from './mouse-aim';
+import { MouseAim, projectDirToScreen } from './mouse-aim';
+import { MuzzleFlash } from './muzzle-flash';
 import { NetClient, defaultServerUrl } from './net/net-client';
 import { SnapshotInterpolator, createInterpolatedState } from './net/interpolation';
 import { NetDebugOverlay } from './net/net-debug-overlay';
@@ -43,6 +60,8 @@ import { Predictor } from './net/prediction';
 import { LobbyUI, type WaitingView } from './net/lobby-ui';
 import { ResultsOverlay, ScoreboardOverlay } from './net/match-ui';
 import type { NetConditionsPanel } from './net/net-conditions-panel';
+import { RosterOverlay, type RosterRow } from './roster-overlay';
+import { SmokeTrails, damageSmokeTier, type SmokeTier } from './smoke';
 import { createPlaneMesh, type PlaneModel } from './plane-mesh';
 import { createWorld } from './world';
 
@@ -55,11 +74,33 @@ import { createWorld } from './world';
 // kill feed z eventów HIT / KILL (zero hit-detekcji po stronie klienta). Faza 13: pętla
 // meczu FFA — scoreboard na Tab (standings), ekran wyników z rewanżem (matchEnded), HUD
 // z zegarem i wynikiem; wszystko AUTORYTATYWNE z serwera (klient tylko wyświetla).
+// Faza 14: parytet wizualny z SP — wybuchy (KILL), dym uszkodzeń (healthFrac), błysk luf
+// (lokalny MUZZLE), markery wrogów ze spottingiem, celownik + znacznik nosa, ostrzeżenie
+// granicy areny, lista uczestników i pełny HUD-G (G-LOC/stall/szarzenie + sztuczny horyzont).
+// Dane lotu z lokalnej predykcji (Predictor.sim — bez zmiany protokołu); amunicja ze
+// snapshotu (protokół v3: +1 bajt) — predykcja nie symuluje ognia.
 
 const plane = SPITFIRE_MK2;
 const wingspanM = Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
 const INPUT_DT_S = 1 / INPUT_HZ;
 const TOKEN_STORAGE_KEY = 'air-combat:token';
+
+// Kolory (parytet z SP): gracz złoty, każdy inny pilot z palety FFA (unikatowo per id);
+// tryb drużynowy (sojusznik/wróg) dopiero w fazie 18. JEDNO źródło dla markerów i rostera.
+const PLAYER_COLOR = 0xffd24a;
+const FFA_FACTION_COLORS = [0xff3b30, 0xff8c1a, 0xff4fd8, 0x32d0ff, 0xa56bff, 0xff6ea0];
+const SMOKE_BACK_OFFSET_M = 3; // punkt emisji dymu cofnięty ZA ogon (nie ze środka kadłuba)
+const AMMO_MAX = totalAmmo(plane.armament);
+
+function cssColor(hex: number): string {
+  return `#${hex.toString(16).padStart(6, '0')}`;
+}
+
+/** Kolor pilota (Three) — gracz złoty, inni z palety FFA wg id (spójnie marker ↔ roster). */
+function entityColorHex(id: number, isLocal: boolean): number {
+  if (isLocal) return PLAYER_COLOR;
+  return FFA_FACTION_COLORS[id % FFA_FACTION_COLORS.length] ?? FFA_FACTION_COLORS[0]!;
+}
 
 type Phase = 'lobby' | 'playing';
 
@@ -200,6 +241,34 @@ interface KillFeedLine {
 const killFeed: KillFeedLine[] = [];
 /** Ułamek HP własnego samolotu z ostatniego snapshotu (HUD) — HP jest autorytetem serwera. */
 let localHealthFrac = 1;
+/** Ułamek amunicji własnego samolotu z ostatniego snapshotu (HUD) — ogień liczy serwer (faza 14). */
+let localAmmoFrac = 1;
+
+// --- wizualia walki (faza 14, parytet z SP) ---
+const explosions = new Explosions(scene);
+const smoke = new SmokeTrails(scene);
+const muzzleFlash = new MuzzleFlash(scene, arm.muzzles);
+const greyoutOverlay = new GreyoutOverlay();
+const roster = new RosterOverlay();
+// markery wrogów (DOM) — pula na maks. liczbę innych pilotów w pokoju
+const markers = Array.from({ length: MAX_PLAYERS_PER_ROOM - 1 }, () => new EnemyMarker(document.body));
+const hud = new Hud(hudEl, requireEl('stall-warning'), requireEl('horizon-disc'));
+const horizonEl = requireEl('horizon');
+const reticleEl = requireEl('reticle');
+const noseMarkerEl = requireEl('nose-marker');
+const alertEl = requireEl('arena-alert');
+
+// ułamek HP / faza życia per encja (do dymu uszkodzeń); akumulator interwału dymu per encja
+const healthFracById = new Map<number, number>();
+const lifeById = new Map<number, LifePhase>();
+const smokeAccumById = new Map<number, number>();
+
+// scratch (jeden wątek, sekwencyjnie)
+const scratchSmokeDir = new Vector3();
+const scratchSmokePos = new Vector3();
+const scratchFwd = new Vector3();
+const scratchUp = new Vector3();
+const scratchRight = new Vector3();
 
 function ensureMesh(id: number): PlaneModel {
   let m = meshes.get(id);
@@ -224,14 +293,32 @@ function resetGameState(): void {
   interpolator = new SnapshotInterpolator();
   hasPrevLocal = false;
   chaseCamera.reset();
-  // czysty stan walki: zgaś smugacze, wyczyść feed/marker (nowy mecz / reconnect)
+  // czysty stan walki: zgaś smugacze, wybuchy, dym; wyczyść feed/marker (nowy mecz / reconnect)
   for (const b of cosmeticPool.bullets) b.active = false;
   tracerCounter.clear();
+  explosions.clear();
+  smoke.clear();
   killFeed.length = 0;
   hitMarkerTimerS = 0;
   hitMarkerKill = false;
   localHealthFrac = 1;
+  localAmmoFrac = 1;
+  healthFracById.clear();
+  lifeById.clear();
+  smokeAccumById.clear();
   latestStandings = null;
+  hideCombatOverlays();
+}
+
+/** Chowa nakładki walki (markery, roster, celownik, alert, szarzenie, horyzont) — poza meczem. */
+function hideCombatOverlays(): void {
+  for (const m of markers) m.hide();
+  roster.hide();
+  greyoutOverlay.hide();
+  reticleEl.style.display = 'none';
+  noseMarkerEl.style.display = 'none';
+  alertEl.style.opacity = '0';
+  horizonEl.style.display = 'none';
 }
 
 function handleSnapshot(snap: Snapshot): void {
@@ -241,9 +328,11 @@ function handleSnapshot(snap: Snapshot): void {
   for (const e of snap.entities) {
     presentIds.add(e.id);
     ensureMesh(e.id);
+    healthFracById.set(e.id, e.healthFrac); // dym uszkodzeń (lokalny i obce) wg HP serwera
     if (e.isLocal) {
       predictor.reconcile(e, snap.ackSeq);
       localHealthFrac = e.healthFrac;
+      localAmmoFrac = e.ammoFrac;
     } else {
       remoteScratch.push(e);
     }
@@ -253,6 +342,9 @@ function handleSnapshot(snap: Snapshot): void {
     if (presentIds.has(id)) continue;
     scene.remove(m.object);
     meshes.delete(id);
+    healthFracById.delete(id);
+    lifeById.delete(id);
+    smokeAccumById.delete(id);
   }
 }
 
@@ -263,6 +355,7 @@ function handleEvents(events: GameEvent[]): void {
   for (const ev of events) {
     if (ev.kind === 'muzzle') {
       spawnCosmeticVolley(ev.ownerId, ev.seed, ev.shots);
+      if (ev.ownerId === localId) muzzleFlash.flash(); // błysk luf tylko dla własnego samolotu (jak SP)
     } else if (ev.kind === 'hit') {
       // hit marker dopiero z potwierdzenia serwera (uczciwość > responsywność) — gdy to JA trafiłem
       if (ev.shooterId === localId && !hitMarkerKill) hitMarkerTimerS = HIT_MARKER_S;
@@ -311,6 +404,10 @@ function onKill(killerId: number, victimId: number, cause: KillCause, localId: n
   } else {
     pushKillFeed(`✕ ${victim} — ${cause === 'collision' ? 'kolizja' : 'rozbicie'}`);
   }
+  // wybuch w ostatniej znanej pozycji ofiary; w f14 serwer ustawia od razu 'dead' (mesh
+  // znika), więc to jedyny moment efektu — pełny wrak ze spadaniem dopiero w fazie 16
+  const victimMesh = meshes.get(victimId);
+  if (victimMesh) explosions.spawn(victimMesh.object.position, cause === 'air' ? 0.8 : 1);
 }
 
 function pushKillFeed(text: string): void {
@@ -466,6 +563,7 @@ function enterWaiting(view: WaitingView): void {
   matchResultsShown = false;
   scoreboard.hide();
   results.hide();
+  hideCombatOverlays(); // z meczu do poczekalni: zgaś markery/roster/horyzont/alert (render staje)
   lobby.showWaiting(view);
   document.getElementById('loading')?.classList.add('hidden');
 }
@@ -534,44 +632,68 @@ function sendInputTick(dtS: number): void {
 }
 
 // --- HUD / status połączenia ---
+// Pełny HUD-G jak w SP (faza 14): dane lotu z lokalnej predykcji (Predictor.sim — bez zmiany
+// protokołu), amunicja ze snapshotu. Sztuczny horyzont + ostrzeżenia stall/buffet/szarzenie
+// renderuje klasa Hud; tu tylko zbieramy pola. Greyout (G-LOC) tylko gdy żyjemy.
 function updateHud(): void {
-  const lines: string[] = [`TRYB ONLINE — pokój ${roomView?.code ?? '—'}`];
-  if (predictor.ready) {
-    const s = predictor.sim.state;
-    const tasKmh = s.velocity.length() * MS_TO_KMH;
-    lines.push(
-      `prędkość ${tasKmh.toFixed(0).padStart(4)} km/h`,
-      `wysokość ${s.position.y.toFixed(0).padStart(5)} m`,
-      `gaz      ${(s.throttle * 100).toFixed(0).padStart(3)} %`,
-      `HP       ${(localHealthFrac * 100).toFixed(0).padStart(3)} %`,
-      `stan     ${s.life}${s.stalled ? '  PRZECIĄGNIĘCIE' : ''}`,
-    );
-  }
+  if (!predictor.ready) return; // przed pierwszym snapshotem — ekran ładowania
+  const s = predictor.sim.state;
+  const gLoad = predictor.sim.gLoadEffects;
+  const stall = predictor.sim.stallEffects;
+  const tasMs = s.velocity.length();
+  const qPa = dynamicPressurePa(airDensityKgM3(s.position.y), tasMs);
+  const localAlive = s.life === 'alive';
+
+  horizonEl.style.display = 'block';
+  getUp(s.orientation, scratchUp);
+  getRight(s.orientation, scratchRight);
+  getForward(s.orientation, scratchFwd);
+
+  hud.update({
+    iasKmh: s.iasMs * MS_TO_KMH,
+    tasKmh: tasMs * MS_TO_KMH,
+    altM: s.position.y,
+    throttle01: s.throttle,
+    nG: s.loadFactor,
+    nAvailG: nAvailG(qPa, plane),
+    gLimitG: gLoad.gLimitG,
+    blackoutFactor: localAlive ? gLoad.blackoutFactor : 0,
+    stallPhase: stall.phase,
+    buffetIntensity: stall.buffetIntensity,
+    bankRad: Math.atan2(-scratchRight.y, scratchUp.y),
+    pitchRad: Math.asin(Math.min(1, Math.max(-1, scratchFwd.y))),
+    controlMode: mouseAim.locked ? 'mysz' : 'klawiatura',
+    ammo: Math.round(localAmmoFrac * AMMO_MAX),
+    ammoMax: AMMO_MAX,
+    extraLines: hudExtraLines(),
+  });
+}
+
+/** Wiersze dodatkowe HUD online: pokój, wynik/zegar meczu, HP, ping + podpowiedzi sterowania. */
+function hudExtraLines(): string[] {
+  const lines: string[] = ['', hudRow('pokój', roomView?.code ?? '—')];
   if (latestStandings) {
     const localId = net?.localPlayerId ?? null;
     const myKills = latestStandings.rows.find((r) => r.id === localId)?.kills ?? 0;
     lines.push(
-      `mecz     ${String(myKills).padStart(2)} / ${String(latestStandings.scoreLimit)} zestrz.   czas ${formatClock(latestStandings.timeLeftS)}`,
+      hudRow('mecz', `${String(myKills)} / ${String(latestStandings.scoreLimit)}`, 'zestrz.'),
+      hudRow('czas', formatClock(latestStandings.timeLeftS)),
     );
   }
   lines.push(
+    hudRow('HP', (localHealthFrac * 100).toFixed(0), '%'),
+    hudRow('ping', String(net?.rttMs ?? 0), 'ms'),
     '',
-    `ping ${String(net?.rttMs ?? 0).padStart(3)} ms   id ${net?.localPlayerId ?? '—'}   gracze ${describePlayers()}`,
-    mouseAim.locked ? '[mysz aktywna]' : '[kliknij, by przejąć celowanie myszą]',
-    'WSAD/strzałki — ster • Q/E — kierunek • Shift/Ctrl — gaz • LPM/Spacja — ogień • [Tab] tabela • [N] sieć',
+    mouseAim.locked ? '[mysz aktywna]' : '[kliknij — celowanie myszą]',
+    'WSAD/strzałki ster • Q/E kierunek • Shift/Ctrl gaz • LPM/Spacja ogień • [Tab] tabela • [N] sieć',
   );
-  hudEl.textContent = lines.join('\n');
+  return lines;
 }
 
 /** MM:SS dla zegara meczu w HUD. */
 function formatClock(totalS: number): string {
   const s = Math.max(0, Math.floor(totalS));
   return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function describePlayers(): string {
-  const n = net?.latestSnapshot?.entities.length ?? 0;
-  return String(n);
 }
 
 function updateConnOverlay(): void {
@@ -632,6 +754,124 @@ function updateCombatVisuals(frameDtS: number): void {
   }
 }
 
+// --- render wizualiów świata (faza 14): wybuchy, dym uszkodzeń, błysk luf własnego samolotu ---
+function updateWorldVisuals(frameDtS: number): void {
+  explosions.update(frameDtS);
+
+  // dym: każda ŻYWA, trafiona maszyna dymi tym mocniej/ciemniej, im mniej HP (próg w
+  // damageSmokeTier). healthFrac jest już ułamkiem 0..1, więc maxHp = 1. Punkt emisji
+  // cofnięty ZA ogon (mesh już zinterpolowany). Spadający wrak ('dying') → faza 16.
+  for (const [id, m] of meshes) {
+    const tier: SmokeTier | null =
+      lifeById.get(id) === 'alive' ? damageSmokeTier(healthFracById.get(id) ?? 1, 1) : null;
+    if (tier === null) {
+      smokeAccumById.set(id, 0); // nieuszkodzony — nie kumuluj długu do kolejnego trafienia
+      continue;
+    }
+    let acc = (smokeAccumById.get(id) ?? 0) + frameDtS;
+    if (acc < tier.intervalS) {
+      smokeAccumById.set(id, acc);
+      continue;
+    }
+    getForward(m.object.quaternion, scratchSmokeDir).multiplyScalar(-SMOKE_BACK_OFFSET_M);
+    scratchSmokePos.copy(m.object.position).add(scratchSmokeDir);
+    while (acc >= tier.intervalS) {
+      acc -= tier.intervalS;
+      smoke.emit(scratchSmokePos, tier.profile);
+    }
+    smokeAccumById.set(id, acc);
+  }
+  smoke.update(frameDtS);
+
+  // błysk luf tylko dla własnego samolotu (jak SP) — wyzwalany lokalnym eventem MUZZLE
+  if (predictor.ready) {
+    muzzleFlash.update(predictor.renderPosition, predictor.renderOrientation, camera.position, frameDtS);
+  }
+}
+
+// --- nakładki HUD (faza 14): markery+spotting, celownik/nos, alert granicy, szarzenie, roster ---
+function updateHudOverlays(): void {
+  if (!predictor.ready) return;
+  const w = app.clientWidth;
+  const h = app.clientHeight;
+  const localId = net?.localPlayerId ?? null;
+  const viewPos = predictor.renderPosition;
+  const s = predictor.sim.state;
+  const localAlive = s.life === 'alive';
+
+  // markery wrogów: TYLKO żywe, obce, w zasięgu wykrycia (≤ SPOT_RANGE_M). Poza zasięgiem
+  // widać goły mesh — trzeba wypatrzyć wroga, nie lecieć na gotowy znacznik (jak SP).
+  const spotSqM = SPOT_RANGE_M * SPOT_RANGE_M;
+  let mi = 0;
+  for (const [id, m] of meshes) {
+    if (id === localId || lifeById.get(id) !== 'alive') continue;
+    if (m.object.position.distanceToSquared(viewPos) > spotSqM || mi >= markers.length) continue;
+    const marker = markers[mi]!;
+    mi++;
+    marker.setColorHex(entityColorHex(id, false)); // FFA: unikatowy kolor per id
+    marker.update(m.object.position, viewPos, camera, w, h);
+  }
+  for (; mi < markers.length; mi++) markers[mi]!.hide();
+
+  // celownik myszy + znacznik nosa — żywy gracz z aktywną myszą
+  const reticlePos = mouseAim.locked && localAlive ? mouseAim.reticleScreenPos(viewPos, camera, w, h) : null;
+  if (reticlePos) {
+    reticleEl.style.display = 'block';
+    reticleEl.style.left = `${reticlePos.x.toFixed(0)}px`;
+    reticleEl.style.top = `${reticlePos.y.toFixed(0)}px`;
+  } else {
+    reticleEl.style.display = 'none';
+  }
+  getForward(s.orientation, scratchFwd);
+  const nosePos = mouseAim.locked && localAlive ? projectDirToScreen(scratchFwd, viewPos, camera, w, h) : null;
+  if (nosePos) {
+    noseMarkerEl.style.display = 'block';
+    noseMarkerEl.style.left = `${nosePos.x.toFixed(0)}px`;
+    noseMarkerEl.style.top = `${nosePos.y.toFixed(0)}px`;
+  } else {
+    noseMarkerEl.style.display = 'none';
+  }
+
+  // alert pełnoekranowy: rozbicie/respawn > ostrzeżenie o granicy (obserwator/wrak → faza 16)
+  if (!localAlive) {
+    alertEl.textContent = 'ROZBICIE — oczekiwanie na respawn';
+    alertEl.className = 'crash';
+    alertEl.style.opacity = '1';
+  } else {
+    const edgeM = distanceToArenaEdgeM(s.position.x, s.position.z);
+    if (edgeM <= ARENA_WARNING_DISTANCE_M) {
+      alertEl.textContent = `KONIEC MAPY ZA ${Math.max(0, edgeM).toFixed(0)} m — NASTĄPI PRZENIESIENIE`;
+      alertEl.className = 'warning';
+      alertEl.style.opacity = '1';
+    } else {
+      alertEl.style.opacity = '0';
+    }
+  }
+
+  // wygaszanie obrazu przy przeciążeniu (G-LOC) — tylko żywy gracz
+  greyoutOverlay.update(localAlive ? predictor.sim.gLoadEffects.blackoutFactor : 0);
+
+  // lista uczestników (kille/asysty) z tabeli wyników serwera, kolory spójne z markerami
+  roster.update(rosterRows());
+}
+
+/** Wiersze listy uczestników z autorytatywnej tabeli wyników (standings) serwera. */
+function rosterRows(): readonly RosterRow[] {
+  if (!latestStandings) return [];
+  const localId = net?.localPlayerId ?? null;
+  return latestStandings.rows.map((r: StandingRow): RosterRow => {
+    const isPlayer = r.id === localId;
+    return {
+      name: r.nick,
+      kills: r.kills,
+      assists: r.assists,
+      colorCss: cssColor(entityColorHex(r.id, isPlayer)),
+      isPlayer,
+      isLost: false, // FFA online: respawn bez limitu żyć (eliminacja dopiero w drużynowym)
+    };
+  });
+}
+
 // --- przełączniki debug: [N] overlay sieci, [P] panel symulatora (tylko dev) ---
 let conditionsPanel: NetConditionsPanel | undefined;
 let panelLoading = false;
@@ -685,6 +925,7 @@ renderer.setAnimationLoop(() => {
         m.object.quaternion.copy(predictor.renderOrientation);
         m.object.visible = s.life !== 'dead';
         m.update(frameDtS, s.throttle, s.life === 'alive');
+        lifeById.set(id, s.life);
       } else if (interpolator.sample(id, interpOut)) {
         remoteCount++;
         if (interpOut.extrapolated) extrapolatingCount++;
@@ -692,6 +933,7 @@ renderer.setAnimationLoop(() => {
         m.object.quaternion.copy(interpOut.orientation);
         m.object.visible = interpOut.life !== 'dead';
         m.update(frameDtS, interpOut.throttle, interpOut.life === 'alive');
+        lifeById.set(id, interpOut.life);
       }
     }
 
@@ -709,7 +951,9 @@ renderer.setAnimationLoop(() => {
       }
     }
     updateCombatVisuals(frameDtS);
+    updateWorldVisuals(frameDtS);
     updateHud();
+    updateHudOverlays();
   }
 
   world.update(camera.position);

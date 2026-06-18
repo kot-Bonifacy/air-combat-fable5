@@ -281,6 +281,12 @@ docker compose up -d --build
 NPM i certyfikat zostają bez zmian. `docker compose up -d --build` przebudowuje oba serwisy
 (frontend + backend) i podmienia tylko te, których obraz się zmienił.
 
+> **Wersja protokołu (faza 14: `PROTOCOL_VERSION = 3`).** Frontend i backend MUSZĄ iść z tej
+> samej wersji kodu — klient v3 nie połączy się z serwerem v2 (handshake zwróci „niezgodna
+> wersja protokołu"). `docker compose up -d --build` buduje oba serwisy z tego samego `git pull`,
+> więc trzymanie się tej procedury gwarantuje zgodność. Nie wgrywaj samego frontendu ani samego
+> backendu z różnych commitów. Po update poproś graczy o twardy refresh (stary bundle = stara wersja).
+
 ---
 
 ## Zatrzymanie / restart / sprzątanie
@@ -298,16 +304,16 @@ docker compose up -d --build  # przebuduj i wystartuj
 
 ## Najczęstsze problemy
 
-| Objaw                                       | Przyczyna / rozwiązanie                                                                                                       |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Build zrywa się na `npm ci` / `@emnapi/...` | Dockerfile celowo używa `npm install` (lock z Windows nie ma bindingów linux-musl). Nie przełączaj na `npm ci`.               |
-| `curl localhost:8087` → connection refused  | Kontener nie wstał — `docker compose ps` i `docker compose logs`.                                                             |
-| Biała strona, w konsoli błąd MIME na `.js`  | Nie dodawaj bloku `types {}` w `nginx.conf` (nadpisuje MIME).                                                                 |
-| Certyfikat SSL się nie wydaje               | DNS niesportagowany — `dig +short dogfight.tatanga.eu`, poczekaj do 1 h.                                                      |
-| `502 Bad Gateway` w przeglądarce            | Zły port/host w NPM albo kontener nie działa — sprawdź Forward Port `8087` i `docker compose ps`.                             |
-| WS nie łączy się (`/ws` 502, gra w spinnerze) | `dogfight-backend` nie żyje/`unhealthy` — `docker compose logs backend`. Frontend ma `depends_on: service_healthy`.          |
-| WS pada zaraz po połączeniu / co 60 s        | Websockets Support w NPM = OFF (włącz) albo brak `proxy_read_timeout 86400` w nginx.conf (jest od fazy 13).                  |
-| `dogfight-backend` ciągle `unhealthy`        | Healthcheck (`wget /health`) nie przechodzi — sprawdź logi backendu; port 3001 wewnątrz kontenera.                          |
-| Klient łączy się z `ws://…:3001` (nie `/ws`) | Stary build klienta — przebuduj frontend (`defaultServerUrl` używa `/ws` na https od fazy 13).                              |
-| Model się nie ładuje, leci bryła-stożek     | `assets/models/spitfire/` nie trafił do builda — upewnij się, że `git clone` pobrał całe repo (`ls assets/models/spitfire/`). |
-| Strona pokazuje starą wersję po update      | Twardy refresh w przeglądarce (Ctrl+Shift+R) — bundle Vite ma hash, ale `index.html` bywa cache'owany.                        |
+| Objaw                                         | Przyczyna / rozwiązanie                                                                                                       |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Build zrywa się na `npm ci` / `@emnapi/...`   | Dockerfile celowo używa `npm install` (lock z Windows nie ma bindingów linux-musl). Nie przełączaj na `npm ci`.               |
+| `curl localhost:8087` → connection refused    | Kontener nie wstał — `docker compose ps` i `docker compose logs`.                                                             |
+| Biała strona, w konsoli błąd MIME na `.js`    | Nie dodawaj bloku `types {}` w `nginx.conf` (nadpisuje MIME).                                                                 |
+| Certyfikat SSL się nie wydaje                 | DNS niesportagowany — `dig +short dogfight.tatanga.eu`, poczekaj do 1 h.                                                      |
+| `502 Bad Gateway` w przeglądarce              | Zły port/host w NPM albo kontener nie działa — sprawdź Forward Port `8087` i `docker compose ps`.                             |
+| WS nie łączy się (`/ws` 502, gra w spinnerze) | `dogfight-backend` nie żyje/`unhealthy` — `docker compose logs backend`. Frontend ma `depends_on: service_healthy`.           |
+| WS pada zaraz po połączeniu / co 60 s         | Websockets Support w NPM = OFF (włącz) albo brak `proxy_read_timeout 86400` w nginx.conf (jest od fazy 13).                   |
+| `dogfight-backend` ciągle `unhealthy`         | Healthcheck (`wget /health`) nie przechodzi — sprawdź logi backendu; port 3001 wewnątrz kontenera.                            |
+| Klient łączy się z `ws://…:3001` (nie `/ws`)  | Stary build klienta — przebuduj frontend (`defaultServerUrl` używa `/ws` na https od fazy 13).                                |
+| Model się nie ładuje, leci bryła-stożek       | `assets/models/spitfire/` nie trafił do builda — upewnij się, że `git clone` pobrał całe repo (`ls assets/models/spitfire/`). |
+| Strona pokazuje starą wersję po update        | Twardy refresh w przeglądarce (Ctrl+Shift+R) — bundle Vite ma hash, ale `index.html` bywa cache'owany.                        |

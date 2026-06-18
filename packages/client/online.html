@@ -30,6 +30,114 @@
           0 1px 2px rgba(0, 0, 0, 0.9),
           0 0 6px rgba(0, 0, 0, 0.75);
       }
+      /* celownik myszy + znacznik nosa (parytet z SP, faza 14) */
+      #reticle {
+        position: fixed;
+        width: 26px;
+        height: 26px;
+        margin: -13px 0 0 -13px;
+        border: 2px solid rgba(120, 255, 140, 0.9);
+        border-radius: 50%;
+        pointer-events: none;
+        display: none;
+      }
+      #reticle::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 4px;
+        height: 4px;
+        margin: -2px 0 0 -2px;
+        background: rgba(120, 255, 140, 0.9);
+        border-radius: 50%;
+      }
+      #nose-marker {
+        position: fixed;
+        width: 14px;
+        height: 14px;
+        margin: -7px 0 0 -7px;
+        pointer-events: none;
+        display: none;
+        color: rgba(255, 220, 100, 0.85);
+        font: 14px/14px monospace;
+        text-align: center;
+      }
+      /* alert granicy areny / rozbicia (faza 14) */
+      #arena-alert {
+        position: fixed;
+        top: 28%;
+        left: 50%;
+        transform: translateX(-50%);
+        font: bold 20px/1.3 monospace;
+        letter-spacing: 2px;
+        pointer-events: none;
+        opacity: 0;
+        white-space: pre;
+      }
+      #arena-alert.warning {
+        color: #fc5;
+        text-shadow: 0 0 8px rgba(255, 200, 80, 0.7);
+      }
+      #arena-alert.crash {
+        color: #f44;
+        text-shadow: 0 0 12px rgba(255, 60, 60, 0.8);
+      }
+      /* ostrzeżenie przeciągnięcia / buffetu / szarzenia (faza 14, sterowane przez Hud) */
+      #stall-warning {
+        position: fixed;
+        top: 18%;
+        left: 50%;
+        transform: translateX(-50%);
+        font: bold 26px/1.2 monospace;
+        letter-spacing: 4px;
+        pointer-events: none;
+        opacity: 0;
+      }
+      #stall-warning.stall {
+        color: #f44;
+        text-shadow: 0 0 12px rgba(255, 60, 60, 0.8);
+      }
+      #stall-warning.buffet {
+        color: #fa3;
+        text-shadow: 0 0 8px rgba(255, 170, 50, 0.7);
+      }
+      /* sztuczny horyzont (faza 14) */
+      #horizon {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        width: 110px;
+        height: 110px;
+        border-radius: 50%;
+        overflow: hidden;
+        border: 2px solid rgba(200, 220, 240, 0.5);
+        pointer-events: none;
+        display: none;
+      }
+      #horizon-disc {
+        position: absolute;
+        left: -55px;
+        top: -55px;
+        width: 220px;
+        height: 220px;
+        background: linear-gradient(
+          to bottom,
+          #2a5d8f 0%,
+          #2a5d8f 50%,
+          #6b4a2b 50%,
+          #6b4a2b 100%
+        );
+      }
+      #horizon::after {
+        content: '';
+        position: absolute;
+        left: 15px;
+        right: 15px;
+        top: 50%;
+        height: 0;
+        border-top: 2px solid rgba(255, 240, 120, 0.95);
+      }
       /* znacznik trafienia w środku ekranu (faza 11) */
       #hit-marker {
         position: fixed;
@@ -174,6 +282,11 @@
   <body>
     <div id="app"></div>
     <div id="hud"></div>
+    <div id="reticle"></div>
+    <div id="nose-marker">+</div>
+    <div id="stall-warning"></div>
+    <div id="arena-alert"></div>
+    <div id="horizon"><div id="horizon-disc"></div></div>
     <div id="hit-marker">✕</div>
     <div id="kill-feed"></div>
     <div id="conn-overlay"></div>

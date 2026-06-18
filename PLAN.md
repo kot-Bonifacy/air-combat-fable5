@@ -21,7 +21,7 @@ Obok tego projektu leżą 4 wcześniejsze podejścia. Najdalej zaszedł `air-com
 | Pełny momentowy model 6DoF (tabele Cl/Cd/Cm + momenty + tłumienia) przeszedł testy, ale strojenie czucia lotu było walką z układem sprzężonych współczynników „dobieranych na oko" | Model hybrydowy: **siły fizyczne + rotacja kinematyczna z kopertą osiągów**. Parametry strojenia = bezpośrednio odczuwalne wielkości (roll rate, limit G, czas zakrętu). Szczegóły: `docs/fizyka-lotu.md` |
 | Własna biblioteka matematyczna + niestandardowa konwencja osi = godziny debugowania kwaternionów i układów odniesienia | **Zakaz własnego matha** — wyłącznie `three` (Vector3/Quaternion), działa też w Node. Jedna konwencja osi (glTF: +Z nos, +Y góra) z helperami `getForward/getUp/getRight` i testami |
 | Brak narzędzi obserwowalności — błąd w siłach widoczny dopiero jako „dziwne latanie" | Narzędzia obowiązkowe i WCZESNE: strzałki sił 3D, telemetria, rejestrator lotu + wykresy, strażnik NaN, panel strojenia na żywo (fazy 1–3, nie „kiedyś") |
-| Projekt umarł na fazie 6 (teren: LOD, splatting, chmury) — zanim cokolwiek było grywalne (grywalność planowana na fazę 10) | **Grywalny dogfight z botem w fazie 6, publiczne demo w fazie 7.** Teren minimalny (ocean + wyspa) w fazie 4; ładny teren dopiero w fazie 15, z twardym timeboxem |
+| Projekt umarł na fazie 6 (teren: LOD, splatting, chmury) — zanim cokolwiek było grywalne (grywalność planowana na fazę 10) | **Grywalny dogfight z botem w fazie 6, publiczne demo w fazie 7.** Teren minimalny (ocean + wyspa) w fazie 4; ładny teren dopiero w fazie 20, z twardym timeboxem |
 | RK4 + 120 Hz — moc obliczeniowa i złożoność bez zysku dla simcade | Semi-implicit Euler @ 60 Hz, stały krok. Prostszy do debugowania, standard w grach |
 | Wymóg bitowego determinizmu klient↔serwer — kruchy i niepotrzebny | Determinizmu NIE wymagamy. Serwer jest autorytetem, prediction+reconciliation koryguje dryf |
 | Dobre wzorce, które przejmujemy | Monorepo `shared/client/server`, binarny protokół WS, autorytatywny serwer, tick rates rozdzielone, deploy wzorzec C z VPS, dyscyplina dokumentacji (CLAUDE.md + fazy + memory) |
@@ -90,8 +90,8 @@ Każda faza = osobny plik, osobna sesja vibecodingu, mierzalne kryterium ukończ
 | 12 | `docs/phases/faza-12.md` | Boty na serwerze | mecz 1 gracz + 3 boty |
 | 13 | `docs/phases/faza-13.md` | Pętla meczu: FFA, scoreboard, respawn + deploy MP | **publiczny multiplayer** |
 | 14 | `docs/phases/faza-14.md` | Parytet MP cz.1 — wizualia i HUD online | wybuchy, dym, markery, reticle, pełny HUD online |
-| 15 | `docs/phases/faza-15.md` | Parytet MP cz.2 — obserwator + kamery po śmierci | brak „pustego kadru" po zestrzeleniu |
-| 16 | `docs/phases/faza-16.md` | Parytet MP cz.3 — kolizje + spadający wrak (serwer) | model śmierci jak w SP; domknięty kod `collision`/`dying` |
+| 15 | `docs/phases/faza-15.md` | Parytet MP cz.2 — kolizje + spadający wrak (serwer) | model śmierci jak w SP; domknięty kod `collision`/`dying` |
+| 16 | `docs/phases/faza-16.md` | Parytet MP cz.3 — obserwator + sterowany wrak (klient) | brak „pustego kadru" po zestrzeleniu |
 | 17 | `docs/phases/faza-17.md` | Parytet MP cz.4 — kontrola strefy KotH (serwer) | główny cel gry także online |
 | 18 | `docs/phases/faza-18.md` | Parytet MP cz.5 — tryb drużynowy | **multiplayer ma parytet z singleplayer** |
 | 19 | `docs/phases/faza-19.md` | Drugi samolot + balans (Bf 109 E) | asymetryczny matchup |

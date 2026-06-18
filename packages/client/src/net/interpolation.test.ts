@@ -22,6 +22,7 @@ function ent(x: number, vx = V): EntitySnapshot {
     velocity: new Vector3(vx, 0, 0),
     throttle: 0.8,
     healthFrac: 1,
+    ammoFrac: 1,
   };
 }
 

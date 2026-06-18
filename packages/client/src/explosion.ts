@@ -74,6 +74,16 @@ export class Explosions {
     this.bursts.push({ points, velocities, ageS: 0 });
   }
 
+  /** Natychmiast usuwa wszystkie żywe wybuchy (reset meczu / reconnect — bez artefaktów). */
+  clear(): void {
+    for (const burst of this.bursts) {
+      this.scene.remove(burst.points);
+      burst.points.geometry.dispose();
+      burst.points.material.dispose();
+    }
+    this.bursts.length = 0;
+  }
+
   update(dtS: number): void {
     for (let b = this.bursts.length - 1; b >= 0; b--) {
       const burst = this.bursts[b];
