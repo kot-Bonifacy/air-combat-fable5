@@ -140,7 +140,19 @@ describe('serwer — boty jako encje pokoju (faza 12)', () => {
     }
     expect(room.healthOf(bot)).toBe(0);
     expect(room.killsOf(shooter)).toBe(1);
-    expect(lifeOf(room, bot)).toBe('dead');
+    expect(lifeOf(room, bot)).toBe('dying'); // zestrzelony w powietrzu → spadający wrak (faza 15)
+
+    // przyspiesz opadanie wraku do ziemi (w realnej grze spada sam ~kilkanaście s z 5 km):
+    // zrzuć go nisko, lecącego w dół → uderzenie → 'dead' i start odliczania respawnu
+    const wreck = room.snapshotEntities().find((e) => e.id === bot)!.state;
+    wreck.position.set(0, 40, 0);
+    wreck.velocity.set(0, -30, 0);
+    let fall = 0;
+    while (lifeOf(room, bot) === 'dying' && fall < 200) {
+      room.step(FIXED_DT_S);
+      fall++;
+    }
+    expect(lifeOf(room, bot)).toBe('dead'); // wrak uderzył w ziemię
 
     // przestajemy przyklejać bota (respawnuje 8 km dalej, bezpiecznie); odliczamy okno respawnu
     const respawnTicks = Math.ceil(RESPAWN_DELAY_S / FIXED_DT_S) + 5;

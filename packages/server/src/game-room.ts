@@ -28,11 +28,15 @@ import {
   encodeSnapshot,
   evaluateFfa,
   eventsByteLength,
+  keyboardDemands,
+  nearestToroidalImage,
   pilotStep,
+  planesCollide,
   resetHealth,
   segmentSphereHit,
   snapshotByteLength,
   stepPilotedPlane,
+  stepWreck,
   totalAmmo,
   updateFire,
   updateLifecycle,
@@ -89,8 +93,10 @@ const MAX_REWIND_TICKS = Math.round((LAGCOMP_MAX_REWIND_MS / 1000) * PHYSICS_HZ)
 const NO_KILLER = 0;
 
 const scratchHitCenter = new Vector3();
-/** Bufor zawinięcia torusa dla kroku bota (caller `wrapToArena` go nie czyta). */
+/** Bufor zawinięcia torusa dla kroku bota/wraku (caller `wrapToArena` go nie czyta). */
 const scratchBotWrap = new Vector3();
+/** Bufor wychyleń steru do sterowania spadającym wrakiem gracza (zero alokacji per tick). */
+const scratchWreckDefl = { pitchUp: 0, rollRight: 0, yawRight: 0 };
 
 /**
  * Buduje pierścień slotów startowych: pozycja na obrzeżach areny, nos poziomo ku środkowi
@@ -159,6 +165,9 @@ interface ServerPlayer {
   readonly spawnPos: Vector3;
   readonly spawnDir: Vector3;
   readonly slot: number;
+  /** Pozycja na POCZĄTKU bieżącego ticku — początek zamiatanego odcinka kolizji (faza 15);
+   *  po zawinięciu torusa korygowana do obrazu najbliższego pozycji końcowej. */
+  readonly prevPos: Vector3;
   /** Bot serwerowy (faza 12): sterowany przez AI, member zawsze null. */
   readonly isBot: boolean;
 }
@@ -209,6 +218,8 @@ export class GameRoom {
   private readonly botManager = new BotManager();
   /** Scratch listy celów bota (żywe stany innych uczestników) — zero alokacji per decyzja. */
   private readonly botTargetScratch: PlaneState[] = [];
+  /** Scratch listy żywych, nietykalnych encji do testu kolizji (faza 15) — zero alokacji per tick. */
+  private readonly collisionScratch: ServerPlayer[] = [];
 
   constructor(
     readonly code: string,
@@ -318,6 +329,7 @@ export class GameRoom {
       spawnPos: new Vector3(),
       spawnDir: new Vector3(),
       slot,
+      prevPos: new Vector3(),
       isBot,
     };
     this.players.set(id, player);
@@ -502,6 +514,10 @@ export class GameRoom {
       }
     }
 
+    // 1b) kolizje samolot↔samolot (faza 15): zamiatany test prevPos→pozycja; zderzeni → wrak
+    // 'dying'. PRZED historią/ogniem, by encja zderzona w tym ticku nie była celem ani nie strzelała.
+    this.resolvePlaneCollisions();
+
     // 2) historia pozycji TEGO ticku (tylko żywi mogą oberwać) — baza rewindu lag-comp
     this.history.beginTick(this.tick);
     for (const player of this.players.values()) {
@@ -523,6 +539,7 @@ export class GameRoom {
 
   private stepPlayer(player: ServerPlayer, dtS: number): void {
     const state = player.sim.state;
+    player.prevPos.copy(state.position); // początek zamiatanego odcinka kolizji (faza 15)
 
     if (state.life === 'alive') {
       if (player.protectionTimerS > 0) player.protectionTimerS = Math.max(0, player.protectionTimerS - dtS);
@@ -539,10 +556,53 @@ export class GameRoom {
         dtS,
         `serwer ${this.code}: gracz ${String(player.id)}`,
       );
+      this.fixWrapPrev(player);
       if (event === 'crashed') this.onGroundDeath(player);
+    } else if (state.life === 'dying') {
+      // spadający wrak gracza (faza 15): silnik martwy, ster ograniczony; steruje gracz
+      // klawiaturą (faza 16 doda predykcję wraku po stronie klienta — ta sama ścieżka co tu).
+      this.stepWreckEntity(player, dtS);
+      this.fixWrapPrev(player);
+      // wrak dotknął ziemi → 'dead' i start odliczania respawnu (buchalteria była przy zestrzeleniu)
+      updateLifecycle(state, this.terrain, dtS);
     } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
       this.spawn(player, true);
     }
+  }
+
+  /**
+   * Po zawinięciu torusa sprowadza `prevPos` do obrazu najbliższego pozycji końcowej. Bez tego
+   * encja przeniesiona na drugą stronę areny miałaby zamiatany odcinek kolizji długości ~areny
+   * (fałszywe zderzenia z odległymi maszynami). `nearestToroidalImage(p, ref, p)` jest in-place
+   * bezpieczne (argumenty `.set` liczone przed zapisem).
+   */
+  private fixWrapPrev(player: ServerPlayer): void {
+    nearestToroidalImage(player.prevPos, player.sim.state.position, player.prevPos);
+  }
+
+  /**
+   * Jeden tick SPADAJĄCEGO WRAKU (life 'dying'): silnik martwy + ster ograniczony (stepWreck).
+   * Gracz steruje wrakiem wychyleniami z inputu (jak klawiatura, bez instruktora/myszy); bot-wrak
+   * leci neutralnie (czysty opad — jak w SP). Ack sekwencji także tu, żeby reconciliation wraku
+   * po stronie klienta (faza 16) miała punkt odniesienia. Po kroku caller koryguje prevPos i cykl życia.
+   */
+  private stepWreckEntity(player: ServerPlayer, dtS: number): void {
+    const state = player.sim.state;
+    const input = player.isBot ? null : player.latestInput;
+    if (input) {
+      player.lastProcessedSeq = input.sequence;
+      scratchWreckDefl.pitchUp = input.pitchUp;
+      scratchWreckDefl.rollRight = input.rollRight;
+      scratchWreckDefl.yawRight = input.yawRight;
+      keyboardDemands(state, this.plane, scratchWreckDefl, player.demands);
+    } else {
+      player.demands.nDemandG = 1;
+      player.demands.rollRateRadS = 0;
+      player.demands.yawRateRadS = 0;
+    }
+    stepWreck(player.sim, this.plane, player.demands, dtS);
+    wrapToArena(state.position, scratchBotWrap);
+    validatePlaneState(state, `serwer ${this.code}: wrak ${String(player.id)}`);
   }
 
   /**
@@ -553,6 +613,7 @@ export class GameRoom {
    */
   private stepBot(player: ServerPlayer, dtS: number): void {
     const state = player.sim.state;
+    player.prevPos.copy(state.position); // początek zamiatanego odcinka kolizji (faza 15)
     if (state.life === 'alive') {
       if (player.protectionTimerS > 0) player.protectionTimerS = Math.max(0, player.protectionTimerS - dtS);
       if ((this.tick + player.slot) % BOT_THINK_INTERVAL === 0) {
@@ -570,7 +631,12 @@ export class GameRoom {
       pilotStep(player.sim, this.plane, player.demands, dtS);
       wrapToArena(state.position, scratchBotWrap);
       validatePlaneState(state, `serwer ${this.code}: bot ${String(player.id)}`);
+      this.fixWrapPrev(player);
       if (updateLifecycle(state, this.terrain, dtS) === 'crashed') this.onGroundDeath(player);
+    } else if (state.life === 'dying') {
+      this.stepWreckEntity(player, dtS); // wrak bota: neutralny opad balistyczny (bez AI)
+      this.fixWrapPrev(player);
+      updateLifecycle(state, this.terrain, dtS); // wreckImpact → 'dead' → odliczanie respawnu
     } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
       this.spawn(player, true);
     }
@@ -589,7 +655,11 @@ export class GameRoom {
   /** Krok kontroli ognia: spust z inputu (gracz) albo z decyzji AI (bot); rewind lag-comp, event MUZZLE. */
   private fireWeapon(player: ServerPlayer, dtS: number): void {
     const state = player.sim.state;
-    if (state.life !== 'alive') return;
+    // strzela żywy (gracz/bot) ALBO spadający wrak GRACZA (parytet z SP: wrak pruje do uderzenia
+    // w ziemię — bot-wrak nie). Wrak nie jest celem ani się nie zderza (resolveHits/kolizje go
+    // pomijają), ale broń wciąż działa z bieżącej pozy.
+    const wreckCanFire = state.life === 'dying' && !player.isBot;
+    if (state.life !== 'alive' && !wreckCanFire) return;
     const triggerHeld = player.isBot ? this.botManager.fireOf(player.id) : (player.latestInput?.fire ?? false);
     // otwarcie ognia oddaje ochronę respawnu (nietykalny nie może też zadawać — faza 13)
     if (triggerHeld && player.protectionTimerS > 0) player.protectionTimerS = 0;
@@ -655,15 +725,61 @@ export class GameRoom {
     }
   }
 
-  /** Zestrzelenie w powietrzu: śmierć, event KILL, kredyt zabójcy, asysty, śmierć ofiary. */
+  /**
+   * Zestrzelenie w POWIETRZU → spadający wrak (life 'dying', faza 15): buchalteria (śmierć,
+   * kredyt, asysty) liczona TERAZ — strzelec zasłużył w chwili zestrzelenia, jak w SP. Wrak
+   * spada (stepWreck), a respawn rusza dopiero po uderzeniu w ziemię (updateLifecycle: wreckImpact).
+   */
   private onAirKill(victim: ServerPlayer, killerId: number): void {
-    victim.sim.state.life = 'dead';
-    victim.sim.state.lifeTimerS = 0;
-    victim.deaths++;
+    this.enterWreck(victim);
     this.queueEvent({ kind: 'kill', killerId, victimId: victim.id, cause: 'air' });
     const killer = this.players.get(killerId);
     if (killer && killer !== victim) killer.kills++;
     this.creditAssists(victim, killerId);
+  }
+
+  /** Przejście ofiary w spadający wrak (zestrzelenie/kolizja): life 'dying' + zliczenie śmierci. */
+  private enterWreck(victim: ServerPlayer): void {
+    victim.sim.state.life = 'dying';
+    victim.sim.state.lifeTimerS = 0; // licznik spadania (UI/diagnostyka); reset też przy uderzeniu
+    victim.deaths++;
+  }
+
+  /**
+   * Zderzenia samolot↔samolot (faza 15, parytet z SP): para ŻYWYCH płatowców, których sfery
+   * kolizji (collisionRadiusM) zetkną się W TRAKCIE ticku, ulega natychmiastowemu zniszczeniu —
+   * oba stają się spadającymi wrakami (cause 'collision', bez kredytu). Test ZAMIATANY
+   * (planesCollide na prevPos→pozycja) łapie lot czołowy mimo dużej prędkości zbliżania.
+   * Nietykalni po respawnie (protectionTimerS) i nie-żywi są wyłączeni. Pary liczone raz (i<j);
+   * gdy `a` zginie, przerywamy pętlę wewnętrzną — martwy płatowiec nie zderza się dalej.
+   */
+  private resolvePlaneCollisions(): void {
+    const live = this.collisionScratch;
+    live.length = 0;
+    for (const p of this.players.values()) {
+      if (p.sim.state.life === 'alive' && p.protectionTimerS <= 0) live.push(p);
+    }
+    const r = this.plane.collisionRadiusM;
+    for (let i = 0; i < live.length; i++) {
+      const a = live[i]!;
+      if (a.sim.state.life !== 'alive') continue; // a zginął w tej klatce (wcześniejsza para)
+      for (let j = i + 1; j < live.length; j++) {
+        const b = live[j]!;
+        if (b.sim.state.life !== 'alive') continue;
+        if (!planesCollide(a.prevPos, a.sim.state.position, r, b.prevPos, b.sim.state.position, r)) continue;
+        this.onCollisionDeath(a);
+        this.onCollisionDeath(b);
+        break;
+      }
+    }
+  }
+
+  /** Śmierć w zderzeniu: spadający wrak bez kredytu (jak rozbicie), event KILL cause 'collision'
+   *  (serwer ZACZYNA go emitować — faza 15) + asysty wcześniejszych napastników. */
+  private onCollisionDeath(victim: ServerPlayer): void {
+    this.enterWreck(victim);
+    this.queueEvent({ kind: 'kill', killerId: NO_KILLER, victimId: victim.id, cause: 'collision' });
+    this.creditAssists(victim, null);
   }
 
   /** Rozbicie o teren: śmierć, event KILL bez sprawcy + asysty dla wcześniejszych napastników. */

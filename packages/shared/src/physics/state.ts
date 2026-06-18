@@ -15,8 +15,9 @@ export interface AngularRates {
  * Cykl życia samolotu:
  * - alive      — leci, fizyka i walka pełne;
  * - dying       — zestrzelony w POWIETRZU: spadający wrak (silnik martwy, ster
- *                 ograniczony); fizyka biegnie, ale maszyna nie liczy się już do
- *                 walki (nie celują w nią, nie zderza się, nie strzela);
+ *                 ograniczony); fizyka biegnie, ale maszyna nie jest już CELEM
+ *                 (nie celują w nią, nie zderza się). Broń wciąż działa — gracz
+ *                 może strzelać z wraku do uderzenia w ziemię (parytet z SP);
  * - dead        — rozbity o ziemię (też po uderzeniu wraku): fizyka stoi;
  * - respawning  — czeka, aż autorytet ustawi spawn i 'alive' (faza 4).
  */
