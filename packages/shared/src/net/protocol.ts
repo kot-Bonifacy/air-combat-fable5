@@ -657,8 +657,11 @@ export interface MatchStartedMessage {
   t: 'matchStarted';
 }
 
-/** Powód zakończenia meczu FFA (faza 13): osiągnięty limit zestrzeleń albo limit czasu. */
-export type MatchEndReason = 'score' | 'time';
+/**
+ * Powód zakończenia meczu FFA: limit zestrzeleń, limit czasu albo przejęcie strefy
+ * kontroli (faza 17 — KotH jako dodatkowy warunek zwycięstwa, obok limitu zestrzeleń/czasu).
+ */
+export type MatchEndReason = 'score' | 'time' | 'zone';
 
 /** Jeden wiersz tabeli wyników (faza 13) — autorytet serwera; klient tylko wyświetla. */
 export interface StandingRow {
@@ -670,6 +673,21 @@ export interface StandingRow {
   /** Szacowany ping [ms] (serwer liczy z echa ticku, bez synchronizacji zegarów); bot = 0. */
   pingMs: number;
   isBot: boolean;
+  /** Zakumulowane sekundy WYŁĄCZNEJ kontroli strefy przez frakcję tego gracza (faza 17;
+   *  FFA: frakcja = id gracza). Serwer liczy autorytatywnie — klient tylko wyświetla. */
+  zoneSeconds: number;
+}
+
+/**
+ * Bieżąca okupacja strefy kontroli (faza 17) — do statusu paska ZoneBar. Perspektywa-niezależna:
+ * klient porównuje `controlling` ze swoim id (FFA: frakcja = id) i liczy fronty z `zoneSeconds`
+ * wierszy. Sporna strefa → controlling=null, occupied=true (pauza ≠ pusta).
+ */
+export interface ZoneStatus {
+  /** Frakcja kontrolująca strefę teraz albo null (pusta LUB sporna). */
+  controlling: number | null;
+  /** Czy w strefie jest co najmniej jeden żywy samolot (rozróżnia pauzę spornej od pustej). */
+  occupied: boolean;
 }
 
 /** Serwer → klient: tabela wyników (Tab) + metryki meczu. Rozsyłana ~STANDINGS_BROADCAST_HZ. */
@@ -680,6 +698,8 @@ export interface StandingsMessage {
   scoreLimit: number;
   /** Pozostały czas meczu [s] (serwer liczy zegar; klient tylko wyświetla). */
   timeLeftS: number;
+  /** Bieżąca okupacja strefy kontroli (faza 17) — status paska ZoneBar. */
+  zone: ZoneStatus;
 }
 
 /** Serwer → klient: koniec meczu — zwycięzca + finalna tabela (ekran wyników, rewanż). */

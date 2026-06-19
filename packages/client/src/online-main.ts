@@ -65,6 +65,7 @@ import { LobbyUI, type WaitingView } from './net/lobby-ui';
 import { ResultsOverlay, ScoreboardOverlay } from './net/match-ui';
 import type { NetConditionsPanel } from './net/net-conditions-panel';
 import { RosterOverlay, type RosterRow } from './roster-overlay';
+import { ZoneBar, type ZoneBarState } from './zone-bar';
 import { SmokeTrails, WRECK_TIER, damageSmokeTier, type SmokeTier } from './smoke';
 import { createPlaneMesh, type PlaneModel } from './plane-mesh';
 import { createWorld } from './world';
@@ -298,6 +299,8 @@ const smoke = new SmokeTrails(scene);
 const muzzleFlash = new MuzzleFlash(scene, arm.muzzles);
 const greyoutOverlay = new GreyoutOverlay();
 const roster = new RosterOverlay();
+// pasek kontroli strefy KotH (faza 17, parytet z SP) — fronty z autorytatywnych standings
+const zoneBar = new ZoneBar(document.body);
 // markery wrogów (DOM) — pula na maks. liczbę innych pilotów w pokoju
 const markers = Array.from({ length: MAX_PLAYERS_PER_ROOM - 1 }, () => new EnemyMarker(document.body));
 const hud = new Hud(hudEl, requireEl('stall-warning'), requireEl('horizon-disc'));
@@ -369,6 +372,7 @@ function resetGameState(): void {
 function hideCombatOverlays(): void {
   for (const m of markers) m.hide();
   roster.hide();
+  zoneBar.setVisible(false);
   greyoutOverlay.hide();
   downedOverlay.hide();
   reticleEl.style.display = 'none';
@@ -1027,6 +1031,40 @@ function updateHudOverlays(): void {
 
   // lista uczestników (kille/asysty) z tabeli wyników serwera, kolory spójne z markerami
   roster.update(rosterRows());
+
+  // pasek kontroli strefy KotH (faza 17): status z bieżącej okupacji, fronty z czasu kontroli
+  updateZoneBar();
+}
+
+/**
+ * Pasek kontroli strefy KotH (faza 17, parytet z SP). Fronty = czas WYŁĄCZNEJ kontroli z
+ * autorytatywnej tabeli (standings.rows.zoneSeconds): własny vs najlepszy wróg; status
+ * (przejmujesz/wróg/sporna/wolna) z bieżącej okupacji (standings.zone). Ukryty na ekranie
+ * wyników (zasłoniłby go modal) i poza meczem (standings null).
+ */
+function updateZoneBar(): void {
+  const zoneStatus = latestStandings?.zone;
+  if (!zoneStatus || matchResultsShown) {
+    zoneBar.setVisible(false);
+    return;
+  }
+  const localId = net?.localPlayerId ?? null;
+  let mySec = 0;
+  let enemySec = 0;
+  for (const r of latestStandings!.rows) {
+    if (r.id === localId) mySec = r.zoneSeconds;
+    else if (r.zoneSeconds > enemySec) enemySec = r.zoneSeconds;
+  }
+  const state: ZoneBarState =
+    zoneStatus.controlling === null
+      ? zoneStatus.occupied
+        ? 'contested'
+        : 'neutral'
+      : zoneStatus.controlling === localId
+        ? 'own'
+        : 'enemy';
+  zoneBar.setVisible(true);
+  zoneBar.update(state, mySec, enemySec);
 }
 
 /** Wiersze listy uczestników z autorytatywnej tabeli wyników (standings) serwera. */

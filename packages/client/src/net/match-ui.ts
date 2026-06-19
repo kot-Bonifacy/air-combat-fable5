@@ -31,10 +31,12 @@ function standingRow(row: StandingRow, rank: number, localId: number | null): HT
   deathsCell.textContent = String(row.deaths);
   const assistsCell = el('span', 'mui-cell mui-num');
   assistsCell.textContent = String(row.assists);
+  const zoneCell = el('span', 'mui-cell mui-num');
+  zoneCell.textContent = formatClock(row.zoneSeconds); // czas wyłącznej kontroli strefy (faza 17)
   const pingCell = el('span', 'mui-cell mui-num');
   pingCell.textContent = row.isBot ? 'BOT' : `${String(row.pingMs)}`;
 
-  tr.append(rankCell, nameCell, killsCell, deathsCell, assistsCell, pingCell);
+  tr.append(rankCell, nameCell, killsCell, deathsCell, assistsCell, zoneCell, pingCell);
   return tr;
 }
 
@@ -47,6 +49,7 @@ function headerRow(): HTMLDivElement {
     ['Z', 'mui-num'],
     ['Ś', 'mui-num'],
     ['A', 'mui-num'],
+    ['Strefa', 'mui-num'],
     ['ping', 'mui-num'],
   ];
   for (const [text, cls] of cells) {
@@ -162,7 +165,12 @@ export class ResultsOverlay {
   ): void {
     const winner = winnerId !== null ? rows.find((r) => r.id === winnerId) : undefined;
     const won = winnerId !== null && winnerId === localId;
-    const reasonText = reason === 'score' ? 'osiągnięto limit zestrzeleń' : 'upłynął czas meczu';
+    const reasonText =
+      reason === 'score'
+        ? 'osiągnięto limit zestrzeleń'
+        : reason === 'zone'
+          ? 'przejęto strefę kontroli'
+          : 'upłynął czas meczu';
     this.bannerEl.classList.toggle('mui-banner-win', won);
     if (won) {
       this.bannerEl.textContent = `🏆 ZWYCIĘSTWO! (${reasonText})`;
@@ -231,7 +239,7 @@ const MATCH_UI_CSS = `
 }
 .mui-title { font: 700 18px monospace; letter-spacing: 1px; color: #ffd24a; text-align: center; }
 .mui-table { display: flex; flex-direction: column; gap: 2px; }
-.mui-row { display: grid; grid-template-columns: 32px 1fr 44px 44px 44px 56px; align-items: center; padding: 4px 8px; border-radius: 4px; }
+.mui-row { display: grid; grid-template-columns: 32px 1fr 44px 44px 44px 56px 56px; align-items: center; padding: 4px 8px; border-radius: 4px; }
 .mui-head { color: #9fc4e6; border-bottom: 1px solid #2a3f54; border-radius: 0; font-size: 13px; }
 .mui-row-self { background: rgba(200,88,31,0.28); }
 .mui-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

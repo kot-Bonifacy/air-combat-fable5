@@ -41,6 +41,7 @@ import {
   updateLifecycle,
   validatePlaneState,
   wrapToArena,
+  ZoneControl,
   type ControlMessage,
   type DifficultyLevel,
   type FfaScore,
@@ -59,6 +60,7 @@ import {
   type SnapshotEntitySource,
   type StandingRow,
   type Terrain,
+  type ZoneOccupant,
 } from '@air-combat/shared';
 import { BOT_THINK_INTERVAL, BotManager } from './bot-manager';
 
@@ -200,6 +202,19 @@ export class GameRoom {
   private readonly occupantScratch: Vector3[] = [];
   /** Scratch tablicy wyników do oceny końca meczu (zero alokacji per tick). */
   private readonly ffaScratch: FfaScore[] = [];
+
+  // --- kontrola strefy KotH (faza 17): dodatkowy warunek zwycięstwa, parytet z SP ---
+  /** Autorytatywny stan przejmowania strefy (KotH bez cofania); reset przy starcie meczu. */
+  private readonly zone = new ZoneControl();
+  /** Bufor okupantów strefy wielokrotnego użytku (zero alokacji per tick). */
+  private readonly zoneOccupantScratch: ZoneOccupant[] = Array.from(
+    { length: MAX_PLAYERS_PER_ROOM },
+    () => ({ faction: 0, alive: false, xM: 0, zM: 0 }),
+  );
+  /** Frakcja kontrolująca strefę teraz albo null (pusta/sporna) — do statusu paska klienta. */
+  private zoneControlling: number | null = null;
+  /** Czy w strefie jest żywy samolot (pauza spornej ≠ pusta) — do statusu paska klienta. */
+  private zoneOccupied = false;
 
   // --- walka (faza 11): autorytatywne pociski + lag-comp + kolejka eventów ---
   /** Pociski autorytatywne (wszyscy gracze w pokoju dzielą pulę — kill credit po ownerId). */
@@ -376,6 +391,10 @@ export class GameRoom {
     // czysty stan walki na nowy mecz: żadnych zalegających pocisków ani eventów
     for (const b of this.pool.bullets) b.active = false;
     this.pendingEvents.length = 0;
+    // świeża strefa kontroli: zerowe liczniki, brak przejęcia (faza 17)
+    this.zone.reset();
+    this.zoneControlling = null;
+    this.zoneOccupied = false;
     for (const player of this.players.values()) {
       player.kills = 0;
       player.assists = 0;
@@ -514,6 +533,10 @@ export class GameRoom {
     // 1b) kolizje samolot↔samolot (faza 15): zamiatany test prevPos→pozycja; zderzeni → wrak
     // 'dying'. PRZED historią/ogniem, by encja zderzona w tym ticku nie była celem ani nie strzelała.
     this.resolvePlaneCollisions();
+
+    // 1c) kontrola strefy KotH (faza 17): po ruchu i kolizjach (pozycje ostateczne, świeże wraki
+    // już 'dying' i strefy nie kontestują). Akumuluje czas; przejęcie rozstrzyga checkMatchEnd.
+    this.updateZone(dtS);
 
     // 2) historia pozycji TEGO ticku (tylko żywi mogą oberwać) — baza rewindu lag-comp
     this.history.beginTick(this.tick);
@@ -862,11 +885,40 @@ export class GameRoom {
   }
 
   /**
+   * Kontrola strefy KotH w jednym ticku (faza 17, parytet z SP/updateZone). Zbiera ŻYWYCH
+   * okupantów (FFA: każdy gracz osobną frakcją = jego id; faza 18 wprowadzi drużyny),
+   * akumuluje czas WYŁĄCZNEJ kontroli (sporna/pusta pauzuje, bez cofania) i zapisuje bieżącą
+   * okupację do statusu paska. Przejęcie (ZONE_CAPTURE_SECONDS) rozstrzyga checkMatchEnd.
+   * Spadający wrak ('dying') strefy NIE kontestuje. Bufor okupantów wielokrotnego użytku.
+   */
+  private updateZone(dtS: number): void {
+    let n = 0;
+    for (const p of this.players.values()) {
+      const o = this.zoneOccupantScratch[n];
+      if (!o) break; // bufor = MAX_PLAYERS_PER_ROOM; nigdy nie przekroczone
+      o.faction = p.id; // FFA: gracz = frakcja (faza 18: drużyny)
+      o.alive = p.sim.state.life === 'alive';
+      o.xM = p.sim.state.position.x;
+      o.zM = p.sim.state.position.z;
+      n++;
+    }
+    const tick = this.zone.update(this.zoneOccupantScratch, dtS, n);
+    this.zoneControlling = tick.controlling;
+    this.zoneOccupied = tick.occupied;
+  }
+
+  /**
    * Rozstrzyga koniec meczu po stanie wyniku i zegarze (shared/world/ffa). Boty są pełnymi
    * uczestnikami (mogą wygrać — protokołowo nieodróżnialne, faza 12). Wołane co tick po
-   * rozliczeniu trafień; pierwszy spełniony warunek (limit zestrzeleń / czasu) kończy mecz.
+   * rozliczeniu trafień; pierwszy spełniony warunek (strefa / limit zestrzeleń / czasu) kończy mecz.
    */
   private checkMatchEnd(): void {
+    // strefa KotH (faza 17) ma pierwszeństwo: pełne przejęcie = natychmiastowe zwycięstwo
+    // frakcji (FFA: gracza), OBOK limitu zestrzeleń/czasu — to główny cel gry (parytet z SP).
+    if (this.zone.captured !== null) {
+      this.endMatch(this.zone.captured, 'zone');
+      return;
+    }
     this.ffaScratch.length = 0;
     for (const p of this.players.values()) {
       this.ffaScratch.push({ id: p.id, kills: p.kills, deaths: p.deaths });
@@ -910,6 +962,8 @@ export class GameRoom {
       assists: p.assists,
       pingMs: p.pingMs,
       isBot: p.isBot,
+      // sekundy wyłącznej kontroli strefy przez frakcję gracza (FFA: frakcja = id); faza 17
+      zoneSeconds: Math.round(this.zone.seconds(p.id)),
     }));
     rows.sort(compareFfa); // StandingRow spełnia FfaScore strukturalnie (id/kills/deaths)
     return rows;
@@ -927,6 +981,8 @@ export class GameRoom {
       rows: this.buildStandings(),
       scoreLimit: this.scoreLimit,
       timeLeftS: Math.round(this.timeLeftS),
+      // bieżąca okupacja strefy do statusu paska ZoneBar (faza 17); fronty z zoneSeconds wierszy
+      zone: { controlling: this.zoneControlling, occupied: this.zoneOccupied },
     });
   }
 

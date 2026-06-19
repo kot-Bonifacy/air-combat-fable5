@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: 0–16 (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP i pomiary
+Fazy ukończone: 0–17 (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP i pomiary
 na VPS po stronie użytkownika** — brak SSH z sesji). Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
@@ -80,7 +80,19 @@ maszyna `playerDeath` (`enterPlayerWreck`/`onLocalRespawn`/`updateDeathState`), 
 (LPM cyklicznie zmienia oglądany samolot, kamera za interpolowaną pozą), dym wraku (`WRECK_TIER`),
 wybuch `dying→dead` (lokalny i obcy, porównanie `lifeById`), `onKill` mały błysk przy zestrzeleniu/
 kolizji (pełny przy `'ground'`), `updateMouseAimEnabled` (mysz tylko w pościgowej + gdy żywy).
-Testy +6 (łącznie 394). **Deploy: f15 + f16 razem.** Następna: Faza 17 — kontrola strefy KotH.
+Testy +6 (łącznie 394). **Deploy: f15 + f16 razem.**
+Faza 17 (2026-06-19): parytet MP cz.4 — kontrola strefy KotH online jako DODATKOWY warunek
+zwycięstwa obok limitu zestrzeleń/czasu (jak SP), autorytatywnie na serwerze; **BEZ bumpu protokołu**
+(addytywne pola JSON w `standings`, wciąż v3). Decyzja użytkownika: tylko `ZoneBar`, bez znacznika 3D
+(szczyt góry = punkt orientacyjny). Serwer (`game-room.ts`): `ZoneControl` w `step()` po ruchu/kolizjach
+(FFA: frakcja = `id`, liczą się tylko żywi — świeży wrak strefy nie kontestuje); `checkMatchEnd` sprawdza
+`zone.captured` PRZED `evaluateFfa` → `endMatch(_, 'zone')`; `buildStandings` +`zoneSeconds`,
+`broadcastStandings` +`zone={controlling,occupied}`; `start()` resetuje strefę. Protokół: `MatchEndReason`
++`'zone'`, `StandingRow.zoneSeconds`, `ZoneStatus`, `StandingsMessage.zone`. Klient (`online-main.ts`):
+`ZoneBar` (reużyty z SP, własny DOM — `online.html` bez zmian), status z `standings.zone`, fronty z
+`zoneSeconds` (perspektywa-niezależnie), ukryty na wynikach/poza meczem; kolumna „Strefa" w tabeli
+(`match-ui.ts`). Boty kontestują bez zmian (`PATROL_WAYPOINTS` od f12). Testy `zone-control.test.ts`
++3 (łącznie 397). **Deploy: razem z f15+f16.** Następna: Faza 18 — tryb drużynowy.
 Decyzja 2026-06-18: blok parytetu MP↔SP (Fazy 14–18: wizualia/HUD → kolizje+wrak → obserwator →
 strefa KotH → tryb drużynowy) PRZED Bf 109; dotychczasowe fazy przesunięte (Bf 109→19, teren→20,
 dźwięk→21, uszkodzenia→22). Szczegóły: sekcja „Parytet multiplayera" w PLAN.md.
