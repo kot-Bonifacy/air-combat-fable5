@@ -1,7 +1,5 @@
 import {
   DIFFICULTY_LEVELS,
-  MATCH_DEFAULT_SCORE_LIMIT,
-  MATCH_SCORE_LIMIT_OPTIONS,
   MAX_NICK_LENGTH,
   MAX_PLAYERS_PER_ROOM,
   ROOM_CODE_LENGTH,
@@ -73,7 +71,7 @@ function markHelpSeenOnline(): void {
 
 export interface LobbyCallbacks {
   onQuickPlay(): void;
-  onCreateRoom(bots: number, difficulty: DifficultyLevel, scoreLimit: number, mode: MatchMode): void;
+  onCreateRoom(bots: number, difficulty: DifficultyLevel, mode: MatchMode): void;
   onJoinRoom(code: string): void;
   onRefreshList(): void;
   onStartMatch(): void;
@@ -99,8 +97,6 @@ export class LobbyUI {
   private readonly modeSelect: HTMLSelectElement;
   private readonly botCountSelect: HTMLSelectElement;
   private readonly difficultySelect: HTMLSelectElement;
-  private readonly scoreLimitSelect: HTMLSelectElement;
-  private readonly matchRow: HTMLDivElement;
   private readonly codeInput: HTMLInputElement;
   private readonly roomListEl: HTMLDivElement;
   private readonly errorEl: HTMLDivElement;
@@ -135,7 +131,8 @@ export class LobbyUI {
       this.beforeAction();
       this.cb.onQuickPlay();
     });
-    // tryb meczu hosta (faza 18): FFA albo drużynowy — drużynowy ukrywa limit zestrzeleń
+    // tryb meczu hosta (faza 18): FFA albo drużynowy. P1: oba eliminacyjne jak SP (bez limitu
+    // zestrzeleń i czasu), więc tryb różni się już tylko frakcjami (FFA = każdy osobno).
     const modeRow = el('div', 'lobby-row lobby-bot-row');
     const modeLabel = el('label', 'lobby-label');
     modeLabel.textContent = 'Tryb';
@@ -144,7 +141,6 @@ export class LobbyUI {
       MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
       'ffa',
     );
-    this.modeSelect.addEventListener('change', () => this.syncModeUI());
     modeRow.append(modeLabel, this.modeSelect);
 
     // konfiguracja botów hosta (faza 12): liczba 0..MAX_BOTS + poziom trudności
@@ -165,23 +161,12 @@ export class LobbyUI {
     );
     botRow.append(botLabel, this.botCountSelect, diffLabel, this.difficultySelect);
 
-    // limit zestrzeleń kończący mecz FFA (faza 13): host wybiera 5/10/20. W trybie drużynowym
-    // ukryty (faza 18: eliminacja jak SP — 1 życie/samolot, bez limitu zestrzeleń i czasu).
-    this.matchRow = el('div', 'lobby-row lobby-bot-row');
-    const matchLabel = el('label', 'lobby-label');
-    matchLabel.textContent = 'Mecz do';
-    this.scoreLimitSelect = selectEl(
-      'lobby-select lobby-select-bots',
-      MATCH_SCORE_LIMIT_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
-      String(MATCH_DEFAULT_SCORE_LIMIT),
-    );
-    const matchUnit = el('label', 'lobby-label');
-    matchUnit.textContent = 'zestrzeleń';
-    this.matchRow.append(matchLabel, this.scoreLimitSelect, matchUnit);
+    // P1 (2026-06-19): brak wiersza „Mecz do N zestrzeleń" — oba tryby są eliminacyjne jak SP
+    // (last-man-standing / ostatnia drużyna + strefa), bez limitu zestrzeleń i czasu.
 
     const createBtn = button('Utwórz pokój', 'lobby-btn', () => {
       this.beforeAction();
-      this.cb.onCreateRoom(this.botCount, this.difficulty, this.scoreLimit, this.mode);
+      this.cb.onCreateRoom(this.botCount, this.difficulty, this.mode);
     });
 
     const joinRow = el('div', 'lobby-row lobby-join-row');
@@ -219,7 +204,6 @@ export class LobbyUI {
       quickBtn,
       modeRow,
       botRow,
-      this.matchRow,
       createBtn,
       joinRow,
       this.errorEl,
@@ -228,7 +212,6 @@ export class LobbyUI {
       helpBtn,
       attributionEl(),
     );
-    this.syncModeUI(); // ustaw widoczność limitu zestrzeleń wg startowego trybu
 
     // --- poczekalnia ---
     this.waiting = el('div', 'lobby-screen lobby-waiting');
@@ -284,21 +267,12 @@ export class LobbyUI {
     return this.modeSelect.value === 'team' ? 'team' : 'ffa';
   }
 
-  /** Tryb drużynowy nie ma limitu zestrzeleń ani czasu (eliminacja, faza 18) → ukryj wiersz limitu. */
-  private syncModeUI(): void {
-    this.matchRow.style.display = this.mode === 'team' ? 'none' : '';
-  }
-
   private get botCount(): number {
     return Number(this.botCountSelect.value) || 0;
   }
 
   private get difficulty(): DifficultyLevel {
     return this.difficultySelect.value as DifficultyLevel;
-  }
-
-  private get scoreLimit(): number {
-    return Number(this.scoreLimitSelect.value) || MATCH_DEFAULT_SCORE_LIMIT;
   }
 
   private beforeAction(): void {

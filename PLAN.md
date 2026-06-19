@@ -16,15 +16,15 @@ Szczegółowy projekt modelu lotu: `docs/fizyka-lotu.md` — to dokument nadrzę
 Obok tego projektu leżą 4 wcześniejsze podejścia. Najdalej zaszedł `air-combat-opus4-7`
 (monorepo TS, ukończone fazy 0–5 z 18). Wnioski, które kształtują ten plan:
 
-| Lekcja z opus4-7 | Odpowiedź w tym projekcie |
-|---|---|
+| Lekcja z opus4-7                                                                                                                                                                   | Odpowiedź w tym projekcie                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Pełny momentowy model 6DoF (tabele Cl/Cd/Cm + momenty + tłumienia) przeszedł testy, ale strojenie czucia lotu było walką z układem sprzężonych współczynników „dobieranych na oko" | Model hybrydowy: **siły fizyczne + rotacja kinematyczna z kopertą osiągów**. Parametry strojenia = bezpośrednio odczuwalne wielkości (roll rate, limit G, czas zakrętu). Szczegóły: `docs/fizyka-lotu.md` |
-| Własna biblioteka matematyczna + niestandardowa konwencja osi = godziny debugowania kwaternionów i układów odniesienia | **Zakaz własnego matha** — wyłącznie `three` (Vector3/Quaternion), działa też w Node. Jedna konwencja osi (glTF: +Z nos, +Y góra) z helperami `getForward/getUp/getRight` i testami |
-| Brak narzędzi obserwowalności — błąd w siłach widoczny dopiero jako „dziwne latanie" | Narzędzia obowiązkowe i WCZESNE: strzałki sił 3D, telemetria, rejestrator lotu + wykresy, strażnik NaN, panel strojenia na żywo (fazy 1–3, nie „kiedyś") |
-| Projekt umarł na fazie 6 (teren: LOD, splatting, chmury) — zanim cokolwiek było grywalne (grywalność planowana na fazę 10) | **Grywalny dogfight z botem w fazie 6, publiczne demo w fazie 7.** Teren minimalny (ocean + wyspa) w fazie 4; ładny teren dopiero w fazie 20, z twardym timeboxem |
-| RK4 + 120 Hz — moc obliczeniowa i złożoność bez zysku dla simcade | Semi-implicit Euler @ 60 Hz, stały krok. Prostszy do debugowania, standard w grach |
-| Wymóg bitowego determinizmu klient↔serwer — kruchy i niepotrzebny | Determinizmu NIE wymagamy. Serwer jest autorytetem, prediction+reconciliation koryguje dryf |
-| Dobre wzorce, które przejmujemy | Monorepo `shared/client/server`, binarny protokół WS, autorytatywny serwer, tick rates rozdzielone, deploy wzorzec C z VPS, dyscyplina dokumentacji (CLAUDE.md + fazy + memory) |
+| Własna biblioteka matematyczna + niestandardowa konwencja osi = godziny debugowania kwaternionów i układów odniesienia                                                             | **Zakaz własnego matha** — wyłącznie `three` (Vector3/Quaternion), działa też w Node. Jedna konwencja osi (glTF: +Z nos, +Y góra) z helperami `getForward/getUp/getRight` i testami                       |
+| Brak narzędzi obserwowalności — błąd w siłach widoczny dopiero jako „dziwne latanie"                                                                                               | Narzędzia obowiązkowe i WCZESNE: strzałki sił 3D, telemetria, rejestrator lotu + wykresy, strażnik NaN, panel strojenia na żywo (fazy 1–3, nie „kiedyś")                                                  |
+| Projekt umarł na fazie 6 (teren: LOD, splatting, chmury) — zanim cokolwiek było grywalne (grywalność planowana na fazę 10)                                                         | **Grywalny dogfight z botem w fazie 6, publiczne demo w fazie 7.** Teren minimalny (ocean + wyspa) w fazie 4; ładny teren dopiero w fazie 20, z twardym timeboxem                                         |
+| RK4 + 120 Hz — moc obliczeniowa i złożoność bez zysku dla simcade                                                                                                                  | Semi-implicit Euler @ 60 Hz, stały krok. Prostszy do debugowania, standard w grach                                                                                                                        |
+| Wymóg bitowego determinizmu klient↔serwer — kruchy i niepotrzebny                                                                                                                  | Determinizmu NIE wymagamy. Serwer jest autorytetem, prediction+reconciliation koryguje dryf                                                                                                               |
+| Dobre wzorce, które przejmujemy                                                                                                                                                    | Monorepo `shared/client/server`, binarny protokół WS, autorytatywny serwer, tick rates rozdzielone, deploy wzorzec C z VPS, dyscyplina dokumentacji (CLAUDE.md + fazy + memory)                           |
 
 Kod referencyjny (do podglądania, nie kopiowania bez zrozumienia):
 `C:\AI\pozostałe\gry\symulator\air-combat-opus4-7\` — szczególnie `memory/project_phase*_decisions.md`.
@@ -33,27 +33,27 @@ Kod referencyjny (do podglądania, nie kopiowania bez zrozumienia):
 
 ## Decyzje techniczne
 
-| Obszar | Decyzja | Uzasadnienie |
-|---|---|---|
-| Klient | TypeScript 5 + Three.js + Vite | Zero instalacji dla graczy, najszybsza pętla iteracji w vibecodingu |
-| Serwer | Node.js 20+ + TypeScript + `ws` | Współdzielony kod fizyki, pasuje do infry VPS (wzorzec C) |
-| Architektura | Monorepo npm workspaces: `shared` / `client` / `server` | Jedna fizyka po obu stronach, zero duplikacji stałych |
-| Matematyka | `three` (Vector3, Quaternion, Matrix4) także w `shared` i na serwerze | Sprawdzona w boju biblioteka zamiast własnych bugów |
-| Fizyka | Hybryda simcade: siły 3DoF + rotacja kinematyczna z kopertą; 60 Hz semi-implicit Euler | Patrz `docs/fizyka-lotu.md` |
-| Parametry samolotów | Pliki JSON w `shared/planes/` + schema | Strojenie bez rekompilacji, presety, diff-owalne |
-| Multiplayer | Autorytatywny serwer, client prediction + reconciliation, snapshot interpolation, lag compensation | Standard dla fizyki ciągłej |
-| Tick rates | Fizyka 60 Hz, snapshot 30 Hz, input 60 Hz | Wystarczające dla simcade; tanie dla współdzielonego VPS |
-| Protokół | WebSocket binarny (DataView); JSON tylko w lobby/handshake | <100 KB/s na klienta przy 8 graczach |
-| Sterowanie | Mysz (mouse-aim + instruktor) + klawiatura | Wzorzec WT; gamepad/HOTAS w backlogu |
-| Kamera | 3rd person chase | Brak kokpitów w MVP |
-| Boty | FSM sterujące przez instruktora (jak gracz) | Bot automatycznie respektuje kopertę — nie umie „oszukać" fizyki |
-| Uszkodzenia | Globalne HP w MVP; modułowe w fazie 22 | Najpierw fundament |
-| Świat | Arena 20×20 km: ocean + wyspa, start w powietrzu | Minimalny koszt, maksimum grywalności |
-| Konta | Stateless: nick + pokój. Brak DB | Prostota; konta w backlogu |
-| Samoloty | MVP: Spitfire Mk I; faza 19: Bf 109 E | Klasyczny matchup turn-fighter vs energy-fighter |
-| Assety 3D | Sketchfab / Poly Haven, CC0/CC-BY z atrybucją w `assets/LICENSES.md` | Twardy niezmiennik z CLAUDE.md |
-| Deploy | Docker, wzorzec C; port **8087**; subdomena **dogfight.tatanga.eu** (do potwierdzenia) | Zgodnie z `C:\AI\vps_home_pl_konfiguracja.md` |
-| Repo | `git init` w fazie 0, commit po każdej fazie | Historia faz = punkty powrotu |
+| Obszar              | Decyzja                                                                                            | Uzasadnienie                                                        |
+| ------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Klient              | TypeScript 5 + Three.js + Vite                                                                     | Zero instalacji dla graczy, najszybsza pętla iteracji w vibecodingu |
+| Serwer              | Node.js 20+ + TypeScript + `ws`                                                                    | Współdzielony kod fizyki, pasuje do infry VPS (wzorzec C)           |
+| Architektura        | Monorepo npm workspaces: `shared` / `client` / `server`                                            | Jedna fizyka po obu stronach, zero duplikacji stałych               |
+| Matematyka          | `three` (Vector3, Quaternion, Matrix4) także w `shared` i na serwerze                              | Sprawdzona w boju biblioteka zamiast własnych bugów                 |
+| Fizyka              | Hybryda simcade: siły 3DoF + rotacja kinematyczna z kopertą; 60 Hz semi-implicit Euler             | Patrz `docs/fizyka-lotu.md`                                         |
+| Parametry samolotów | Pliki JSON w `shared/planes/` + schema                                                             | Strojenie bez rekompilacji, presety, diff-owalne                    |
+| Multiplayer         | Autorytatywny serwer, client prediction + reconciliation, snapshot interpolation, lag compensation | Standard dla fizyki ciągłej                                         |
+| Tick rates          | Fizyka 60 Hz, snapshot 30 Hz, input 60 Hz                                                          | Wystarczające dla simcade; tanie dla współdzielonego VPS            |
+| Protokół            | WebSocket binarny (DataView); JSON tylko w lobby/handshake                                         | <100 KB/s na klienta przy 8 graczach                                |
+| Sterowanie          | Mysz (mouse-aim + instruktor) + klawiatura                                                         | Wzorzec WT; gamepad/HOTAS w backlogu                                |
+| Kamera              | 3rd person chase                                                                                   | Brak kokpitów w MVP                                                 |
+| Boty                | FSM sterujące przez instruktora (jak gracz)                                                        | Bot automatycznie respektuje kopertę — nie umie „oszukać" fizyki    |
+| Uszkodzenia         | Globalne HP w MVP; modułowe w fazie 22                                                             | Najpierw fundament                                                  |
+| Świat               | Arena 20×20 km: ocean + wyspa, start w powietrzu                                                   | Minimalny koszt, maksimum grywalności                               |
+| Konta               | Stateless: nick + pokój. Brak DB                                                                   | Prostota; konta w backlogu                                          |
+| Samoloty            | MVP: Spitfire Mk I; faza 19: Bf 109 E                                                              | Klasyczny matchup turn-fighter vs energy-fighter                    |
+| Assety 3D           | Sketchfab / Poly Haven, CC0/CC-BY z atrybucją w `assets/LICENSES.md`                               | Twardy niezmiennik z CLAUDE.md                                      |
+| Deploy              | Docker, wzorzec C; port **8087**; subdomena **dogfight.tatanga.eu** (do potwierdzenia)             | Zgodnie z `C:\AI\vps_home_pl_konfiguracja.md`                       |
+| Repo                | `git init` w fazie 0, commit po każdej fazie                                                       | Historia faz = punkty powrotu                                       |
 
 ---
 
@@ -73,31 +73,31 @@ Kod referencyjny (do podglądania, nie kopiowania bez zrozumienia):
 
 Każda faza = osobny plik, osobna sesja vibecodingu, mierzalne kryterium ukończenia.
 
-| # | Plik | Nazwa | Kamień milowy |
-|---|---|---|---|
-| 0 | `docs/phases/faza-00.md` | Bootstrap: monorepo + hello WebSocket | szkielet działa |
-| 1 | `docs/phases/faza-01.md` | Fundament fizyki + obserwowalność | spadający sześcian, strzałki sił, złote testy |
-| 2 | `docs/phases/faza-02.md` | Model lotu cz.1 — siły | samolot lata; metryki: V_max, V_stall, trym |
-| 3 | `docs/phases/faza-03.md` | Model lotu cz.2 — koperta, instruktor, strojenie | **„5 minut przyjemnego latania"** |
-| 4 | `docs/phases/faza-04.md` | Świat minimalny: ocean + wyspa + kolizje | crash = wybuch + respawn |
-| 5 | `docs/phases/faza-05.md` | Uzbrojenie, balistyka, HP | zestrzelenie celu |
-| 6 | `docs/phases/faza-06.md` | Bot AI (FSM przez instruktora) | **pierwszy grywalny dogfight (offline)** |
-| 7 | `docs/phases/faza-07.md` | Wczesny deploy: demo single-player na VPS | **publiczny link dla znajomych** |
-| 8 | `docs/phases/faza-08.md` | Multiplayer cz.1: protokół binarny + serwer autorytatywny | 1 klient lata „przez serwer" |
-| 9 | `docs/phases/faza-09.md` | Multiplayer cz.2: prediction + interpolacja | 2 klientów smooth @ 100 ms ping |
-| 10 | `docs/phases/faza-10.md` | Lobby i pokoje | 2 osoby z 2 komputerów w 1 meczu |
-| 11 | `docs/phases/faza-11.md` | Walka sieciowa: serwerowy hit detection + lag compensation | „co widzę, to trafiam" |
-| 12 | `docs/phases/faza-12.md` | Boty na serwerze | mecz 1 gracz + 3 boty |
-| 13 | `docs/phases/faza-13.md` | Pętla meczu: FFA, scoreboard, respawn + deploy MP | **publiczny multiplayer** |
-| 14 | `docs/phases/faza-14.md` | Parytet MP cz.1 — wizualia i HUD online | wybuchy, dym, markery, reticle, pełny HUD online |
-| 15 | `docs/phases/faza-15.md` | Parytet MP cz.2 — kolizje + spadający wrak (serwer) | model śmierci jak w SP; domknięty kod `collision`/`dying` |
-| 16 | `docs/phases/faza-16.md` | Parytet MP cz.3 — obserwator + sterowany wrak (klient) | brak „pustego kadru" po zestrzeleniu |
-| 17 | `docs/phases/faza-17.md` | Parytet MP cz.4 — kontrola strefy KotH (serwer) | główny cel gry także online |
-| 18 | `docs/phases/faza-18.md` | Parytet MP cz.5 — tryb drużynowy | **multiplayer ma parytet z singleplayer** |
-| 19 | `docs/phases/faza-19.md` | Drugi samolot + balans (Bf 109 E) | asymetryczny matchup |
-| 20 | `docs/phases/faza-20.md` | Teren v2 (LOD, detale) — TIMEBOX | ładniej, bez regresji fps |
-| 21 | `docs/phases/faza-21.md` | Dźwięk i efekty | pełne udźwiękowienie |
-| 22 | `docs/phases/faza-22.md` | Modułowe uszkodzenia | odstrzelone skrzydło = korkociąg |
+| #   | Plik                     | Nazwa                                                      | Kamień milowy                                             |
+| --- | ------------------------ | ---------------------------------------------------------- | --------------------------------------------------------- |
+| 0   | `docs/phases/faza-00.md` | Bootstrap: monorepo + hello WebSocket                      | szkielet działa                                           |
+| 1   | `docs/phases/faza-01.md` | Fundament fizyki + obserwowalność                          | spadający sześcian, strzałki sił, złote testy             |
+| 2   | `docs/phases/faza-02.md` | Model lotu cz.1 — siły                                     | samolot lata; metryki: V_max, V_stall, trym               |
+| 3   | `docs/phases/faza-03.md` | Model lotu cz.2 — koperta, instruktor, strojenie           | **„5 minut przyjemnego latania"**                         |
+| 4   | `docs/phases/faza-04.md` | Świat minimalny: ocean + wyspa + kolizje                   | crash = wybuch + respawn                                  |
+| 5   | `docs/phases/faza-05.md` | Uzbrojenie, balistyka, HP                                  | zestrzelenie celu                                         |
+| 6   | `docs/phases/faza-06.md` | Bot AI (FSM przez instruktora)                             | **pierwszy grywalny dogfight (offline)**                  |
+| 7   | `docs/phases/faza-07.md` | Wczesny deploy: demo single-player na VPS                  | **publiczny link dla znajomych**                          |
+| 8   | `docs/phases/faza-08.md` | Multiplayer cz.1: protokół binarny + serwer autorytatywny  | 1 klient lata „przez serwer"                              |
+| 9   | `docs/phases/faza-09.md` | Multiplayer cz.2: prediction + interpolacja                | 2 klientów smooth @ 100 ms ping                           |
+| 10  | `docs/phases/faza-10.md` | Lobby i pokoje                                             | 2 osoby z 2 komputerów w 1 meczu                          |
+| 11  | `docs/phases/faza-11.md` | Walka sieciowa: serwerowy hit detection + lag compensation | „co widzę, to trafiam"                                    |
+| 12  | `docs/phases/faza-12.md` | Boty na serwerze                                           | mecz 1 gracz + 3 boty                                     |
+| 13  | `docs/phases/faza-13.md` | Pętla meczu: FFA, scoreboard, respawn + deploy MP          | **publiczny multiplayer**                                 |
+| 14  | `docs/phases/faza-14.md` | Parytet MP cz.1 — wizualia i HUD online                    | wybuchy, dym, markery, reticle, pełny HUD online          |
+| 15  | `docs/phases/faza-15.md` | Parytet MP cz.2 — kolizje + spadający wrak (serwer)        | model śmierci jak w SP; domknięty kod `collision`/`dying` |
+| 16  | `docs/phases/faza-16.md` | Parytet MP cz.3 — obserwator + sterowany wrak (klient)     | brak „pustego kadru" po zestrzeleniu                      |
+| 17  | `docs/phases/faza-17.md` | Parytet MP cz.4 — kontrola strefy KotH (serwer)            | główny cel gry także online                               |
+| 18  | `docs/phases/faza-18.md` | Parytet MP cz.5 — tryb drużynowy                           | **multiplayer ma parytet z singleplayer**                 |
+| 19  | `docs/phases/faza-19.md` | Drugi samolot + balans (Bf 109 E)                          | asymetryczny matchup                                      |
+| 20  | `docs/phases/faza-20.md` | Teren v2 (LOD, detale) — TIMEBOX                           | ładniej, bez regresji fps                                 |
+| 21  | `docs/phases/faza-21.md` | Dźwięk i efekty                                            | pełne udźwiękowienie                                      |
+| 22  | `docs/phases/faza-22.md` | Modułowe uszkodzenia                                       | odstrzelone skrzydło = korkociąg                          |
 
 ### Backlog (po fazie 22, kolejność do ustalenia)
 
@@ -117,6 +117,7 @@ klienta, potem model śmierci na serwerze i kliencka warstwa śmierci, na końcu
 (serwer + lobby + protokół).
 
 Decyzje projektowe (2026-06-18, doprecyzowanie):
+
 - **Strefa i drużyny jako warstwa na FFA (jak SP)** — strefa KotH to DODATKOWY warunek zwycięstwa
   obok limitu zestrzeleń/czasu; tryb drużynowy to OPCJA pokoju (host wybiera FFA/Drużynowy). Nie
   robimy osobnych, rozłącznych trybów — mecz łączy warunki, jak w SP.
@@ -126,6 +127,7 @@ Decyzje projektowe (2026-06-18, doprecyzowanie):
   model `'dying'` na serwerze (Faza 15) MUSI poprzedzać kliencką warstwę śmierci (Faza 16).
 
 Ustalenia techniczne kształtujące plan:
+
 - Klient online **liczy pełną fizykę lokalnie** (`Predictor.sim` → `stepPilotedPlane` z
   instruktorem i maszyną G-LOC), więc HUD-G, stall, greyout, przechył/pochylenie są dostępne
   **bez zmiany protokołu**. Wyjątek: **amunicja** (predykcja nie symuluje ognia) — wymaga
@@ -136,18 +138,19 @@ Ustalenia techniczne kształtujące plan:
   dołożyć.
 
 Wykryte luki/niespójności do zaadresowania (martwy kod):
+
 - `KillCause 'collision'` jest w protokole i obsłużony przez klienta, ale **serwer nigdy go nie
   emituje** (brak wykrywania kolizji samolotów) → Faza 15.
 - Faza życia `'dying'` (spadający wrak) jest w protokole, lecz serwer ustawia od razu `'dead'`
   → różny model śmierci MP vs SP → Faza 15.
 
-| # | Nazwa | Warstwa | Protokół | Kluczowe elementy |
-|---|---|---|---|---|
-| 14 | Wizualia i HUD online | klient (+1 pole snap.) | bump (amunicja) | `Explosions`, `SmokeTrails`, `MuzzleFlash`, `EnemyMarker`+spotting, reticle+nose-marker, ostrzeżenie granicy, `RosterOverlay`, pełny HUD-G/stall/greyout |
-| 15 | Model śmierci na serwerze: kolizje + spadający wrak | serwer | bez bumpu (`'dying'`/`'collision'` już w protokole) | `prevPos` per encja, `resolvePlaneCollisions`+emisja `collision`, model `'dying'`+`stepWreck` serwerowo, `wreckImpact`→`dead` |
-| 16 | Kliencka warstwa śmierci: obserwator + sterowany wrak | klient | bez zmian | render spadającego wraku + dym wraku, lokalna predykcja `stepWreck` dla `'dying'`, sterowanie wrakiem + `DownedOverlay` (obserwator/koniec), tryb obserwatora (cykl LPM), kamera orbitalna (C), wybuch na `dying→dead` |
-| 17 | Kontrola strefy KotH (dodatkowy warunek, jak SP) | serwer + klient | +stan strefy w JSON `standings` | `ZoneControl` autorytatywnie, warunek `'zone'` OBOK limitu zestrzeleń/czasu, `ZoneBar`+marker strefy (boty już kontestują) |
-| 18 | Tryb drużynowy (opcja pokoju) | serwer + lobby + klient | +tryb/drużyny w `CreateRoom`, frakcje w JSON | frakcje serwerowo, friendly fire wg drużyn, wybór FFA/Drużynowy w lobby, kolory markerów wróg/sojusznik, scoreboard drużynowy (możliwy podział na 2 sesje) |
+| #   | Nazwa                                                 | Warstwa                 | Protokół                                            | Kluczowe elementy                                                                                                                                                                                                      |
+| --- | ----------------------------------------------------- | ----------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 14  | Wizualia i HUD online                                 | klient (+1 pole snap.)  | bump (amunicja)                                     | `Explosions`, `SmokeTrails`, `MuzzleFlash`, `EnemyMarker`+spotting, reticle+nose-marker, ostrzeżenie granicy, `RosterOverlay`, pełny HUD-G/stall/greyout                                                               |
+| 15  | Model śmierci na serwerze: kolizje + spadający wrak   | serwer                  | bez bumpu (`'dying'`/`'collision'` już w protokole) | `prevPos` per encja, `resolvePlaneCollisions`+emisja `collision`, model `'dying'`+`stepWreck` serwerowo, `wreckImpact`→`dead`                                                                                          |
+| 16  | Kliencka warstwa śmierci: obserwator + sterowany wrak | klient                  | bez zmian                                           | render spadającego wraku + dym wraku, lokalna predykcja `stepWreck` dla `'dying'`, sterowanie wrakiem + `DownedOverlay` (obserwator/koniec), tryb obserwatora (cykl LPM), kamera orbitalna (C), wybuch na `dying→dead` |
+| 17  | Kontrola strefy KotH (dodatkowy warunek, jak SP)      | serwer + klient         | +stan strefy w JSON `standings`                     | `ZoneControl` autorytatywnie, warunek `'zone'` OBOK limitu zestrzeleń/czasu, `ZoneBar`+marker strefy (boty już kontestują)                                                                                             |
+| 18  | Tryb drużynowy (opcja pokoju)                         | serwer + lobby + klient | +tryb/drużyny w `CreateRoom`, frakcje w JSON        | frakcje serwerowo, friendly fire wg drużyn, wybór FFA/Drużynowy w lobby, kolory markerów wróg/sojusznik, scoreboard drużynowy (możliwy podział na 2 sesje)                                                             |
 
 Niezmienniki w mocy: serwer autorytetem (5), pakiety gry binarne (6), `shared` bez Node/DOM (9),
 `wss://` na produkcji (10), walidacja każdego inputu (11). Pliki `faza-14..18.md` powstają w

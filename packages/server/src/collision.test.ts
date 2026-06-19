@@ -81,24 +81,33 @@ const killsIn = (events: GameEvent[]): KillEvent[] =>
 describe('serwer — kolizje samolot↔samolot (faza 15)', () => {
   it('zwarcie dwóch płatowców: oba stają się spadającymi wrakami (cause collision, bez kredytu)', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = 99; // nie kończ meczu w trakcie testu
     const am = eventMember();
     const a = add(room, am, 'A');
     const b = add(room, eventMember(), 'B');
+    // bystanderzy daleko (osobne frakcje = osobne id): po zderzeniu A/B wciąż żyją ≥2 frakcje,
+    // więc mecz NIE kończy się eliminacją (P1) i event KILL zdąży się rozesłać przed końcem
+    const c = add(room, eventMember(), 'C');
+    const d = add(room, eventMember(), 'D');
     room.start();
     const scratch = new Uint8Array(room.snapshotCapacityBytes);
+    const parkBystanders = (): void => {
+      repose(room, c, [9000, 5000, 0]);
+      repose(room, d, [-9000, 5000, 0]);
+    };
 
     // odczekaj ochronę respawnu (SPAWN_PROTECTION_S = 3 s), trzymając maszyny daleko od siebie
     for (let i = 0; i < 200; i++) {
       repose(room, a, [0, 5000, 0]);
       repose(room, b, [0, 5000, 300]);
+      parkBystanders();
       room.step(FIXED_DT_S);
     }
     // zwarcie: oba w jednym punkcie (sfery kolizji 2×3 m = 6 m się przenikają → zderzenie)
     repose(room, a, [0, 5000, 0]);
     repose(room, b, [0, 5000, 2]);
+    parkBystanders();
     room.step(FIXED_DT_S);
-    room.sendSnapshots(scratch); // flush eventów do membera
+    room.sendSnapshots(scratch); // flush eventów do membera (mecz wciąż 'playing' — C,D żyją)
 
     expect(stateOf(room, a).life).toBe('dying');
     expect(stateOf(room, b).life).toBe('dying');
@@ -106,6 +115,7 @@ describe('serwer — kolizje samolot↔samolot (faza 15)', () => {
     expect(room.deathsOf(b)).toBe(1);
     expect(room.killsOf(a)).toBe(0); // kolizja nie daje zestrzelenia
     expect(room.killsOf(b)).toBe(0);
+    expect(room.state).toBe('playing'); // C i D wciąż żyją → brak eliminacji
 
     const kills = killsIn(am.events);
     expect(kills.length).toBe(2);
@@ -114,7 +124,6 @@ describe('serwer — kolizje samolot↔samolot (faza 15)', () => {
 
   it('maszyny daleko od siebie nie zderzają się (brak fałszywych kolizji)', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = 99;
     const a = add(room, eventMember(), 'A');
     const b = add(room, eventMember(), 'B');
     room.start();
@@ -150,20 +159,24 @@ describe('serwer — kolizje samolot↔samolot (faza 15)', () => {
 describe('serwer — model spadającego wraku (faza 15)', () => {
   it('zestrzelenie w powietrzu → ofiara to spadający wrak (dying), nie od razu martwa; event KILL cause air', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = 99;
     const sm = eventMember();
     const shooter = add(room, sm, 'A');
     const target = add(room, eventMember(), 'B');
+    // bystander daleko: po śmierci B wciąż żyją 2 frakcje (shooter + C) → mecz nie kończy się
+    // eliminacją (P1) i event KILL 'air' zdąży się rozesłać
+    const bystander = add(room, eventMember(), 'C');
     room.start();
     const scratch = new Uint8Array(room.snapshotCapacityBytes);
     const sPos: [number, number, number] = [0, 5000, 0];
     const tPos: [number, number, number] = [0, 5000, 200]; // dystans zbieżności luf
+    const parkBystander = (): void => repose(room, bystander, [9000, 5000, 0]);
 
     room.applyInput(target, input({ fire: false }));
     // odczekaj ochronę respawnu (190 ticków), trzymając pozy
     for (let i = 0; i < 190; i++) {
       repose(room, shooter, sPos);
       repose(room, target, tPos);
+      parkBystander();
       room.step(FIXED_DT_S);
     }
     // ostrzał aż cel padnie
@@ -172,10 +185,11 @@ describe('serwer — model spadającego wraku (faza 15)', () => {
     while (stateOf(room, target).life === 'alive' && ticks < 600) {
       repose(room, shooter, sPos);
       repose(room, target, tPos);
+      parkBystander();
       room.step(FIXED_DT_S);
       ticks++;
     }
-    room.sendSnapshots(scratch);
+    room.sendSnapshots(scratch); // mecz wciąż 'playing' (C żyje) → event się rozsyła
 
     expect(stateOf(room, target).life).toBe('dying'); // spadający wrak, NIE 'dead'
     expect(room.deathsOf(target)).toBe(1);
@@ -187,8 +201,7 @@ describe('serwer — model spadającego wraku (faza 15)', () => {
 
   it('wrak spada, po uderzeniu w ziemię staje się martwy, a po RESPAWN_DELAY_S respawnuje', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = 99;
-    const id = add(room, eventMember(), 'A');
+    const id = add(room, eventMember(), 'A'); // solo: 1 frakcja → brak eliminacji (respawn z late-join/żyć)
     room.start();
     // ręcznie: nisko nad ziemią, lecący w dół → szybkie uderzenie
     const s = stateOf(room, id);
@@ -218,7 +231,6 @@ describe('serwer — model spadającego wraku (faza 15)', () => {
 
   it('wrak GRACZA może strzelać (parytet z SP): amunicja maleje i leci event MUZZLE', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = 99;
     const m = eventMember();
     const id = add(room, m, 'A');
     room.start();
@@ -244,7 +256,6 @@ describe('serwer — model spadającego wraku (faza 15)', () => {
 
   it('wrak BOTA nie strzela (jak w SP — tylko gracz pruje z wraku)', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = 99;
     const botId = room.addBot('normalny');
     room.start();
     const s = stateOf(room, botId);

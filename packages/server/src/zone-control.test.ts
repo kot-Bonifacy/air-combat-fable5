@@ -101,11 +101,10 @@ describe('KotH na serwerze — przejęcie strefy', () => {
 describe('KotH na serwerze — strefa sporna i standings', () => {
   it('dwie różne frakcje w strefie → sporna: liczniki nie rosną, mecz nie kończy się przez strefę', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = 99; // nie kończ meczu przez zestrzelenia w trakcie testu
     const aMember = recordingMember();
     const a = add(room, aMember, 'A');
     const b = add(room, recordingMember(), 'B');
-    room.start();
+    room.start(); // P1: brak limitu zestrzeleń — obaj żywi, strefa sporna → mecz nie kończy się
 
     // obaj w strefie, ale 500 m od siebie (bez kolizji samolot↔samolot) → sporna pauza
     for (let i = 0; i < 300; i++) {

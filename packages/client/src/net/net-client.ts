@@ -206,8 +206,8 @@ export class NetClient {
     this.sendControl({ t: 'listRooms' });
   }
 
-  createRoom(bots = 0, difficulty?: DifficultyLevel, scoreLimit?: number, mode?: MatchMode): void {
-    this.sendControl({ t: 'createRoom', bots, difficulty, scoreLimit, mode });
+  createRoom(bots = 0, difficulty?: DifficultyLevel, mode?: MatchMode): void {
+    this.sendControl({ t: 'createRoom', bots, difficulty, mode });
   }
 
   joinRoom(code: string): void {

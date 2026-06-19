@@ -1,11 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {
-  MATCH_DEFAULT_SCORE_LIMIT,
   RECONNECT_WINDOW_MS,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
   clampMatchMode,
-  clampScoreLimit,
   isValidRoomCode,
   type DifficultyLevel,
   type MatchMode,
@@ -93,11 +91,9 @@ export class Lobby {
     member: RoomMember,
     botCount = 0,
     difficulty: DifficultyLevel = QUICKPLAY_DIFFICULTY,
-    scoreLimit: number = MATCH_DEFAULT_SCORE_LIMIT,
     mode: MatchMode = 'ffa',
   ): { room: GameRoom; playerId: number } {
     const room = new GameRoom(this.uniqueCode(), this.seed, this.onRoomError, this.onRoomInfo);
-    room.scoreLimit = clampScoreLimit(scoreLimit);
     // tryb meczu MUSI być ustawiony PRZED addPlayer: enterWorld przydziela frakcję wg trybu (faza 18)
     room.mode = clampMatchMode(mode);
     this.rooms.set(room.code, room);

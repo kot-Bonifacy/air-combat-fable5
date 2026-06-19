@@ -141,19 +141,8 @@ export const ASSIST_POINTS = 50;
  */
 export const ZONE_POINTS_PER_SECOND = 1;
 
-// --- pętla meczu sieciowego (faza 13: FFA + scoreboard + respawn) ---
-
-/**
- * Dozwolone limity zestrzeleń kończące mecz FFA (host wybiera; faza-13.md). Serwer
- * klampuje wartość spoza listy do najbliższej dozwolonej (brak zaufania do klienta).
- */
-export const MATCH_SCORE_LIMIT_OPTIONS: readonly number[] = [5, 10, 20];
-
-/** Domyślny limit zestrzeleń (Szybka gra / brak wyboru hosta). */
-export const MATCH_DEFAULT_SCORE_LIMIT = 10;
-
-/** Twardy limit czasu meczu FFA [s] — 15 min (co pierwsze: limit punktów albo czasu). */
-export const MATCH_TIME_LIMIT_S = 15 * 60;
+// --- pętla meczu sieciowego (faza 13: scoreboard + respawn; P1 2026-06-19: oba tryby
+//     eliminacyjne jak SP — bez limitu zestrzeleń i czasu, last-man-standing / ostatnia drużyna) ---
 
 /**
  * Czas wyświetlania ekranu wyników w stanie 'ended', zanim pokój sam wróci do

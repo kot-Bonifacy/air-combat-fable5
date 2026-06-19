@@ -505,8 +505,8 @@ function playerName(id: number): string {
 // --- lobby UI + sieć ---
 const lobby = new LobbyUI({
   onQuickPlay: () => withConnection((c) => c.quickPlay()),
-  onCreateRoom: (bots, difficulty, scoreLimit, mode) =>
-    withConnection((c) => c.createRoom(bots, difficulty, scoreLimit, mode)),
+  onCreateRoom: (bots, difficulty, mode) =>
+    withConnection((c) => c.createRoom(bots, difficulty, mode)),
   onJoinRoom: (code) => withConnection((c) => c.joinRoom(code)),
   onRefreshList: () => withConnection((c) => c.requestRoomList()),
   onStartMatch: () => net?.startMatch(),
@@ -722,7 +722,7 @@ function createNet(nick: string, token: string | null): NetClient {
     latestStandings = msg;
     matchMode = msg.mode;
     rebuildFactions(msg.rows);
-    scoreboard.update(msg.rows, msg.scoreLimit, msg.timeLeftS, msg.mode, localFaction);
+    scoreboard.update(msg.rows, msg.mode, localFaction);
   };
   c.onMatchEnded = (msg) => onMatchEnded(msg);
   c.onServerShutdown = () => {
@@ -883,16 +883,15 @@ function updateHud(): void {
   });
 }
 
-/** Wiersze dodatkowe HUD online: pokój, wynik/zegar meczu, HP, ping + podpowiedzi sterowania. */
+/** Wiersze dodatkowe HUD online: pokój, własne zestrzelenia, HP, ping + podpowiedzi sterowania. */
 function hudExtraLines(): string[] {
   const lines: string[] = ['', hudRow('pokój', roomView?.code ?? '—')];
   if (latestStandings) {
+    // P1 (2026-06-19): oba tryby eliminacyjne, bez limitu zestrzeleń i czasu → brak linii „mecz N/N"
+    // ani zegara; pełna tabela na Tab. Pokazujemy tylko własny licznik zestrzeleń.
     const localId = net?.localPlayerId ?? null;
     const myKills = latestStandings.rows.find((r) => r.id === localId)?.kills ?? 0;
-    lines.push(
-      hudRow('mecz', `${String(myKills)} / ${String(latestStandings.scoreLimit)}`, 'zestrz.'),
-      hudRow('czas', formatClock(latestStandings.timeLeftS)),
-    );
+    lines.push(hudRow('zestrz.', String(myKills)));
   }
   lines.push(
     hudRow('HP', (localHealthFrac * 100).toFixed(0), '%'),
@@ -902,12 +901,6 @@ function hudExtraLines(): string[] {
     'WSAD/strzałki ster • Q/E kierunek • Shift/Ctrl gaz • LPM/Spacja ogień • [Tab] tabela • [N] sieć',
   );
   return lines;
-}
-
-/** MM:SS dla zegara meczu w HUD. */
-function formatClock(totalS: number): string {
-  const s = Math.max(0, Math.floor(totalS));
-  return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, '0')}`;
 }
 
 function updateConnOverlay(): void {
@@ -1057,8 +1050,8 @@ function updateHudOverlays(): void {
     noseMarkerEl.style.display = 'none';
   }
 
-  // alert pełnoekranowy: obserwator / wrak (środek czysty — sterowanie + nakładka) / oczekiwanie
-  // na respawn > ostrzeżenie o granicy areny (tylko żywy gracz)
+  // alert pełnoekranowy: obserwator / wrak (środek czysty — sterowanie + nakładka) / zestrzelony
+  // (P1: brak respawnu — overlay daje obserwatora/wyjście) > ostrzeżenie o granicy (tylko żywy gracz)
   if (playerDeath === 'spectating') {
     alertEl.textContent = spectatableCount() > 1 ? 'OBSERWUJESZ   [LPM] zmień samolot' : 'OBSERWUJESZ';
     alertEl.className = 'crash';
@@ -1066,7 +1059,7 @@ function updateHudOverlays(): void {
   } else if (wreck) {
     alertEl.style.opacity = '0'; // komunikat i akcje są w nakładce u dołu
   } else if (!localAlive) {
-    alertEl.textContent = 'ZESTRZELONY — oczekiwanie na respawn';
+    alertEl.textContent = 'ZESTRZELONY';
     alertEl.className = 'crash';
     alertEl.style.opacity = '1';
   } else {
@@ -1136,12 +1129,11 @@ function rosterRows(): readonly RosterRow[] {
   const localId = net?.localPlayerId ?? null;
   return latestStandings.rows.map((r: StandingRow): RosterRow => {
     const isPlayer = r.id === localId;
-    // drużynowy: wyeliminowany = wyczerpał życia (MATCH_LIVES) i nie żyje ani nie spada (wrak/respawn
-    // = wciąż w walce, jak SP). FFA: respawn bez limitu żyć → nigdy „stracony". Fazę życia bierzemy
-    // z renderowanego stanu encji (lifeById; snapshot binarny nie niesie liczby żyć).
+    // P1 (2026-06-19): OBA tryby eliminacyjne → wyeliminowany = wyczerpał życia (MATCH_LIVES) i nie
+    // żyje ani nie spada (wrak = wciąż w walce, jak SP). Fazę życia bierzemy z renderowanego stanu
+    // encji (lifeById; snapshot binarny nie niesie liczby żyć), niezależnie od trybu.
     const life = lifeById.get(r.id);
-    const isLost =
-      matchMode === 'team' && r.deaths >= MATCH_LIVES && life !== 'alive' && life !== 'dying';
+    const isLost = r.deaths >= MATCH_LIVES && life !== 'alive' && life !== 'dying';
     return {
       name: r.nick,
       kills: r.kills,

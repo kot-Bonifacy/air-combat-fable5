@@ -585,18 +585,15 @@ export interface ListRoomsMessage {
 }
 
 /** Klient → serwer: utwórz nowy pokój (zostajesz hostem). Host konfiguruje boty (faza 12)
- *  i limit zestrzeleń meczu FFA (faza 13). */
+ *  i tryb meczu (faza 18). */
 export interface CreateRoomMessage {
   t: 'createRoom';
   /** Liczba botów do dołożenia (0..MAX_BOTS_PER_ROOM). Brak/poza zakresem → serwer klampuje. */
   bots?: number;
   /** Poziom trudności botów; brak/nieznany → serwerowy domyślny. */
   difficulty?: DifficultyLevel;
-  /** Limit zestrzeleń kończący mecz FFA (5/10/20). Brak/poza listą → serwer klampuje (faza 13).
-   *  Ignorowany w trybie drużynowym (eliminacja jak SP: 1 życie/samolot, bez limitu czasu). */
-  scoreLimit?: number;
-  /** Tryb meczu (faza 18): 'ffa' (deathmatch z respawnami) albo 'team' (drużynowy, eliminacja).
-   *  Brak/nieznany → serwer klampuje do 'ffa' (clampMatchMode, niezmiennik nr 11). */
+  /** Tryb meczu (faza 18): 'ffa' albo 'team'. Oba eliminacyjne jak SP (P1 2026-06-19: bez limitu
+   *  zestrzeleń i czasu). Brak/nieznany → serwer klampuje do 'ffa' (clampMatchMode, niezm. nr 11). */
   mode?: MatchMode;
 }
 
@@ -665,12 +662,12 @@ export interface MatchStartedMessage {
 }
 
 /**
- * Powód zakończenia meczu: limit zestrzeleń (`'score'`), limit czasu (`'time'`) albo przejęcie
- * strefy kontroli (`'zone'`, faza 17 — KotH jako dodatkowy warunek zwycięstwa). Tryb drużynowy
- * (faza 18) używa `'score'` także dla eliminacji ostatniej drużyny (klient rozróżnia po `mode`);
- * `'time'` w drużynowym nie występuje (brak limitu czasu, parytet z SP).
+ * Powód zakończenia meczu: eliminacja (`'score'` — ostatni ocalały w FFA / ostatnia drużyna)
+ * albo przejęcie strefy kontroli (`'zone'`, faza 17 — KotH jako dodatkowy warunek zwycięstwa).
+ * P1 (2026-06-19): oba tryby eliminacyjne jak SP → BRAK limitu czasu (`'time'` usunięty);
+ * klient rozróżnia FFA↔drużynowy po `mode`.
  */
-export type MatchEndReason = 'score' | 'time' | 'zone';
+export type MatchEndReason = 'score' | 'zone';
 
 /** Jeden wiersz tabeli wyników (faza 13) — autorytet serwera; klient tylko wyświetla. */
 export interface StandingRow {
@@ -709,10 +706,6 @@ export interface StandingsMessage {
   mode: MatchMode;
   /** Posortowane rankingiem FFA (najlepszy pierwszy). */
   rows: StandingRow[];
-  scoreLimit: number;
-  /** Pozostały czas meczu [s] (serwer liczy zegar; klient tylko wyświetla). FFA: odlicza do
-   *  limitu; drużynowy: brak limitu czasu (serwer wysyła 0 — koniec przez eliminację/strefę). */
-  timeLeftS: number;
   /** Bieżąca okupacja strefy kontroli (faza 17) — status paska ZoneBar. Frakcja = drużyna w team. */
   zone: ZoneStatus;
 }

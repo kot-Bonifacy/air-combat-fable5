@@ -17,11 +17,12 @@ import type { MatchEndReason, MatchEndedMessage, MatchMode, StandingRow } from '
 const TEAM_OWN_COLOR = '#5fe88a';
 const TEAM_FOE_COLOR = '#ff6a4a';
 
-/** Powód zakończenia jako tekst — w drużynowym `'score'` znaczy eliminację, nie limit zestrzeleń. */
+/** Powód zakończenia jako tekst. P1 (2026-06-19): oba tryby eliminacyjne — `'score'` znaczy
+ *  eliminację (drużynowy: przeciwna drużyna; FFA: ostatni ocalały), nie limit zestrzeleń. */
 function reasonText(reason: MatchEndReason, mode: MatchMode): string {
   if (reason === 'zone') return 'przejęto strefę kontroli';
   if (mode === 'team') return 'przeciwna drużyna wyeliminowana';
-  return reason === 'score' ? 'osiągnięto limit zestrzeleń' : 'upłynął czas meczu';
+  return 'ostatni ocalały';
 }
 
 /** Frakcje w kolejności renderu: własna drużyna pierwsza, potem rosnąco po numerze. */
@@ -145,8 +146,6 @@ export class ScoreboardOverlay {
   private readonly titleEl: HTMLDivElement;
   private readonly tableEl: HTMLDivElement;
   private lastRows: StandingRow[] = [];
-  private lastScoreLimit = 0;
-  private lastTimeLeftS = 0;
   private mode: MatchMode = 'ffa';
   private localFaction = 0;
   private localId: number | null = null;
@@ -172,16 +171,8 @@ export class ScoreboardOverlay {
   }
 
   /** Aktualizuje dane (z wiadomości standings); przerysowuje, jeśli widoczne. */
-  update(
-    rows: StandingRow[],
-    scoreLimit: number,
-    timeLeftS: number,
-    mode: MatchMode,
-    localFaction: number,
-  ): void {
+  update(rows: StandingRow[], mode: MatchMode, localFaction: number): void {
     this.lastRows = rows;
-    this.lastScoreLimit = scoreLimit;
-    this.lastTimeLeftS = timeLeftS;
     this.mode = mode;
     this.localFaction = localFaction;
     if (this.shown) this.render();
@@ -204,11 +195,11 @@ export class ScoreboardOverlay {
   }
 
   private render(): void {
-    // drużynowy: eliminacja bez limitu czasu/zestrzeleń → tytuł bez zegara (timeLeftS = 0 z serwera)
+    // P1 (2026-06-19): oba tryby eliminacyjne (bez limitu czasu/zestrzeleń) → tytuł bez zegara.
     this.titleEl.textContent =
       this.mode === 'team'
         ? 'TABELA WYNIKÓW — eliminacja drużynowa'
-        : `TABELA WYNIKÓW — do ${String(this.lastScoreLimit)} zestrzeleń · pozostało ${formatClock(this.lastTimeLeftS)}`;
+        : 'TABELA WYNIKÓW — eliminacja (każdy na każdego)';
     this.tableEl.replaceChildren(
       ...standingsNodes(this.lastRows, this.localId, this.localFaction, this.mode),
     );

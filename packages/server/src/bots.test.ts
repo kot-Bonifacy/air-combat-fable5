@@ -103,6 +103,9 @@ describe('serwer — boty jako encje pokoju (faza 12)', () => {
     const room = new GameRoom('ABCD');
     const victim = room.addPlayer('ofiara', 'tok-v', recorder);
     const bot = room.addBot('trudny');
+    // bystander daleko: po śmierci ofiary wciąż żyją 2 frakcje (bot + widz) → mecz nie kończy się
+    // eliminacją (P1) i event KILL zdąży się rozesłać przed końcem
+    const bystander = room.addPlayer('widz', 'tok-w', dummyMember);
     room.start();
     const scratch = new Uint8Array(snapshotByteLength(8));
 
@@ -111,6 +114,7 @@ describe('serwer — boty jako encje pokoju (faza 12)', () => {
     while (room.healthOf(victim) > 0 && ticks < 900) {
       repose(room, bot, [0, 5000, 0], false);
       repose(room, victim, [0, 5000, 250], false);
+      repose(room, bystander, [9000, 5000, 0], false);
       room.step(FIXED_DT_S);
       room.sendSnapshots(scratch); // flush eventów do recordera (kanał kill feed)
       ticks++;
@@ -124,44 +128,58 @@ describe('serwer — boty jako encje pokoju (faza 12)', () => {
     expect(kill.cause).toBe('air');
   });
 
-  it('gracz zestrzeliwuje bota → kredyt gracza, a bot respawnuje po RESPAWN_DELAY_S', () => {
+  it('gracz zestrzeliwuje bota → kredyt gracza, a bot NIE respawnuje (1 życie jak SP)', () => {
     const room = new GameRoom('ABCD');
     const shooter = addHuman(room, 'as');
     const bot = room.addBot('latwy');
+    // bystander daleko: po śmierci bota wciąż żyją 2 frakcje → mecz trwa (brak eliminacji),
+    // więc da się zaobserwować, że bot NIE wraca do gry (P1: eliminacja w obu trybach)
+    const bystander = addHuman(room, 'widz');
     room.start();
     room.applyInput(shooter, input({ fire: true }));
 
+    // engagement z dala od strefy (x=6 km), widz po drugiej stronie areny
+    const sPos: [number, number, number] = [6000, 5000, 0];
+    const botPos: [number, number, number] = [6000, 5000, 250];
+    const wPos: [number, number, number] = [-9000, 5000, 0];
     let ticks = 0;
     while (room.healthOf(bot) > 0 && ticks < 900) {
-      repose(room, shooter, [0, 5000, 0], false);
-      repose(room, bot, [0, 5000, 250], false);
+      repose(room, shooter, sPos, false);
+      repose(room, bot, botPos, false);
+      repose(room, bystander, wPos, false);
       room.step(FIXED_DT_S);
       ticks++;
     }
     expect(room.healthOf(bot)).toBe(0);
     expect(room.killsOf(shooter)).toBe(1);
     expect(lifeOf(room, bot)).toBe('dying'); // zestrzelony w powietrzu → spadający wrak (faza 15)
+    expect(room.livesOf(bot)).toBe(0); // zużył jedyne życie (P1)
 
-    // przyspiesz opadanie wraku do ziemi (w realnej grze spada sam ~kilkanaście s z 5 km):
-    // zrzuć go nisko, lecącego w dół → uderzenie → 'dead' i start odliczania respawnu
+    // przyspiesz opadanie wraku do ziemi → 'dead'; mecz trwa (shooter + widz żyją)
     const wreck = room.snapshotEntities().find((e) => e.id === bot)!.state;
     wreck.position.set(0, 40, 0);
     wreck.velocity.set(0, -30, 0);
     let fall = 0;
     while (lifeOf(room, bot) === 'dying' && fall < 200) {
+      repose(room, shooter, sPos, false);
+      repose(room, bystander, wPos, false);
       room.step(FIXED_DT_S);
       fall++;
     }
     expect(lifeOf(room, bot)).toBe('dead'); // wrak uderzył w ziemię
 
-    // przestajemy przyklejać bota (respawnuje 8 km dalej, bezpiecznie); odliczamy okno respawnu
-    const respawnTicks = Math.ceil(RESPAWN_DELAY_S / FIXED_DT_S) + 5;
+    // odczekaj PONAD okno respawnu — bot NIE wraca do gry (brak żyć, parytet z SP). Po RESPAWN_DELAY_S
+    // cykl życia przechodzi dead→'respawning', ale spawn() jest zbramkowany canRespawn → utknie tam
+    // (jak SP/drużynowy dla wyeliminowanych); kluczowe: nigdy nie wraca do 'alive'.
+    const respawnTicks = Math.ceil(RESPAWN_DELAY_S / FIXED_DT_S) + 30;
     for (let i = 0; i < respawnTicks; i++) {
-      repose(room, shooter, [0, 5000, 0], false);
+      repose(room, shooter, sPos, false);
+      repose(room, bystander, wPos, false);
       room.step(FIXED_DT_S);
     }
-    expect(lifeOf(room, bot)).toBe('alive');
-    expect(room.healthOf(bot)).toBe(SPITFIRE_MK2.hpPool); // pełne HP po respawnie
+    expect(lifeOf(room, bot)).not.toBe('alive'); // brak respawnu — nigdy nie wraca do gry
+    expect(room.livesOf(bot)).toBe(0);
+    expect(SPITFIRE_MK2.hpPool).toBeGreaterThan(0); // sanity (import wciąż używany)
   });
 
   it('boty walczą ZE SOBĄ: w pojedynku czołowym pada kredyt zestrzelenia botowi', () => {

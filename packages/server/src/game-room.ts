@@ -6,9 +6,7 @@ import {
   Instructor,
   LAGCOMP_HISTORY_TICKS,
   LAGCOMP_MAX_REWIND_MS,
-  MATCH_DEFAULT_SCORE_LIMIT,
   MATCH_RESULTS_LINGER_S,
-  MATCH_TIME_LIMIT_S,
   MAX_EVENTS_PER_FRAME,
   MAX_PLAYERS_PER_ROOM,
   PHYSICS_HZ,
@@ -26,7 +24,6 @@ import {
   createTerrain,
   encodeEvents,
   encodeSnapshot,
-  evaluateFfa,
   eventsByteLength,
   factionsInPlay,
   MATCH_LIVES,
@@ -48,7 +45,6 @@ import {
   ZoneControl,
   type ControlMessage,
   type DifficultyLevel,
-  type FfaScore,
   type FireControl,
   type GameEvent,
   type Health,
@@ -200,11 +196,7 @@ export class GameRoom {
   /** Bufor źródeł snapshotu — przebudowywany przy zmianie składu (zero alokacji per tick). */
   private snapshotSources: SnapshotEntitySource[] = [];
 
-  // --- pętla meczu FFA (faza 13) ---
-  /** Limit zestrzeleń kończący mecz (ustawiany przez hosta przy tworzeniu pokoju; klampowany). */
-  scoreLimit = MATCH_DEFAULT_SCORE_LIMIT;
-  /** Upływ czasu bieżącego meczu [s] — autorytatywny zegar (klient tylko wyświetla). */
-  private matchClockS = 0;
+  // --- pętla meczu (faza 13; P1 2026-06-19: oba tryby eliminacyjne jak SP) ---
   /** Czas spędzony w stanie 'ended' [s] — po MATCH_RESULTS_LINGER_S pokój wraca do 'waiting'. */
   private endedTimerS = 0;
   /** Wynik ostatniego meczu (ekran wyników / diagnostyka). */
@@ -217,9 +209,7 @@ export class GameRoom {
   private readonly spawnRingPositions: Vector3[] = this.spawnRing.map((s) => s.pos);
   /** Scratch pozycji żywych wrogów do wyboru spawnu (zero alokacji per respawn). */
   private readonly occupantScratch: Vector3[] = [];
-  /** Scratch tablicy wyników do oceny końca meczu FFA (zero alokacji per tick). */
-  private readonly ffaScratch: FfaScore[] = [];
-  /** Scratch uczestników do oceny eliminacji drużynowej (faza 18; factionsInPlay, zero alokacji). */
+  /** Scratch uczestników do oceny eliminacji (faza 18 / P1; factionsInPlay, zero alokacji). */
   private readonly teamMembersScratch: MatchMember[] = [];
 
   // --- kontrola strefy KotH (faza 17): dodatkowy warunek zwycięstwa, parytet z SP ---
@@ -441,7 +431,6 @@ export class GameRoom {
   start(): void {
     if (this.state !== 'waiting' && this.state !== 'ended') return;
     this.state = 'playing';
-    this.matchClockS = 0;
     this.endedTimerS = 0;
     this.winnerId = null;
     this.lastEndReason = null;
@@ -464,7 +453,8 @@ export class GameRoom {
     }
     this.broadcastControl({ t: 'matchStarted' });
     this.broadcastRoomUpdate();
-    const goal = this.mode === 'team' ? 'eliminacja drużyny / strefa' : `do ${String(this.scoreLimit)} zestrzeleń`;
+    // P1: oba tryby eliminacyjne jak SP — last-man-standing (FFA) / ostatnia drużyna (team) + strefa
+    const goal = this.mode === 'team' ? 'eliminacja drużyny / strefa' : 'last-man-standing / strefa';
     this.onInfo?.(`pokój ${this.code}: start meczu (${this.mode}, ${goal}, ${String(this.players.size)} uczestników)`);
   }
 
@@ -614,8 +604,7 @@ export class GameRoom {
     this.pool.update(arm.bulletDragK, arm.bulletLifetimeS, dtS);
     this.resolveHits();
 
-    // 6) zegar meczu + rozstrzygnięcie (po rozliczeniu trafień tego ticku) — faza 13
-    this.matchClockS += dtS;
+    // 6) rozstrzygnięcie końca meczu (po rozliczeniu trafień tego ticku) — strefa albo eliminacja
     this.checkMatchEnd();
   }
 
@@ -663,10 +652,12 @@ export class GameRoom {
     }
   }
 
-  /** Czy gracz może się odrodzić (faza 18): FFA zawsze; drużynowy tylko z zapasem żyć (1/samolot
-   *  jak SP) — bez żyć przechodzi w obserwatora, nie respawnuje. updateLifecycle i tak biegnie. */
+  /** Czy gracz może się odrodzić (P1 2026-06-19: oba tryby eliminacyjne jak SP — respawn tylko
+   *  z zapasem żyć, MATCH_LIVES=1/samolot). Bez żyć → obserwator, nie respawnuje; przy normalnej
+   *  grze ścieżka „respawn w trakcie" jest więc martwa, zostaje dla LATE-JOIN i guardu NaN
+   *  (catch w step → spawn(player, true) z pominięciem tego gatingu). updateLifecycle i tak biegnie. */
   private canRespawn(player: ServerPlayer): boolean {
-    return this.mode !== 'team' || player.livesLeft > 0;
+    return player.livesLeft > 0;
   }
 
   /**
@@ -833,10 +824,10 @@ export class GameRoom {
     this.loseLife(victim);
   }
 
-  /** Zużycie życia w trybie drużynowym (faza 18: eliminacja, MATCH_LIVES na samolot jak SP).
-   *  0 żyć → brak respawnu (canRespawn). W FFA bez efektu (respawn nieskończony, liczy się limit). */
+  /** Zużycie życia (P1 2026-06-19: eliminacja w OBU trybach, MATCH_LIVES na samolot jak SP).
+   *  0 żyć → brak respawnu (canRespawn) → koniec gry dla tej maszyny (FFA: gracz wypada). */
   private loseLife(victim: ServerPlayer): void {
-    if (this.mode === 'team') victim.livesLeft = Math.max(0, victim.livesLeft - 1);
+    victim.livesLeft = Math.max(0, victim.livesLeft - 1);
   }
 
   /**
@@ -955,11 +946,6 @@ export class GameRoom {
     return idx >= 0 ? idx : player.slot;
   }
 
-  /** Pozostały czas meczu [s] — autorytatywny zegar; klient tylko wyświetla (faza 13). */
-  get timeLeftS(): number {
-    return Math.max(0, MATCH_TIME_LIMIT_S - this.matchClockS);
-  }
-
   /** Liczba śmierci gracza w meczu — diagnostyka/testy. */
   deathsOf(id: number): number {
     return this.players.get(id)?.deaths ?? 0;
@@ -999,9 +985,10 @@ export class GameRoom {
   }
 
   /**
-   * Rozstrzyga koniec meczu po stanie wyniku i zegarze (shared/world/ffa). Boty są pełnymi
-   * uczestnikami (mogą wygrać — protokołowo nieodróżnialne, faza 12). Wołane co tick po
-   * rozliczeniu trafień; pierwszy spełniony warunek (strefa / limit zestrzeleń / czasu) kończy mecz.
+   * Rozstrzyga koniec meczu. Boty są pełnymi uczestnikami (mogą wygrać — protokołowo
+   * nieodróżnialne, faza 12). Wołane co tick po rozliczeniu trafień; pierwszy spełniony warunek
+   * (strefa albo eliminacja) kończy mecz. P1 (2026-06-19): OBA tryby eliminacyjne jak SP — brak
+   * limitu zestrzeleń i czasu (usunięte evaluateFfa/zegar).
    */
   private checkMatchEnd(): void {
     // strefa KotH (faza 17) ma pierwszeństwo w OBU trybach: pełne przejęcie = natychmiastowe
@@ -1010,40 +997,36 @@ export class GameRoom {
       this.endByFaction(this.zone.captured, 'zone');
       return;
     }
-    // drużynowy (faza 18): eliminacja jak SP (match.ts) — ostatnia drużyna z samolotami wygrywa,
-    // BEZ limitu czasu. Zestrzelenia liczą się jako utrata żyć (1/samolot), nie jako limit FFA.
-    if (this.mode === 'team') {
-      this.checkTeamElimination();
-      return;
-    }
-    // FFA (faza 13): limit zestrzeleń albo czasu — co pierwsze.
-    this.ffaScratch.length = 0;
-    for (const p of this.players.values()) {
-      this.ffaScratch.push({ id: p.id, kills: p.kills, deaths: p.deaths });
-    }
-    const result = evaluateFfa(this.ffaScratch, this.matchClockS, this.scoreLimit, MATCH_TIME_LIMIT_S);
-    if (result.ended && result.reason) this.endMatch(result.winnerId, null, result.reason);
+    // eliminacja (parytet z SP/match.ts) — ostatnia FRAKCJA z samolotami wygrywa, bez limitu czasu.
+    // W FFA frakcja = id → last-man-standing; w drużynowym → ostatnia drużyna.
+    this.checkElimination();
   }
 
   /**
-   * Eliminacja drużynowa (faza 18, parytet z SP/match.ts): mecz kończy się, gdy zostaje ≤1 drużyna
-   * z samolotami (życiami). Wymaga ≥TEAM_COUNT drużyn w grze (degeneracja: pokój z jedną drużyną
-   * nie „wygrywa przez eliminację" — czeka na strefę). Obustronna eliminacja w tym samym ticku
-   * (0 drużyn w grze) → remis (winningFaction = null). Powód `'score'` (zestrzelenia), bez `'time'`.
+   * Eliminacja w OBU trybach (P1, parytet z SP/match.ts): mecz kończy się, gdy zostaje ≤1 frakcja
+   * z samolotami (życiami). Wymaga ≥2 frakcji w grze — degeneracja: pokój z jedną frakcją (FFA solo
+   * bez wrogów / drużynowy z 1 drużyną) NIE „wygrywa przez eliminację", czeka na strefę (jak SP
+   * wymaga przeciwników). Obustronna eliminacja w tym samym ticku (0 frakcji w grze) → remis.
+   * FFA: `winningFaction` = null (brak drużyn), zwycięzcą jest ocalały gracz (= jego id).
    */
-  private checkTeamElimination(): void {
+  private checkElimination(): void {
     this.teamMembersScratch.length = 0;
     const factions = new Set<number>();
     for (const p of this.players.values()) {
       this.teamMembersScratch.push({ faction: p.faction, livesLeft: p.livesLeft });
       factions.add(p.faction);
     }
-    if (factions.size < TEAM_COUNT) return; // mniej niż 2 drużyny → brak rozstrzygnięcia eliminacją
+    if (factions.size < TEAM_COUNT) return; // <2 frakcji → brak rozstrzygnięcia eliminacją (TEAM_COUNT=2)
     const inPlay = factionsInPlay(this.teamMembersScratch);
-    if (inPlay.size > 1) return; // ≥2 drużyny wciąż mają samoloty — mecz trwa
-    const winningFaction = inPlay.size === 1 ? [...inPlay][0]! : null; // 0 = remis (obustronna eliminacja)
-    const winnerId = winningFaction === null ? null : this.topPlayerOfFaction(winningFaction);
-    this.endMatch(winnerId, winningFaction, 'score');
+    if (inPlay.size > 1) return; // ≥2 frakcje wciąż mają samoloty — mecz trwa
+    const survivingFaction = inPlay.size === 1 ? [...inPlay][0]! : null; // null = remis (obustronna)
+    if (this.mode === 'team') {
+      const winnerId = survivingFaction === null ? null : this.topPlayerOfFaction(survivingFaction);
+      this.endMatch(winnerId, survivingFaction, 'score');
+    } else {
+      // FFA: frakcja = id → ocalała frakcja to id zwycięzcy; brak drużyn (winningFaction = null)
+      this.endMatch(survivingFaction, null, 'score');
+    }
   }
 
   /** Kończy mecz z perspektywy zwycięskiej FRAKCJI (przejęcie strefy). FFA: frakcja = id zwycięzcy;
@@ -1125,9 +1108,6 @@ export class GameRoom {
       t: 'standings',
       mode: this.mode, // klient przełącza render FFA↔drużynowy (kolory markerów, scoreboard) — faza 18
       rows: this.buildStandings(),
-      scoreLimit: this.scoreLimit,
-      // drużynowy: brak limitu czasu (parytet z SP) → 0; FFA odlicza do MATCH_TIME_LIMIT_S
-      timeLeftS: this.mode === 'team' ? 0 : Math.round(this.timeLeftS),
       // bieżąca okupacja strefy do statusu paska ZoneBar (faza 17); fronty z zoneSeconds wierszy
       zone: { controlling: this.zoneControlling, occupied: this.zoneOccupied },
     });

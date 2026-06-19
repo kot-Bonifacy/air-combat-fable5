@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   FIXED_DT_S,
-  MATCH_DEFAULT_SCORE_LIMIT,
   MIN_SPAWN_CLEARANCE_M,
   SPITFIRE_MK2,
   type ControlMessage,
@@ -9,8 +8,9 @@ import {
 } from '@air-combat/shared';
 import { GameRoom } from './game-room';
 
-// Pętla meczu FFA (faza-13.md): zegar + wynik + koniec meczu, respawn z ochroną i wyborem
-// miejsca, tabela wyników (standings), rewanż. Testy puszczają realną pętlę room.step i
+// Pętla meczu (faza-13.md). P1 (2026-06-19): FFA jest ELIMINACYJNE jak SP — 1 życie/samolot,
+// brak respawnu i brak limitu zestrzeleń/czasu; mecz kończy się, gdy zostaje 1 frakcja
+// (last-man-standing) albo ktoś przejmie strefę. Testy puszczają realną pętlę room.step i
 // sterują stanem encji bezpośrednio (referencje z snapshotEntities()), jak combat.test.
 
 const arm = SPITFIRE_MK2.armament;
@@ -51,6 +51,10 @@ function add(room: GameRoom, member: ReturnType<typeof recordingMember>, nick = 
   return room.addPlayer(nick, `tok-${String(tokenSeq++)}`, member);
 }
 
+function lifeOf(room: GameRoom, id: number): string | undefined {
+  return room.snapshotEntities().find((e) => e.id === id)?.state.life;
+}
+
 /** Przykleja żywą encję do stałej pozy (jak w combat.test) — deterministyczny ogień/trafienia. */
 function repose(room: GameRoom, id: number, pos: [number, number, number], noseNegZ = false): void {
   const s = room.snapshotEntities().find((e) => e.id === id)?.state;
@@ -65,16 +69,15 @@ function repose(room: GameRoom, id: number, pos: [number, number, number], noseN
   s.iasMs = 0;
 }
 
-describe('FFA — śmierci i koniec meczu', () => {
-  it('zlicza śmierć ofiary i zestrzelenie zabójcy; po limicie kończy mecz', () => {
+describe('FFA — eliminacja (P1: last-man-standing jak SP)', () => {
+  it('zlicza śmierć ofiary i zestrzelenie zabójcy; po wyeliminowaniu reszty kończy mecz', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = 1; // mecz do jednego zestrzelenia (szybki test końca)
     const aMember = recordingMember();
     const a = add(room, aMember, 'A');
     const b = add(room, recordingMember(), 'B');
     room.start();
 
-    // odczekaj ochronę respawnu, trzymając pozy z bliska (czołówka 12 m)
+    // czołówka 12 m: A dobija B; brak limitu zestrzeleń — koniec dopiero, gdy B zostaje wyeliminowany
     const aPos: [number, number, number] = [0, 5000, 0];
     const bPos: [number, number, number] = [0, 5000, 12];
     room.applyInput(a, input({ fire: true, aimZ: 1 }));
@@ -90,36 +93,65 @@ describe('FFA — śmierci i koniec meczu', () => {
 
     expect(room.killsOf(a)).toBe(1);
     expect(room.deathsOf(b)).toBe(1);
+    expect(room.livesOf(b)).toBe(0); // FFA też zużywa życie (P1: eliminacja)
     expect(room.state).toBe('ended');
-    expect(room.winnerId).toBe(a);
+    expect(room.winnerId).toBe(a); // ostatni ocalały
 
     const ended = aMember.controls.find((m) => m.t === 'matchEnded');
     expect(ended).toBeDefined();
     if (ended && ended.t === 'matchEnded') {
-      expect(ended.reason).toBe('score');
+      expect(ended.reason).toBe('score'); // eliminacja (klient rozróżnia po mode='ffa')
+      expect(ended.mode).toBe('ffa');
+      expect(ended.winningFaction).toBeNull(); // FFA — brak drużyn
       expect(ended.winnerId).toBe(a);
       expect(ended.rows[0]?.id).toBe(a); // lider pierwszy
     }
   });
 
-  it('zegar meczu maleje i jest autorytetem serwera (timeLeftS)', () => {
+  it('zestrzelony w FFA NIE respawnuje (1 życie jak SP), choć mecz trwa (≥2 frakcje żyją)', () => {
     const room = new GameRoom('ABCD');
-    add(room, recordingMember(), 'A');
+    const a = add(room, recordingMember(), 'A');
+    const victim = add(room, recordingMember(), 'V');
+    const c = add(room, recordingMember(), 'C'); // 3. gracz daleko — mecz nie kończy się od razu
     room.start();
-    const before = room.timeLeftS;
-    for (let i = 0; i < 120; i++) room.step(FIXED_DT_S); // 2 s
-    const after = room.timeLeftS;
-    expect(after).toBeLessThan(before);
-    expect(before - after).toBeCloseTo(2, 0);
+
+    // engagement z dala od strefy (x=6 km), C zaparkowany po drugiej stronie
+    const aPos: [number, number, number] = [6000, 5000, 0];
+    const vPos: [number, number, number] = [6000, 5000, 12];
+    const cPos: [number, number, number] = [-9000, 5000, 0];
+    room.applyInput(a, input({ fire: true, aimZ: 1 }));
+    room.applyInput(victim, input({ fire: false }));
+
+    let ticks = 0;
+    while (room.deathsOf(victim) === 0 && ticks < 600) {
+      repose(room, a, aPos, false);
+      repose(room, victim, vPos, true);
+      repose(room, c, cPos, false);
+      room.step(FIXED_DT_S);
+      ticks++;
+    }
+    expect(room.deathsOf(victim)).toBe(1);
+    expect(room.livesOf(victim)).toBe(0);
+    expect(room.state).toBe('playing'); // A i C wciąż żyją → eliminacja nie rozstrzyga
+
+    // dobij wrak do ziemi i odczekaj PONAD próg respawnu — V nie wraca do gry (brak żyć)
+    let respawned = false;
+    for (let i = 0; i < 500; i++) {
+      repose(room, a, aPos, false);
+      repose(room, c, cPos, false);
+      room.step(FIXED_DT_S);
+      if (lifeOf(room, victim) === 'alive') respawned = true;
+    }
+    expect(respawned).toBe(false);
+    expect(lifeOf(room, victim)).not.toBe('alive');
+    expect(room.livesOf(victim)).toBe(0);
   });
 
-  it('rewanż (start z ended) zeruje wynik i wraca do gry', () => {
+  it('rewanż (start z ended) zeruje wynik i życia, wraca do gry', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = 1;
     const a = add(room, recordingMember(), 'A');
     const b = add(room, recordingMember(), 'B');
     room.start();
-    // szybki koniec: ustaw kill ręcznie przez bezpośrednie zestrzelenie (czołówka)
     const aPos: [number, number, number] = [0, 5000, 0];
     const bPos: [number, number, number] = [0, 5000, 12];
     room.applyInput(a, input({ fire: true, aimZ: 1 }));
@@ -137,6 +169,7 @@ describe('FFA — śmierci i koniec meczu', () => {
     expect(room.state).toBe('playing');
     expect(room.killsOf(a)).toBe(0);
     expect(room.deathsOf(b)).toBe(0);
+    expect(room.livesOf(b)).toBe(1); // pełna pula żyć po rewanżu
     expect(room.winnerId).toBeNull();
   });
 });
@@ -160,7 +193,7 @@ describe('FFA — respawn z ochroną i wyborem miejsca', () => {
     }
     expect(room.healthOf(target)).toBe(SPITFIRE_MK2.hpPool); // ochrona = brak obrażeń
 
-    // po wygaśnięciu ochrony (łącznie > 3 s) cel zaczyna obrywać
+    // po wygaśnięciu ochrony (łącznie > 3 s) cel zaczyna obrywać (i ostatecznie pada → koniec meczu)
     for (let i = 0; i < 180; i++) {
       repose(room, shooter, sPos, false);
       repose(room, target, tPos, true);
@@ -170,14 +203,14 @@ describe('FFA — respawn z ochroną i wyborem miejsca', () => {
     expect(TOTAL_AMMO).toBeGreaterThan(0); // amunicja istnieje (sanity)
   });
 
-  it('respawn po śmierci wybiera miejsce z dala od żywego wroga', () => {
+  it('respawn (lives>0: late-join / NaN-guard) wybiera miejsce z dala od żywego wroga', () => {
     const room = new GameRoom('ABCD');
     const enemy = add(room, recordingMember(), 'E');
     const victim = add(room, recordingMember(), 'V');
-    room.scoreLimit = 99; // nie kończ meczu w trakcie testu
     room.start();
 
-    // wróg zaklejony w rogu areny (blisko slotu #0); ofiara ginie i respawnuje
+    // wróg zaklejony w rogu areny (blisko slotu #0); ofiara „martwa" z ZACHOWANYM życiem
+    // (jak late-join: life='dead' bez zużycia życia) → canRespawn=true → respawnuje
     const enemyPos: [number, number, number] = [8000, 800, 0];
     const vState = room.snapshotEntities().find((e) => e.id === victim)?.state;
     if (!vState) throw new Error('brak ofiary');
@@ -200,9 +233,8 @@ describe('FFA — respawn z ochroną i wyborem miejsca', () => {
 });
 
 describe('FFA — tabela wyników (standings)', () => {
-  it('broadcastStandings wysyła posortowaną tabelę z wynikiem i limitem', () => {
+  it('broadcastStandings wysyła posortowaną tabelę i status strefy', () => {
     const room = new GameRoom('ABCD');
-    room.scoreLimit = MATCH_DEFAULT_SCORE_LIMIT;
     const member = recordingMember();
     const a = add(room, member, 'A');
     add(room, recordingMember(), 'B');
@@ -213,10 +245,10 @@ describe('FFA — tabela wyników (standings)', () => {
     const msg = member.controls.find((m) => m.t === 'standings');
     expect(msg).toBeDefined();
     if (msg && msg.t === 'standings') {
-      expect(msg.scoreLimit).toBe(MATCH_DEFAULT_SCORE_LIMIT);
+      expect(msg.mode).toBe('ffa');
       expect(msg.rows).toHaveLength(2);
       expect(msg.rows.some((r) => r.id === a)).toBe(true);
-      expect(msg.timeLeftS).toBeGreaterThan(0);
+      expect(msg.zone).toEqual({ controlling: null, occupied: false }); // start: strefa pusta
     }
   });
 });
