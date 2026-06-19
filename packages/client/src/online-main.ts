@@ -871,7 +871,9 @@ function updateHud(): void {
     gLimitG: gLoad.gLimitG,
     blackoutFactor: localAlive ? gLoad.blackoutFactor : 0,
     stallPhase: stall.phase,
-    buffetIntensity: stall.buffetIntensity,
+    // buffet/blackout tylko z perspektywy własnego samolotu (parytet z SP: viewC !== player → 0).
+    // Przy obserwacji cudzego predictor.sim to nasz wrak — zeruj, by HUD nie migał resztkami.
+    buffetIntensity: isSpectating() ? 0 : stall.buffetIntensity,
     bankRad: Math.atan2(-scratchRight.y, scratchUp.y),
     pitchRad: Math.asin(Math.min(1, Math.max(-1, scratchFwd.y))),
     controlMode: mouseAim.locked ? 'mysz' : 'klawiatura',
@@ -1245,7 +1247,13 @@ renderer.setAnimationLoop(() => {
       prevLocalPos.copy(viewPos);
       hasPrevLocal = true;
       if (cameraMode === 'orbitalna') orbit.update(viewPos);
-      else chaseCamera.update(frameDtS, viewPos, viewQuat, viewVel, 0);
+      else {
+        // trzęsienie kamery przy buffecie tylko z perspektywy własnego samolotu (parytet z SP —
+        // main.ts: viewC === player ? buffet : 0); przy obserwacji cudzego = 0. Dane lokalne
+        // z predykcji (predictor.sim), więc zero-koszt i bez zmiany protokołu.
+        const buffet = spectate ? 0 : predictor.sim.stallEffects.buffetIntensity;
+        chaseCamera.update(frameDtS, viewPos, viewQuat, viewVel, buffet);
+      }
       // kamera nigdy pod powierzchnią (wrak/orbita nisko nad ziemią wbijały ją w teren)
       const cameraFloorM = surfaceHeightM(terrain, camera.position.x, camera.position.z) + 3;
       if (camera.position.y < cameraFloorM) camera.position.y = cameraFloorM;
