@@ -8,9 +8,9 @@
 
 ## Status faz
 
-Fazy ukończone: 0–17 + Faza 18 cz.1 (serwer/lobby/protokół; **cz.2 klient — wizualia drużynowe —
-w następnej sesji**) (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP i pomiary
-na VPS po stronie użytkownika** — brak SSH z sesji). Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
+Fazy ukończone: 0–18 (Faza 18 cz.1 serwer/lobby/protokół + cz.2 klient — wizualia drużynowe;
+blok parytetu MP↔SP 14–18 ZAMKNIĘTY) (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP
+i pomiary na VPS po stronie użytkownika** — brak SSH z sesji). Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
 + snapshoty 30 Hz. Faza 9 (2026-06-16): client prediction + reconciliation własnego samolotu
@@ -108,9 +108,22 @@ eliminacja reużywa `world/match.ts` (`factionsInPlay`). Protokół: `CreateRoom
 `topPlayerOfFaction`, `endMatch(winnerId, winningFaction, reason)`, strefa/standings po `p.faction`, cele bota
 wg frakcji. Lobby: `room.mode` ustawiane PRZED `addPlayer`; `clampMatchMode` w connection. Klient (wiring):
 select „Tryb" w `lobby-ui` (ukrywa limit zestrzeleń w drużynowym), `net-client.createRoom(..., mode)`. Testy
-`team.test.ts`+7, `team-mode.test.ts`+8 (łącznie 412). **Cz.2 (następna sesja): wizualia klienta** — kolory
-markerów wróg/sojusznik, scoreboard drużynowy, kill-feed teamkill, status strefy wg drużyny, obserwator
-sojuszników. **Deploy front+back razem (po cz.2).**
+`team.test.ts`+7, `team-mode.test.ts`+8 (łącznie 412).
+Faza 18 cz.2 (2026-06-19): parytet MP cz.5 dok. — wizualia KLIENTA dla trybu drużynowego; zmiany WYŁĄCZNIE
+po stronie klienta z pól protokołu z cz.1 → **BEZ zmian protokołu, wciąż v3**. Zasada: snapshot binarny NIE
+niesie frakcji → klient czyta z `standings.rows[].faction` (JSON 2 Hz); `online-main.ts` trzyma `matchMode`/
+`factionById`/`localFaction` (odbudowa `rebuildFactions` z każdego standings, reset w `resetGameState`).
+`entityColorHex` zna tryb: drużynowy sojusznik zielony `FRIEND_COLOR`/wróg czerwony `FOE_COLOR` wg frakcji,
+FFA paleta per id; markery `setFoe(faction!==localFaction)` w team / `setColorHex` w FFA. Kill-feed teamkill
+(`mode==='team'` + te same frakcje) „(sojusznik!)" + BEZ złotego markera (serwer nie kredytuje). `updateZoneBar`
+po FRAKCJI (`r.faction===localFaction`, `controlling===localFaction`) — w FFA frakcja=id → jak f17. Obserwator:
+`playerHasTeammates`+`isSpectatable` zawęża do żywych sojuszników w team (parytet SP). Roster `isLost`=team &
+`deaths>=MATCH_LIVES` & faza∉{alive,dying} (z `lifeById`). `match-ui.ts`: `standingsNodes` (FFA płaska / team
+nagłówek+grupowanie po frakcji `orderedFactions` własna 1. + `teamHeaderRow` agregat Z/Ś/A+strefa raz),
+`reasonText` (team `'score'`=eliminacja), `ScoreboardOverlay.update(...,mode,localFaction)` tytuł bez zegara,
+`ResultsOverlay.show(msg,localId,localFaction,isHost)` baner wg `winningFaction`, CSS `.mui-team`. Testy 412
+bez nowych (zmiany DOM, kryje typecheck+build); build klient online 41,4→43,6 kB. **Deploy front+back RAZEM;
+smoke online team z botami po stronie użytkownika.** Blok parytetu MP↔SP (14–18) ZAMKNIĘTY → następna: Faza 19.
 Decyzja 2026-06-18: blok parytetu MP↔SP (Fazy 14–18: wizualia/HUD → kolizje+wrak → obserwator →
 strefa KotH → tryb drużynowy) PRZED Bf 109; dotychczasowe fazy przesunięte (Bf 109→19, teren→20,
 dźwięk→21, uszkodzenia→22). Szczegóły: sekcja „Parytet multiplayera" w PLAN.md.

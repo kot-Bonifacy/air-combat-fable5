@@ -70,11 +70,11 @@ ograniczony do sojuszników, ewentualne `RoomPlayer.faction` do podglądu druży
 - [x] Lobby: host wybiera FFA/Drużynowy; tryb klampowany na serwerze; lista pokoi pokazuje tryb
 - [x] typecheck + test (412, +15) + lint zielone; build (Vite + esbuild) przechodzi
 
-### Sesja 2 (klient — wizualia) — DO ZROBIENIA
-- [ ] Markery wróg (czerwony) / sojusznik (zielony) wg `StandingRow.faction` vs własna frakcja
-- [ ] Scoreboard drużynowy (`match-ui.ts`): grupowanie po frakcji + agregat drużyny; ekran wyników
+### Sesja 2 (klient — wizualia) — ZREALIZOWANE
+- [x] Markery wróg (czerwony) / sojusznik (zielony) wg `StandingRow.faction` vs własna frakcja
+- [x] Scoreboard drużynowy (`match-ui.ts`): grupowanie po frakcji + agregat drużyny; ekran wyników
       z `winningFaction`; baner powodu mode-aware
-- [ ] Kill-feed rozróżnia teamkill; status `ZoneBar` liczony względem własnej drużyny (`controlling`
+- [x] Kill-feed rozróżnia teamkill; status `ZoneBar` liczony względem własnej drużyny (`controlling`
       vs własna frakcja); obserwator po eliminacji ogranicza się do żywych sojuszników
 - [ ] **(użytkownik)** smoke online: mecz drużynowy z botami — sprawdzić auto-balans, friendly fire,
       koniec przez eliminację/strefę
@@ -137,3 +137,32 @@ kredyt za wroga, eliminacja kończy mecz + `winningFaction`, brak respawnu, brak
 **Otwarte:** sesja 2 (klient: kolory markerów, scoreboard drużynowy, kill-feed teamkill, status strefy
 wg drużyny, obserwator sojuszników) + smoke online po stronie użytkownika. Po sesji 2 zamyka się blok
 parytetu MP↔SP (Fazy 14–18); następna: Faza 19 — Bf 109 E + balans.
+
+**Sesja 2 zrealizowana (2026-06-19).** Warstwa wizualna klienta dla trybu drużynowego — wyłącznie
+po stronie klienta, z pól protokołu już dodanych w sesji 1 (BEZ zmian protokołu, wciąż v3). Snapshot
+binarny NIE niesie frakcji, więc klient czyta je z tabeli wyników (`standings`, JSON 2 Hz).
+
+**`online-main.ts`:** stan `matchMode` + `factionById` (mapa id→frakcja) + `localFaction`, odbudowywane
+z każdego `standings` (`rebuildFactions`) i resetowane w `resetGameState`. `entityColorHex` zna teraz tryb:
+w drużynowym sojusznik zielony (`FRIEND_COLOR`) / wróg czerwony (`FOE_COLOR`) wg frakcji, w FFA paleta per id
+(jak f14). Markery: drużynowy → `setFoe(faction !== localFaction)` (paleta foe/friend), FFA → `setColorHex`.
+Kill-feed: teamkill (`mode==='team'` i te same frakcje strzelca/ofiary) oznaczony „(sojusznik!)" i bez
+złotego markera zestrzelenia (serwer nie kredytuje — parytet z SP). `updateZoneBar` liczony po FRAKCJI
+(`r.faction === localFaction`, `controlling === localFaction`) — w FFA redukuje się do f17 (frakcja = id).
+Obserwator: `isSpectatable` + `playerHasTeammates` — w drużynowym z sojusznikami zakres zawężony do żywych
+sojuszników (jak SP). Roster: `isLost` = drużynowy & `deaths >= MATCH_LIVES` & faza życia ≠ alive/dying
+(faza z `lifeById`, bo snapshot nie niesie liczby żyć) → wyszarzenie wyeliminowanych.
+
+**`net/match-ui.ts`:** render zależny od `mode`. Helpery `standingsNodes` (FFA: płaska lista; drużynowy:
+nagłówek + grupowanie po frakcji z `teamHeaderRow` — agregat Z/Ś/A + strefa raz, własna drużyna pierwsza
+przez `orderedFactions`), `reasonText` (w drużynowym `'score'` = eliminacja, nie limit zestrzeleń),
+`teamHeaderRow`. `ScoreboardOverlay.update(..., mode, localFaction)` — tytuł bez zegara w drużynowym.
+`ResultsOverlay.show(msg, localId, localFaction, isHost)` — baner wg `winningFaction` (zwycięstwo/porażka/
+remis drużynowy), tabela grupowana. CSS `.mui-team`.
+
+**Walidacja:** `npm run typecheck` + `npm test` (412, bez nowych testów — zmiany czysto wizualne/DOM,
+weryfikowane przez typecheck+build) + `npm run lint` zielone; `npm run build` (klient online 41,4 → 43,6 kB,
+serwer bez zmian 574 kB). **Otwarte (użytkownik):** smoke online — mecz drużynowy z botami (auto-balans,
+friendly fire, koniec przez eliminację/strefę, kolory markerów, scoreboard, obserwator sojuszników).
+**Deploy front+back razem** (jak f15–f17 — addytywne pola JSON, ale wdrażamy spójnie). Zamyka się blok
+parytetu MP↔SP (Fazy 14–18). Następna: Faza 19 — Bf 109 E + balans.

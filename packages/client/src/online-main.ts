@@ -14,6 +14,7 @@ import {
   BULLET_POOL_CAPACITY,
   BulletPool,
   INPUT_HZ,
+  MATCH_LIVES,
   MAX_PLAYERS_PER_ROOM,
   MRAD_TO_RAD,
   MS_TO_KMH,
@@ -40,6 +41,7 @@ import {
   type KillCause,
   type LifePhase,
   type MatchEndedMessage,
+  type MatchMode,
   type RoomJoinedMessage,
   type RoomPlayer,
   type Snapshot,
@@ -96,9 +98,12 @@ const wingspanM = Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
 const INPUT_DT_S = 1 / INPUT_HZ;
 const TOKEN_STORAGE_KEY = 'air-combat:token';
 
-// Kolory (parytet z SP): gracz złoty, każdy inny pilot z palety FFA (unikatowo per id);
-// tryb drużynowy (sojusznik/wróg) dopiero w fazie 18. JEDNO źródło dla markerów i rostera.
+// Kolory (parytet z SP): gracz złoty; w FFA każdy inny pilot z palety FFA (unikatowo per id);
+// w trybie drużynowym (faza 18) sojusznik zielony, wróg czerwony — względem frakcji gracza.
+// JEDNO źródło dla markerów i rostera (entityColorHex zna tryb i frakcje z ostatnich standings).
 const PLAYER_COLOR = 0xffd24a;
+const FRIEND_COLOR = 0x33dd66;
+const FOE_COLOR = 0xff3020;
 const FFA_FACTION_COLORS = [0xff3b30, 0xff8c1a, 0xff4fd8, 0x32d0ff, 0xa56bff, 0xff6ea0];
 const SMOKE_BACK_OFFSET_M = 3; // punkt emisji dymu cofnięty ZA ogon (nie ze środka kadłuba)
 const AMMO_MAX = totalAmmo(plane.armament);
@@ -108,9 +113,16 @@ function cssColor(hex: number): string {
   return `#${hex.toString(16).padStart(6, '0')}`;
 }
 
-/** Kolor pilota (Three) — gracz złoty, inni z palety FFA wg id (spójnie marker ↔ roster). */
+/**
+ * Kolor pilota (Three) — JEDNO źródło dla markera HUD i rostera (parytet z SP, displayColorHex):
+ * gracz złoty; w trybie drużynowym sojusznik zielony / wróg czerwony (wg frakcji z ostatnich
+ * standings); w FFA unikatowy kolor z palety wg id (frakcja = id, więc bez mapy frakcji).
+ */
 function entityColorHex(id: number, isLocal: boolean): number {
   if (isLocal) return PLAYER_COLOR;
+  if (matchMode === 'team') {
+    return factionById.get(id) === localFaction ? FRIEND_COLOR : FOE_COLOR;
+  }
   return FFA_FACTION_COLORS[id % FFA_FACTION_COLORS.length] ?? FFA_FACTION_COLORS[0]!;
 }
 
@@ -358,6 +370,9 @@ function resetGameState(): void {
   lifeById.clear();
   smokeAccumById.clear();
   latestStandings = null;
+  matchMode = 'ffa';
+  factionById.clear();
+  localFaction = 0;
   // stan śmierci/obserwatora/kamery do wartości startowych (nowy mecz / reconnect / poczekalnia)
   playerDeath = 'none';
   prevLocalLife = 'alive';
@@ -456,8 +471,11 @@ function spawnCosmeticVolley(ownerId: number, seed: number, shots: number): void
 function onKill(killerId: number, victimId: number, cause: KillCause, localId: number | null): void {
   const victim = playerName(victimId);
   if (cause === 'air') {
-    pushKillFeed(`✕ ${playerName(killerId)} → ${victim}`);
-    if (killerId === localId) {
+    // teamkill (friendly fire ON w drużynowym) — serwer NIE kredytuje, więc oznaczamy w feedzie
+    // „(sojusznik!)" i NIE pokazujemy złotego markera zestrzelenia (parytet z SP).
+    const teamkill = matchMode === 'team' && factionById.get(killerId) === factionById.get(victimId);
+    pushKillFeed(`✕ ${playerName(killerId)} → ${victim}${teamkill ? ' (sojusznik!)' : ''}`);
+    if (killerId === localId && !teamkill) {
       hitMarkerTimerS = HIT_MARKER_KILL_S;
       hitMarkerKill = true;
     }
@@ -512,6 +530,36 @@ let latestStandings: StandingsMessage | null = null;
 /** Czy widać ekran wyników (blokuje scoreboard na Tab — tabela jest już na ekranie). */
 let matchResultsShown = false;
 
+// --- tryb meczu + frakcje (faza 18 cz.2): serwer NIE niesie frakcji w snapshocie binarnym
+//     (bez bumpu protokołu), więc czytamy je z tabeli wyników (standings, JSON 2 Hz). Kolory
+//     markerów/rostera, kill-feed teamkill, status strefy i zakres obserwatora zależą od trybu. ---
+let matchMode: MatchMode = 'ffa';
+/** Frakcja per id z ostatnich standings (FFA: frakcja = id; drużynowy: 0/1). */
+const factionById = new Map<number, number>();
+/** Frakcja własnego samolotu (z wiersza standings o własnym id). FFA: = własne id. */
+let localFaction = 0;
+
+/** Przebudowuje mapę frakcji i własną frakcję z wierszy tabeli wyników (każdy broadcast). */
+function rebuildFactions(rows: readonly StandingRow[]): void {
+  factionById.clear();
+  const localId = net?.localPlayerId ?? null;
+  localFaction = 0;
+  for (const r of rows) {
+    factionById.set(r.id, r.faction);
+    if (r.id === localId) localFaction = r.faction;
+  }
+}
+
+/** Czy gracz ma w tym meczu sojuszników (slot tej samej frakcji) — tylko tryb drużynowy. */
+function playerHasTeammates(): boolean {
+  if (matchMode !== 'team') return false;
+  const localId = net?.localPlayerId ?? null;
+  for (const [id, fac] of factionById) {
+    if (id !== localId && fac === localFaction) return true;
+  }
+  return false;
+}
+
 // --- warstwa śmierci gracza (faza 16): nakładka decyzji + tryb obserwatora ---
 const downedOverlay = new DownedOverlay(
   () => choosePlayerSpectate(), // tryb obserwatora (gdy jest kogo oglądać)
@@ -550,10 +598,14 @@ function isSpectating(): boolean {
   return phase === 'playing' && playerDeath === 'spectating';
 }
 
-/** Czy encję można obserwować: obca (nie własna) i żywa. */
+/**
+ * Czy encję można obserwować: obca (nie własna) i żywa. W trybie drużynowym z sojusznikami
+ * zakres zawęża się do żywych SOJUSZNIKÓW (ta sama frakcja) — parytet z SP (isSpectatable).
+ */
 function isSpectatable(id: number): boolean {
   const localId = net?.localPlayerId ?? null;
-  return id !== localId && meshes.has(id) && lifeById.get(id) === 'alive';
+  if (id === localId || !meshes.has(id) || lifeById.get(id) !== 'alive') return false;
+  return playerHasTeammates() ? factionById.get(id) === localFaction : true;
 }
 
 function firstSpectatable(): number | null {
@@ -668,7 +720,9 @@ function createNet(nick: string, token: string | null): NetClient {
   c.onMatchStarted = () => enterPlaying();
   c.onStandings = (msg) => {
     latestStandings = msg;
-    scoreboard.update(msg.rows, msg.scoreLimit, msg.timeLeftS);
+    matchMode = msg.mode;
+    rebuildFactions(msg.rows);
+    scoreboard.update(msg.rows, msg.scoreLimit, msg.timeLeftS, msg.mode, localFaction);
   };
   c.onMatchEnded = (msg) => onMatchEnded(msg);
   c.onServerShutdown = () => {
@@ -686,7 +740,10 @@ function onMatchEnded(msg: MatchEndedMessage): void {
   scoreboard.hide();
   matchResultsShown = true;
   const isHost = roomView.youId === roomView.hostId;
-  results.show(msg.winnerId, msg.reason, msg.rows, net?.localPlayerId ?? null, isHost);
+  const localId = net?.localPlayerId ?? null;
+  // własna frakcja z finalnej tabeli (robustnie — gdyby standings nie dotarły tuż przed końcem)
+  const localFac = msg.rows.find((r) => r.id === localId)?.faction ?? localFaction;
+  results.show(msg, localId, localFac, isHost);
 }
 
 function onRoomJoined(msg: RoomJoinedMessage): void {
@@ -969,7 +1026,9 @@ function updateHudOverlays(): void {
     if (m.object.position.distanceToSquared(viewPos) > spotSqM || mi >= markers.length) continue;
     const marker = markers[mi]!;
     mi++;
-    marker.setColorHex(entityColorHex(id, false)); // FFA: unikatowy kolor per id
+    // drużynowy: czerwony wróg / zielony sojusznik (paleta foe/friend); FFA: unikatowy kolor per id
+    if (matchMode === 'team') marker.setFoe(factionById.get(id) !== localFaction);
+    else marker.setColorHex(entityColorHex(id, false));
     marker.update(m.object.position, viewPos, camera, w, h);
   }
   for (; mi < markers.length; mi++) markers[mi]!.hide();
@@ -1049,11 +1108,12 @@ function updateZoneBar(): void {
     zoneBar.setVisible(false);
     return;
   }
-  const localId = net?.localPlayerId ?? null;
+  // fronty po FRAKCJI: własna drużyna vs najlepsza wroga (drużynowy: skrzydłowi współdzielą
+  // czas strefy; FFA: frakcja = id, więc redukuje się do „własny vs najlepszy wróg" jak w f17).
   let mySec = 0;
   let enemySec = 0;
   for (const r of latestStandings!.rows) {
-    if (r.id === localId) mySec = r.zoneSeconds;
+    if (r.faction === localFaction) mySec = Math.max(mySec, r.zoneSeconds);
     else if (r.zoneSeconds > enemySec) enemySec = r.zoneSeconds;
   }
   const state: ZoneBarState =
@@ -1061,7 +1121,7 @@ function updateZoneBar(): void {
       ? zoneStatus.occupied
         ? 'contested'
         : 'neutral'
-      : zoneStatus.controlling === localId
+      : zoneStatus.controlling === localFaction
         ? 'own'
         : 'enemy';
   zoneBar.setVisible(true);
@@ -1074,13 +1134,19 @@ function rosterRows(): readonly RosterRow[] {
   const localId = net?.localPlayerId ?? null;
   return latestStandings.rows.map((r: StandingRow): RosterRow => {
     const isPlayer = r.id === localId;
+    // drużynowy: wyeliminowany = wyczerpał życia (MATCH_LIVES) i nie żyje ani nie spada (wrak/respawn
+    // = wciąż w walce, jak SP). FFA: respawn bez limitu żyć → nigdy „stracony". Fazę życia bierzemy
+    // z renderowanego stanu encji (lifeById; snapshot binarny nie niesie liczby żyć).
+    const life = lifeById.get(r.id);
+    const isLost =
+      matchMode === 'team' && r.deaths >= MATCH_LIVES && life !== 'alive' && life !== 'dying';
     return {
       name: r.nick,
       kills: r.kills,
       assists: r.assists,
       colorCss: cssColor(entityColorHex(r.id, isPlayer)),
       isPlayer,
-      isLost: false, // FFA online: respawn bez limitu żyć (eliminacja dopiero w drużynowym)
+      isLost,
     };
   });
 }

@@ -1,4 +1,4 @@
-import type { MatchEndReason, StandingRow } from '@air-combat/shared';
+import type { MatchEndReason, MatchEndedMessage, MatchMode, StandingRow } from '@air-combat/shared';
 
 // Nakładki pętli meczu (faza 13) jako vanilla DOM nad canvasem (jak lobby-ui — Preact
 // dopiero, gdy vanilla zaboli). Dwie nakładki:
@@ -7,6 +7,86 @@ import type { MatchEndReason, StandingRow } from '@air-combat/shared';
 //  • ResultsOverlay — ekran końca meczu: zwycięzca + finalna tabela + rewanż / wyjście.
 // Nicki innych graczy trafiają do DOM → ZAWSZE przez textContent (XSS). Moduł nie zna
 // sieci: woła callbacki (rewanż/wyjście), a online-main spina go z NetClient.
+//
+// Faza 18 cz.2: render zależny od trybu (StandingsMessage.mode). W FFA — płaska lista
+// rankingowa (jak f13). W drużynowym — grupowanie po frakcji z nagłówkiem drużyny (agregat
+// Z/Ś/A + strefa), własna drużyna pierwsza; baner wyniku i powód zależne od trybu (eliminacja
+// vs limit zestrzeleń), zwycięstwo wg `winningFaction` zamiast pojedynczego `winnerId`.
+
+/** Kolory nagłówków drużyn na scoreboardzie (spójne z markerami foe/friend i ZoneBar). */
+const TEAM_OWN_COLOR = '#5fe88a';
+const TEAM_FOE_COLOR = '#ff6a4a';
+
+/** Powód zakończenia jako tekst — w drużynowym `'score'` znaczy eliminację, nie limit zestrzeleń. */
+function reasonText(reason: MatchEndReason, mode: MatchMode): string {
+  if (reason === 'zone') return 'przejęto strefę kontroli';
+  if (mode === 'team') return 'przeciwna drużyna wyeliminowana';
+  return reason === 'score' ? 'osiągnięto limit zestrzeleń' : 'upłynął czas meczu';
+}
+
+/** Frakcje w kolejności renderu: własna drużyna pierwsza, potem rosnąco po numerze. */
+function orderedFactions(rows: readonly StandingRow[], localFaction: number): number[] {
+  const set = new Set<number>();
+  for (const r of rows) set.add(r.faction);
+  return [...set].sort((a, b) => {
+    if (a === localFaction) return -1;
+    if (b === localFaction) return 1;
+    return a - b;
+  });
+}
+
+/** Nagłówek drużyny: nazwa (kolor wg „swoja/wroga") + agregat Z/Ś/A i czas strefy (liczony raz). */
+function teamHeaderRow(faction: number, localFaction: number, rows: readonly StandingRow[]): HTMLDivElement {
+  const own = faction === localFaction;
+  const tr = el('div', 'mui-row mui-team');
+  const rankCell = el('span', 'mui-cell mui-rank');
+  const nameCell = el('span', 'mui-cell mui-name');
+  nameCell.textContent = own ? 'Twoja drużyna' : 'Wrogowie';
+  nameCell.style.color = own ? TEAM_OWN_COLOR : TEAM_FOE_COLOR;
+  let kills = 0;
+  let deaths = 0;
+  let assists = 0;
+  let zoneSeconds = 0;
+  for (const r of rows) {
+    kills += r.kills;
+    deaths += r.deaths;
+    assists += r.assists;
+    zoneSeconds = Math.max(zoneSeconds, r.zoneSeconds); // strefa wspólna dla drużyny → bierzemy raz
+  }
+  const killsCell = el('span', 'mui-cell mui-num');
+  killsCell.textContent = String(kills);
+  const deathsCell = el('span', 'mui-cell mui-num');
+  deathsCell.textContent = String(deaths);
+  const assistsCell = el('span', 'mui-cell mui-num');
+  assistsCell.textContent = String(assists);
+  const zoneCell = el('span', 'mui-cell mui-num');
+  zoneCell.textContent = formatClock(zoneSeconds);
+  const pingCell = el('span', 'mui-cell mui-num');
+  tr.append(rankCell, nameCell, killsCell, deathsCell, assistsCell, zoneCell, pingCell);
+  return tr;
+}
+
+/**
+ * Wiersze tabeli wyników gotowe do wstawienia. FFA: nagłówek + płaska lista (ranking serwera).
+ * Drużynowy: nagłówek + dla każdej frakcji (własna pierwsza) nagłówek drużyny i jej piloci.
+ */
+function standingsNodes(
+  rows: readonly StandingRow[],
+  localId: number | null,
+  localFaction: number,
+  mode: MatchMode,
+): HTMLElement[] {
+  if (mode !== 'team') {
+    return [headerRow(), ...rows.map((row, i) => standingRow(row, i + 1, localId))];
+  }
+  const nodes: HTMLElement[] = [headerRow()];
+  for (const faction of orderedFactions(rows, localFaction)) {
+    const teamRows = rows.filter((r) => r.faction === faction);
+    nodes.push(teamHeaderRow(faction, localFaction, teamRows));
+    teamRows.forEach((row, i) => nodes.push(standingRow(row, i + 1, localId)));
+  }
+  return nodes;
+}
 
 /** Formatuje sekundy jako MM:SS (zegar meczu). */
 function formatClock(totalS: number): string {
@@ -67,6 +147,8 @@ export class ScoreboardOverlay {
   private lastRows: StandingRow[] = [];
   private lastScoreLimit = 0;
   private lastTimeLeftS = 0;
+  private mode: MatchMode = 'ffa';
+  private localFaction = 0;
   private localId: number | null = null;
   private shown = false;
 
@@ -90,10 +172,18 @@ export class ScoreboardOverlay {
   }
 
   /** Aktualizuje dane (z wiadomości standings); przerysowuje, jeśli widoczne. */
-  update(rows: StandingRow[], scoreLimit: number, timeLeftS: number): void {
+  update(
+    rows: StandingRow[],
+    scoreLimit: number,
+    timeLeftS: number,
+    mode: MatchMode,
+    localFaction: number,
+  ): void {
     this.lastRows = rows;
     this.lastScoreLimit = scoreLimit;
     this.lastTimeLeftS = timeLeftS;
+    this.mode = mode;
+    this.localFaction = localFaction;
     if (this.shown) this.render();
   }
 
@@ -114,10 +204,13 @@ export class ScoreboardOverlay {
   }
 
   private render(): void {
-    this.titleEl.textContent = `TABELA WYNIKÓW — do ${String(this.lastScoreLimit)} zestrzeleń · pozostało ${formatClock(this.lastTimeLeftS)}`;
+    // drużynowy: eliminacja bez limitu czasu/zestrzeleń → tytuł bez zegara (timeLeftS = 0 z serwera)
+    this.titleEl.textContent =
+      this.mode === 'team'
+        ? 'TABELA WYNIKÓW — eliminacja drużynowa'
+        : `TABELA WYNIKÓW — do ${String(this.lastScoreLimit)} zestrzeleń · pozostało ${formatClock(this.lastTimeLeftS)}`;
     this.tableEl.replaceChildren(
-      headerRow(),
-      ...this.lastRows.map((row, i) => standingRow(row, i + 1, this.localId)),
+      ...standingsNodes(this.lastRows, this.localId, this.localFaction, this.mode),
     );
   }
 }
@@ -155,35 +248,37 @@ export class ResultsOverlay {
   /**
    * Pokazuje ekran wyników. `isHost` decyduje o dostępności przycisku rewanżu (rewanż
    * startuje tylko host); pozostali czekają, aż host zagra ponownie (albo wychodzą).
+   * W trybie drużynowym zwycięstwo jest DRUŻYNOWE (`winningFaction`) — baner i tabela
+   * mówią o drużynie, nie o pojedynczym pilocie.
    */
-  show(
-    winnerId: number | null,
-    reason: MatchEndReason,
-    rows: StandingRow[],
-    localId: number | null,
-    isHost: boolean,
-  ): void {
-    const winner = winnerId !== null ? rows.find((r) => r.id === winnerId) : undefined;
-    const won = winnerId !== null && winnerId === localId;
-    const reasonText =
-      reason === 'score'
-        ? 'osiągnięto limit zestrzeleń'
-        : reason === 'zone'
-          ? 'przejęto strefę kontroli'
-          : 'upłynął czas meczu';
-    this.bannerEl.classList.toggle('mui-banner-win', won);
-    if (won) {
-      this.bannerEl.textContent = `🏆 ZWYCIĘSTWO! (${reasonText})`;
-    } else if (winner) {
-      this.bannerEl.textContent = `🏆 Wygrywa ${winner.nick} (${reasonText})`;
+  show(msg: MatchEndedMessage, localId: number | null, localFaction: number, isHost: boolean): void {
+    const { mode, winnerId, winningFaction, reason, rows } = msg;
+    const reasonStr = reasonText(reason, mode);
+
+    if (mode === 'team') {
+      const won = winningFaction !== null && winningFaction === localFaction;
+      this.bannerEl.classList.toggle('mui-banner-win', won);
+      if (winningFaction === null) {
+        this.bannerEl.textContent = `Remis (${reasonStr})`; // obustronna eliminacja w jednym ticku
+      } else if (won) {
+        this.bannerEl.textContent = `🏆 ZWYCIĘSTWO DRUŻYNY! (${reasonStr})`;
+      } else {
+        this.bannerEl.textContent = `Wygrywają Wrogowie (${reasonStr})`;
+      }
     } else {
-      this.bannerEl.textContent = `Koniec (${reasonText})`;
+      const winner = winnerId !== null ? rows.find((r) => r.id === winnerId) : undefined;
+      const won = winnerId !== null && winnerId === localId;
+      this.bannerEl.classList.toggle('mui-banner-win', won);
+      if (won) {
+        this.bannerEl.textContent = `🏆 ZWYCIĘSTWO! (${reasonStr})`;
+      } else if (winner) {
+        this.bannerEl.textContent = `🏆 Wygrywa ${winner.nick} (${reasonStr})`;
+      } else {
+        this.bannerEl.textContent = `Koniec (${reasonStr})`;
+      }
     }
 
-    this.tableEl.replaceChildren(
-      headerRow(),
-      ...rows.map((row, i) => standingRow(row, i + 1, localId)),
-    );
+    this.tableEl.replaceChildren(...standingsNodes(rows, localId, localFaction, mode));
 
     this.rematchBtn.style.display = isHost ? '' : 'none';
     this.hintEl.textContent = isHost
@@ -242,6 +337,8 @@ const MATCH_UI_CSS = `
 .mui-row { display: grid; grid-template-columns: 32px 1fr 44px 44px 44px 56px 56px; align-items: center; padding: 4px 8px; border-radius: 4px; }
 .mui-head { color: #9fc4e6; border-bottom: 1px solid #2a3f54; border-radius: 0; font-size: 13px; }
 .mui-row-self { background: rgba(200,88,31,0.28); }
+.mui-team { background: rgba(40,60,80,0.4); font-weight: 700; border-top: 1px solid #2a3f54; margin-top: 4px; }
+.mui-team .mui-name { padding-left: 2px; letter-spacing: 0.5px; }
 .mui-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mui-rank { color: #9fc4e6; }
 .mui-name { padding-right: 8px; }
