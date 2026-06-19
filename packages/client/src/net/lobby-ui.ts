@@ -5,6 +5,7 @@ import {
   MAX_NICK_LENGTH,
   MAX_PLAYERS_PER_ROOM,
   ROOM_CODE_LENGTH,
+  ZONE_CAPTURE_SECONDS,
   sanitizeNick,
   type DifficultyLevel,
   type MatchMode,
@@ -28,6 +29,41 @@ const MODE_OPTIONS: readonly { value: MatchMode; label: string }[] = [
   { value: 'ffa', label: 'FFA (każdy na każdego)' },
   { value: 'team', label: 'Drużynowy (2 drużyny)' },
 ];
+
+// Sterowanie w wersji ONLINE (onboarding, parytet z ekranem „JAK GRAĆ" w menu.ts SP).
+// Źródło prawdy = input.ts + obsługa klawiszy w online-main.ts. Różnice względem SP: BEZ
+// „Respawn (R)" (w MP nie ma respawnu graczem), dochodzi „Panel sieci (N)".
+const ONLINE_CONTROL_ROWS: readonly (readonly [string, string])[] = [
+  ['Celowanie / lot', 'Mysz (kliknij w ekran)'],
+  ['Ogień', 'LPM  •  Spacja'],
+  ['Nos w górę / w dół', 'S / ↓   •   W / ↑'],
+  ['Przechylenie L / P', 'A / ←   •   D / →'],
+  ['Ster kierunku L / P', 'Q   •   E'],
+  ['Gaz +  /  −', 'L.Shift  /  L.Ctrl'],
+  ['Kamera (pościg / orbita)', 'C'],
+  ['Tabela wyników', 'Tab (przytrzymaj)'],
+  ['Panel sieci', 'N'],
+];
+
+/** Klucz localStorage: czy gracz widział już ekran sterowania online (auto-pokaz tylko 1×). */
+const HELP_SEEN_KEY = 'air-combat:help-seen-online';
+
+/** Czy onboarding był już pokazany (localStorage bywa niedostępny — wtedy „tak", bez zapętlenia). */
+function helpSeenOnline(): boolean {
+  try {
+    return localStorage.getItem(HELP_SEEN_KEY) === '1';
+  } catch {
+    return true;
+  }
+}
+
+function markHelpSeenOnline(): void {
+  try {
+    localStorage.setItem(HELP_SEEN_KEY, '1');
+  } catch {
+    /* brak localStorage — trudno; onboarding i tak dostępny pod przyciskiem */
+  }
+}
 
 // Ekrany lobby (faza 10) jako vanilla DOM nad canvasem (decyzja PLAN.md — Preact dopiero,
 // gdy vanilla zaboli). Dwa widoki: 'entry' (nick + szybka gra / utwórz / dołącz kodem +
@@ -58,6 +94,7 @@ export class LobbyUI {
   private readonly root: HTMLDivElement;
   private readonly entry: HTMLDivElement;
   private readonly waiting: HTMLDivElement;
+  private readonly help: HTMLDivElement;
   private readonly nickInput: HTMLInputElement;
   private readonly modeSelect: HTMLSelectElement;
   private readonly botCountSelect: HTMLSelectElement;
@@ -171,6 +208,10 @@ export class LobbyUI {
     listHead.append(listTitle, refreshBtn);
     this.roomListEl = el('div', 'lobby-room-list');
 
+    const helpBtn = button('❔ Jak grać — sterowanie i cel', 'lobby-btn lobby-btn-small', () =>
+      this.showHelp(),
+    );
+
     this.entry.append(
       title,
       sub,
@@ -184,6 +225,8 @@ export class LobbyUI {
       this.errorEl,
       listHead,
       this.roomListEl,
+      helpBtn,
+      attributionEl(),
     );
     this.syncModeUI(); // ustaw widoczność limitu zestrzeleń wg startowego trybu
 
@@ -202,7 +245,33 @@ export class LobbyUI {
     panel.append(wTitle, codeCaption, this.waitingCodeEl, this.waitingPlayersEl, this.waitingHintEl, this.startBtn, leaveBtn);
     this.waiting.append(panel);
 
-    this.root.append(this.entry, this.waiting);
+    // --- nakładka „jak grać" (onboarding, parytet z menu.ts SP) ---
+    this.help = el('div', 'lobby-help');
+    const helpPanel = el('div', 'lobby-help-panel');
+    const hTitle = el('div', 'lobby-title');
+    hTitle.textContent = 'JAK GRAĆ';
+    const hSub = el('div', 'lobby-sub');
+    hSub.textContent = 'Spitfire Mk IIa — kamera pościgowa, celowanie myszą';
+    const helpTable = el('table', 'lobby-help-table');
+    for (const [action, keys] of ONLINE_CONTROL_ROWS) {
+      const tr = document.createElement('tr');
+      const actionCell = el('td', 'lobby-help-action');
+      actionCell.textContent = action;
+      const keysCell = el('td', 'lobby-help-keys');
+      keysCell.textContent = keys;
+      tr.append(actionCell, keysCell);
+      helpTable.append(tr);
+    }
+    const goal = el('div', 'lobby-help-goal');
+    const zoneMin = Math.round(ZONE_CAPTURE_SECONDS / 60);
+    goal.textContent =
+      `Cel: utrzymaj STREFĘ nad górą przez ${String(zoneMin)} min albo wybij wrogów. ` +
+      `Uważaj na ziemię i przeciągnięcie przy ostrym zakręcie.`;
+    const helpClose = button('▶ Zaczynamy', 'lobby-btn lobby-btn-primary', () => this.hideHelp());
+    helpPanel.append(hTitle, hSub, helpTable, goal, helpClose);
+    this.help.append(helpPanel);
+
+    this.root.append(this.entry, this.waiting, this.help);
     document.body.appendChild(this.root);
     this.hide();
   }
@@ -251,6 +320,20 @@ export class LobbyUI {
     this.root.classList.add('show');
     this.entry.classList.add('show');
     this.waiting.classList.remove('show');
+    // onboarding przy 1. wejściu do lobby (parytet z SP) — potem dostępny pod przyciskiem
+    if (!helpSeenOnline()) {
+      markHelpSeenOnline();
+      this.showHelp();
+    }
+  }
+
+  /** Nakładka sterowania/celu (onboarding). Auto przy 1. wizycie + ręcznie z przycisku. */
+  showHelp(): void {
+    this.help.classList.add('show');
+  }
+
+  private hideHelp(): void {
+    this.help.classList.remove('show');
   }
 
   setRoomList(rooms: RoomSummary[]): void {
@@ -316,6 +399,7 @@ export class LobbyUI {
     this.root.classList.remove('show');
     this.entry.classList.remove('show');
     this.waiting.classList.remove('show');
+    this.help.classList.remove('show');
   }
 }
 
@@ -347,6 +431,24 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
   b.textContent = label;
   b.addEventListener('click', onClick);
   return b;
+}
+
+/**
+ * Atrybucja modelu 3D na ekranie wejściowym lobby. CC-BY 4.0 wymaga widocznego uznania
+ * autorstwa w KAŻDYM wydaniu używającym assetu — publiczny deploy online ładuje ten sam GLB
+ * co SP (plane-mesh.ts), więc kredyt jest wymagany licencją (parytet z modelAttribution() w
+ * menu.ts). Tekst przez textContent + kontrolowany link (bez innerHTML — bezpieczeństwo).
+ */
+function attributionEl(): HTMLDivElement {
+  const wrap = el('div', 'lobby-attribution');
+  wrap.append(document.createTextNode('Model: „Supermarine Spitfire Mk.IIa" — '));
+  const a = document.createElement('a');
+  a.textContent = 'barking_dogo';
+  a.href = 'https://sketchfab.com/barking_dogo';
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  wrap.append(a, document.createTextNode(' (Sketchfab) — licencja CC-BY 4.0'));
+  return wrap;
 }
 
 function selectEl(
@@ -446,4 +548,21 @@ const LOBBY_CSS = `
 .lobby-player-row { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: rgba(12,22,34,0.8); border-radius: 5px; }
 .lobby-player-tag { width: 44px; font-size: 12px; font-weight: 700; color: #ffd24a; }
 .lobby-player-name { color: #eaf3ff; }
+.lobby-attribution { margin-top: 16px; font: 11px/1.4 monospace; color: #5f7488; max-width: 34em; text-align: center; }
+.lobby-attribution a { color: #6a93b8; }
+.lobby-help {
+  position: absolute; inset: 0; z-index: 2; display: none;
+  align-items: center; justify-content: center; padding: 24px; box-sizing: border-box;
+  background: rgba(4,8,14,0.82);
+}
+.lobby-help.show { display: flex; }
+.lobby-help-panel {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 26px 34px; border-radius: 12px; max-width: 90vw; max-height: 90vh; overflow-y: auto;
+  background: rgba(8,16,26,0.96); border: 1px solid #2a3f54; box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+}
+.lobby-help-table { border-collapse: collapse; font: 14px monospace; color: #cde; margin: 8px 0; }
+.lobby-help-action { text-align: right; padding: 4px 16px; color: #9ab; }
+.lobby-help-keys { text-align: left; padding: 4px 16px; color: #eaf3ff; font-weight: 600; }
+.lobby-help-goal { font: 12px/1.5 monospace; color: #9ab; margin: 12px 0 4px; max-width: 34em; text-align: center; }
 `;
