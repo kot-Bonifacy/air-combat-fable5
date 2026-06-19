@@ -267,6 +267,54 @@ po restarcie pokazuje komunikat, **nie** wieczny spinner.
 
 ---
 
+## Fazy 14–18 — blok parytetu MP↔SP (wizualia + tryb drużynowy)
+
+Fazy 14–18 domykają parytet multiplayer↔single-player. **Wdrożenie nie wymaga żadnych nowych
+kroków:** artefakty deployu (`Dockerfile.*`, `docker-compose.yml`, `nginx.conf`, `.env`) **nie
+zmieniały się od fazy 14**, a `PROTOCOL_VERSION` **wciąż wynosi 3** (fazy 15–18 dokładały tylko
+addytywne pola JSON — bez bumpu). Zwykła procedura aktualizacji (sekcja niżej: `git pull` +
+`docker compose up -d --build`) wgrywa front i backend razem z tego samego commitu — to wszystko,
+czego potrzeba. Po update poproś graczy o **twardy refresh** (stary bundle = stary klient).
+
+Co przybyło w grze (do zweryfikowania w smoke teście):
+
+- **f14 — wizualia/HUD online:** markery wrogów ze spottingiem, celownik + znacznik nosa, dym
+  uszkodzeń, wybuchy, ostrzeżenie granicy areny, pełny HUD-G (sztuczny horyzont, stall, szarzenie).
+- **f15–16 — model śmierci:** zestrzelenie/kolizja → **sterowalny spadający wrak** (W/S/A/D, Q/E),
+  dym wraku, wybuch dopiero przy ziemi; nakładka decyzji, **tryb obserwatora** (LPM cyklicznie
+  zmienia oglądany samolot), kamera **orbitalna** (klawisz `C`). Brak „pustego kadru".
+- **f17 — strefa KotH:** pasek `ZoneBar` u góry; przejęcie strefy (3 min wyłącznej kontroli) kończy
+  mecz jako dodatkowy warunek zwycięstwa obok limitu zestrzeleń/czasu.
+- **f18 — tryb drużynowy:** przy tworzeniu pokoju host wybiera **FFA / Drużynowy**.
+
+### Smoke test bloku parytetu (rozszerza 13.4)
+
+Wykonaj 13.4 (FFA) — działa jak dotąd — a dodatkowo sprawdź:
+
+- [x] **wrak + obserwator:** daj się zestrzelić → sterujesz spadającym wrakiem, możesz strzelać
+      (Spacja); po rozbiciu nakładka decyzji → **Tryb obserwatora** (LPM przełącza samoloty), `C`
+      przełącza kamerę orbitalną; respawn (FFA) wraca do gry,
+- [x] **strefa:** leć nad górę w centrum mapy → `ZoneBar` nabija front; wyłączna kontrola do końca
+      paska kończy mecz (ekran wyników, powód „przejęto strefę kontroli").
+
+### Smoke test trybu drużynowego (faza 18 — NOWE)
+
+Z dwóch komputerów + boty, **przy tworzeniu pokoju wybierz tryb „Drużynowy"**:
+
+- [x] **auto-balans:** uczestnicy (gracze + boty) dzielą się na 2 równe drużyny (bez wyboru drużyny),
+- [x] **kolory:** markery **sojuszników zielone**, **wrogów czerwone** (FFA było unikatowe per id),
+- [x] **friendly fire:** pocisk rani sojusznika, ale teamkill **nie daje punktu**, a kill-feed pisze
+      „✕ … → … **(sojusznik!)**" (brak złotego markera zestrzelenia),
+- [x] **eliminacja:** 1 życie na samolot, **brak respawnu**; padnięta drużyna nie wraca,
+- [x] **scoreboard (Tab):** wiersze **pogrupowane po drużynie** z nagłówkiem „Twoja drużyna" /
+      „Wrogowie" i agregatem (Z/Ś/A + strefa); tytuł bez zegara (brak limitu czasu),
+- [x] **obserwator:** po eliminacji oglądasz **tylko żywych sojuszników** (nie wrogów),
+- [x] **koniec meczu:** gdy padnie ostatni samolot przeciwnej drużyny **albo** przejmiesz strefę →
+      ekran wyników z banerem **drużynowym** (zwycięstwo/porażka/remis), tabela grupowana,
+- [x] w konsoli (F12) brak błędów; połączenie nadal przez `wss://…/ws`.
+
+---
+
 ## Aktualizacja po zmianach w kodzie
 
 Gdy wypchniesz nowe commity na GitHub, na VPS-ie:
@@ -281,9 +329,11 @@ docker compose up -d --build
 NPM i certyfikat zostają bez zmian. `docker compose up -d --build` przebudowuje oba serwisy
 (frontend + backend) i podmienia tylko te, których obraz się zmienił.
 
-> **Wersja protokołu (faza 14: `PROTOCOL_VERSION = 3`).** Frontend i backend MUSZĄ iść z tej
-> samej wersji kodu — klient v3 nie połączy się z serwerem v2 (handshake zwróci „niezgodna
-> wersja protokołu"). `docker compose up -d --build` buduje oba serwisy z tego samego `git pull`,
+> **Wersja protokołu (faza 14: `PROTOCOL_VERSION = 3`; fazy 15–18 BEZ bumpu — wciąż v3).** Frontend
+> i backend MUSZĄ iść z tej samej wersji kodu — klient v3 nie połączy się z serwerem v2 (handshake
+> zwróci „niezgodna wersja protokołu"). Fazy 15–18 dokładały tylko addytywne pola JSON (model śmierci,
+> strefa, tryb drużynowy), ale i tak wdrażaj **front + back razem z jednego `git pull`** — nowe pola
+> rozumie tylko zgodny klient. `docker compose up -d --build` buduje oba serwisy z tego samego commitu,
 > więc trzymanie się tej procedury gwarantuje zgodność. Nie wgrywaj samego frontendu ani samego
 > backendu z różnych commitów. Po update poproś graczy o twardy refresh (stary bundle = stara wersja).
 
