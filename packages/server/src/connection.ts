@@ -6,6 +6,7 @@ import {
   PHYSICS_HZ,
   PROTOCOL_VERSION,
   SNAPSHOT_HZ,
+  clampMatchMode,
   decodeInput,
   parseControlMessage,
   sanitizeNick,
@@ -182,8 +183,17 @@ export class Connection implements RoomMember {
         if (this.state === 'inRoom') return;
         const bots = clampBotCount(msg.bots);
         const difficulty = validDifficulty(msg.difficulty);
-        // scoreLimit klampuje lobby (clampScoreLimit) — surowa wartość bezpieczna (faza 13)
-        const { room, playerId } = this.lobby.createRoom(this.nick, this.token, this, bots, difficulty, msg.scoreLimit);
+        // scoreLimit i mode klampuje lobby (clampScoreLimit/clampMatchMode) — surowe wartości
+        // bezpieczne (faza 13/18; niezmiennik nr 11: brak zaufania do klienta)
+        const { room, playerId } = this.lobby.createRoom(
+          this.nick,
+          this.token,
+          this,
+          bots,
+          difficulty,
+          msg.scoreLimit,
+          clampMatchMode(msg.mode),
+        );
         this.enterRoom(room, playerId);
         return;
       }

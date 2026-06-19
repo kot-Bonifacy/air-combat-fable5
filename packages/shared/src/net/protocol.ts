@@ -2,6 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import { NetError } from '../errors';
 import type { DifficultyLevel } from '../ai/difficulty';
 import type { LifePhase, PlaneState } from '../physics/state';
+import type { MatchMode } from '../world/team';
 
 // Protokół sieciowy fazy 8 (docs/phases/faza-08.md).
 //
@@ -557,6 +558,8 @@ export interface RoomSummary {
   playerCount: number;
   maxPlayers: number;
   state: RoomState;
+  /** Tryb meczu pokoju (faza 18): FFA albo drużynowy — lobby pokazuje go na liście. */
+  mode: MatchMode;
 }
 
 /** Gracz w pokoju (lista poczekalni / scoreboard lobby). */
@@ -589,8 +592,12 @@ export interface CreateRoomMessage {
   bots?: number;
   /** Poziom trudności botów; brak/nieznany → serwerowy domyślny. */
   difficulty?: DifficultyLevel;
-  /** Limit zestrzeleń kończący mecz (5/10/20). Brak/poza listą → serwer klampuje (faza 13). */
+  /** Limit zestrzeleń kończący mecz FFA (5/10/20). Brak/poza listą → serwer klampuje (faza 13).
+   *  Ignorowany w trybie drużynowym (eliminacja jak SP: 1 życie/samolot, bez limitu czasu). */
   scoreLimit?: number;
+  /** Tryb meczu (faza 18): 'ffa' (deathmatch z respawnami) albo 'team' (drużynowy, eliminacja).
+   *  Brak/nieznany → serwer klampuje do 'ffa' (clampMatchMode, niezmiennik nr 11). */
+  mode?: MatchMode;
 }
 
 /** Klient → serwer: dołącz do pokoju o podanym kodzie. */
@@ -658,8 +665,10 @@ export interface MatchStartedMessage {
 }
 
 /**
- * Powód zakończenia meczu FFA: limit zestrzeleń, limit czasu albo przejęcie strefy
- * kontroli (faza 17 — KotH jako dodatkowy warunek zwycięstwa, obok limitu zestrzeleń/czasu).
+ * Powód zakończenia meczu: limit zestrzeleń (`'score'`), limit czasu (`'time'`) albo przejęcie
+ * strefy kontroli (`'zone'`, faza 17 — KotH jako dodatkowy warunek zwycięstwa). Tryb drużynowy
+ * (faza 18) używa `'score'` także dla eliminacji ostatniej drużyny (klient rozróżnia po `mode`);
+ * `'time'` w drużynowym nie występuje (brak limitu czasu, parytet z SP).
  */
 export type MatchEndReason = 'score' | 'time' | 'zone';
 
@@ -667,6 +676,9 @@ export type MatchEndReason = 'score' | 'time' | 'zone';
 export interface StandingRow {
   id: number;
   nick: string;
+  /** Frakcja/drużyna gracza (faza 18). FFA: frakcja = id (każdy osobno). Drużynowy: 0/1 (drużyna).
+   *  Klient koloruje markery wróg/sojusznik i grupuje scoreboard drużynowy po tym polu. */
+  faction: number;
   kills: number;
   deaths: number;
   assists: number;
@@ -693,20 +705,27 @@ export interface ZoneStatus {
 /** Serwer → klient: tabela wyników (Tab) + metryki meczu. Rozsyłana ~STANDINGS_BROADCAST_HZ. */
 export interface StandingsMessage {
   t: 'standings';
+  /** Tryb meczu (faza 18) — klient przełącza render FFA↔drużynowy (kolory markerów, scoreboard). */
+  mode: MatchMode;
   /** Posortowane rankingiem FFA (najlepszy pierwszy). */
   rows: StandingRow[];
   scoreLimit: number;
-  /** Pozostały czas meczu [s] (serwer liczy zegar; klient tylko wyświetla). */
+  /** Pozostały czas meczu [s] (serwer liczy zegar; klient tylko wyświetla). FFA: odlicza do
+   *  limitu; drużynowy: brak limitu czasu (serwer wysyła 0 — koniec przez eliminację/strefę). */
   timeLeftS: number;
-  /** Bieżąca okupacja strefy kontroli (faza 17) — status paska ZoneBar. */
+  /** Bieżąca okupacja strefy kontroli (faza 17) — status paska ZoneBar. Frakcja = drużyna w team. */
   zone: ZoneStatus;
 }
 
 /** Serwer → klient: koniec meczu — zwycięzca + finalna tabela (ekran wyników, rewanż). */
 export interface MatchEndedMessage {
   t: 'matchEnded';
-  /** Id zwycięzcy albo null (brak rozstrzygnięcia). */
+  /** Tryb zakończonego meczu (faza 18) — klient renderuje ekran wyników FFA albo drużynowy. */
+  mode: MatchMode;
+  /** Id zwycięzcy (FFA: lider; drużynowy: najlepszy gracz zwycięskiej drużyny) albo null. */
   winnerId: number | null;
+  /** Zwycięska frakcja/drużyna (faza 18) — null w FFA i przy remisie (obustronna eliminacja). */
+  winningFaction: number | null;
   reason: MatchEndReason;
   rows: StandingRow[];
 }

@@ -10,6 +10,7 @@ import {
   type DifficultyLevel,
   type GameEvent,
   type InputFrame,
+  type MatchMode,
   type MatchEndedMessage,
   type RoomJoinedMessage,
   type RoomListMessage,
@@ -205,8 +206,8 @@ export class NetClient {
     this.sendControl({ t: 'listRooms' });
   }
 
-  createRoom(bots = 0, difficulty?: DifficultyLevel, scoreLimit?: number): void {
-    this.sendControl({ t: 'createRoom', bots, difficulty, scoreLimit });
+  createRoom(bots = 0, difficulty?: DifficultyLevel, scoreLimit?: number, mode?: MatchMode): void {
+    this.sendControl({ t: 'createRoom', bots, difficulty, scoreLimit, mode });
   }
 
   joinRoom(code: string): void {

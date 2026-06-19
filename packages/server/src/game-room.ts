@@ -28,14 +28,18 @@ import {
   encodeSnapshot,
   evaluateFfa,
   eventsByteLength,
+  factionsInPlay,
+  MATCH_LIVES,
   nearestToroidalImage,
   pilotStep,
   planesCollide,
   resetHealth,
   segmentSphereHit,
+  smallerTeamIndex,
   snapshotByteLength,
   stepPilotedPlane,
   stepWreckPiloted,
+  TEAM_COUNT,
   totalAmmo,
   updateFire,
   updateLifecycle,
@@ -50,6 +54,8 @@ import {
   type Health,
   type InputFrame,
   type MatchEndReason,
+  type MatchMember,
+  type MatchMode,
   type PilotDemands,
   type PlaneConfig,
   type PlaneState,
@@ -130,6 +136,12 @@ export interface RoomMember {
 /** Stan gracza po stronie serwera: symulacja + filtr instruktora + ostatni input + tożsamość lobby. */
 interface ServerPlayer {
   readonly id: number;
+  /** Frakcja/drużyna (faza 18). FFA: frakcja = id (każdy osobno). Drużynowy: 0..TEAM_COUNT−1.
+   *  Ustawiana przy wejściu i przy starcie meczu (auto-balans); stabilna w trakcie meczu. */
+  faction: number;
+  /** Pozostałe życia w trybie eliminacyjnym (drużynowy, faza 18): MATCH_LIVES na samolot, jak SP.
+   *  0 = brak respawnu (gracz przechodzi w obserwatora). W FFA bez znaczenia (respawn nieskończony). */
+  livesLeft: number;
   readonly sim: SimPlane;
   readonly instructor: Instructor;
   readonly demands: PilotDemands;
@@ -175,6 +187,9 @@ export class GameRoom {
   readonly terrain: Terrain;
   readonly plane: PlaneConfig = SPITFIRE_MK2;
   state: RoomState = 'waiting';
+  /** Tryb meczu (faza 18): 'ffa' (deathmatch + respawn, faza 13) albo 'team' (drużynowy,
+   *  eliminacja jak SP). Ustawiany przez lobby przy tworzeniu pokoju; stały przez życie pokoju. */
+  mode: MatchMode = 'ffa';
   hostId: number | null = null;
   private readonly players = new Map<number, ServerPlayer>();
   private nextId = 0;
@@ -194,14 +209,18 @@ export class GameRoom {
   private endedTimerS = 0;
   /** Wynik ostatniego meczu (ekran wyników / diagnostyka). */
   winnerId: number | null = null;
+  /** Zwycięska drużyna ostatniego meczu drużynowego (faza 18); null w FFA i przy remisie. */
+  winningFaction: number | null = null;
   lastEndReason: MatchEndReason | null = null;
   /** Pierścień slotów startowych (pozycja + nos ku środkowi) — kandydaci wyboru spawnu. */
   private readonly spawnRing: { pos: Vector3; dir: Vector3 }[] = buildSpawnRing();
   private readonly spawnRingPositions: Vector3[] = this.spawnRing.map((s) => s.pos);
   /** Scratch pozycji żywych wrogów do wyboru spawnu (zero alokacji per respawn). */
   private readonly occupantScratch: Vector3[] = [];
-  /** Scratch tablicy wyników do oceny końca meczu (zero alokacji per tick). */
+  /** Scratch tablicy wyników do oceny końca meczu FFA (zero alokacji per tick). */
   private readonly ffaScratch: FfaScore[] = [];
+  /** Scratch uczestników do oceny eliminacji drużynowej (faza 18; factionsInPlay, zero alokacji). */
+  private readonly teamMembersScratch: MatchMember[] = [];
 
   // --- kontrola strefy KotH (faza 17): dodatkowy warunek zwycięstwa, parytet z SP ---
   /** Autorytatywny stan przejmowania strefy (KotH bez cofania); reset przy starcie meczu. */
@@ -277,6 +296,7 @@ export class GameRoom {
       playerCount: this.players.size,
       maxPlayers: MAX_PLAYERS_PER_ROOM,
       state: this.state,
+      mode: this.mode,
     };
   }
 
@@ -319,6 +339,8 @@ export class GameRoom {
     const slot = this.nextSlot++ % SPAWN_RING_SLOTS;
     const player: ServerPlayer = {
       id,
+      faction: id, // FFA domyślnie; tryb drużynowy nadpisze w assignFaction (auto-balans)
+      livesLeft: MATCH_LIVES,
       sim: createSimPlane(id + 1),
       instructor: new Instructor(),
       demands: createPilotDemands(),
@@ -350,12 +372,47 @@ export class GameRoom {
 
   /** Spawnuje świeżą encję; w trakcie meczu wchodzi jako late join (dead → spawn po RESPAWN_DELAY_S). */
   private enterWorld(player: ServerPlayer): void {
+    this.assignFaction(player); // auto-balans drużyn (faza 18); w FFA → frakcja = id
     this.spawn(player);
     if (this.state === 'playing') {
       player.sim.state.life = 'dead';
       player.sim.state.lifeTimerS = 0;
     }
     this.rebuildSnapshotSources();
+  }
+
+  /**
+   * Przydziela frakcję pojedynczej encji (auto-balans, faza 18). FFA: frakcja = id (każdy
+   * osobno, zgodnie ze strefą f17). Drużynowy: do MNIEJSZEJ drużyny (host, boty i late-join
+   * trafiają na zmianę) — istniejący gracze mają już frakcje drużyn 0..TEAM_COUNT−1.
+   */
+  private assignFaction(player: ServerPlayer): void {
+    if (this.mode !== 'team') {
+      player.faction = player.id;
+      return;
+    }
+    const counts = new Array<number>(TEAM_COUNT).fill(0);
+    for (const p of this.players.values()) {
+      if (p !== player && p.faction >= 0 && p.faction < TEAM_COUNT) counts[p.faction] = (counts[p.faction] ?? 0) + 1;
+    }
+    player.faction = smallerTeamIndex(counts);
+  }
+
+  /**
+   * Przydziela frakcje WSZYSTKIM uczestnikom (start/rewanż meczu). FFA: frakcja = id. Drużynowy:
+   * równy podział w kolejności id (host→0, kolejny→1, …) — deterministyczny i zbalansowany.
+   */
+  private assignFactions(): void {
+    if (this.mode !== 'team') {
+      for (const p of this.players.values()) p.faction = p.id;
+      return;
+    }
+    const counts = new Array<number>(TEAM_COUNT).fill(0);
+    for (const p of this.players.values()) {
+      const t = smallerTeamIndex(counts);
+      p.faction = t;
+      counts[t] = (counts[t] ?? 0) + 1;
+    }
   }
 
   /** Czy gracz o tym id istnieje (np. po reconnect/leave). */
@@ -395,15 +452,20 @@ export class GameRoom {
     this.zone.reset();
     this.zoneControlling = null;
     this.zoneOccupied = false;
+    this.winningFaction = null;
+    // przydział drużyn na nowy mecz (faza 18): zbalansowane frakcje przed rozliczaniem życia
+    this.assignFactions();
     for (const player of this.players.values()) {
       player.kills = 0;
       player.assists = 0;
       player.deaths = 0;
+      player.livesLeft = MATCH_LIVES; // pełna pula żyć na nowy mecz (drużynowy: 1/samolot jak SP)
       this.spawn(player);
     }
     this.broadcastControl({ t: 'matchStarted' });
     this.broadcastRoomUpdate();
-    this.onInfo?.(`pokój ${this.code}: start meczu (do ${String(this.scoreLimit)} zestrzeleń, ${String(this.players.size)} uczestników)`);
+    const goal = this.mode === 'team' ? 'eliminacja drużyny / strefa' : `do ${String(this.scoreLimit)} zestrzeleń`;
+    this.onInfo?.(`pokój ${this.code}: start meczu (${this.mode}, ${goal}, ${String(this.players.size)} uczestników)`);
   }
 
   /** Odłącza połączenie gracza, trzymając slot na reconnect (okno RECONNECT_WINDOW_MS). */
@@ -596,9 +658,15 @@ export class GameRoom {
         `serwer ${this.code}: wrak ${String(player.id)}`,
       );
       this.fixWrapPrev(player);
-    } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
+    } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady' && this.canRespawn(player)) {
       this.spawn(player, true);
     }
+  }
+
+  /** Czy gracz może się odrodzić (faza 18): FFA zawsze; drużynowy tylko z zapasem żyć (1/samolot
+   *  jak SP) — bez żyć przechodzi w obserwatora, nie respawnuje. updateLifecycle i tak biegnie. */
+  private canRespawn(player: ServerPlayer): boolean {
+    return this.mode !== 'team' || player.livesLeft > 0;
   }
 
   /**
@@ -652,16 +720,18 @@ export class GameRoom {
         `serwer ${this.code}: wrak ${String(player.id)}`,
       );
       this.fixWrapPrev(player);
-    } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady') {
+    } else if (updateLifecycle(state, this.terrain, dtS) === 'respawnReady' && this.canRespawn(player)) {
       this.spawn(player, true);
     }
   }
 
-  /** Żywe stany INNYCH uczestników jako kandydaci na cel bota (FFA: każdy poza nim samym). */
+  /** Żywe stany WROGÓW jako kandydaci na cel bota: FFA — każdy poza nim; drużynowy — inna drużyna
+   *  (bot nie bierze na cel sojuszników, parytet z SP enemyCandidates). */
   private collectBotTargets(self: ServerPlayer): readonly PlaneState[] {
     this.botTargetScratch.length = 0;
     for (const p of this.players.values()) {
       if (p === self || p.sim.state.life !== 'alive') continue;
+      if (this.mode === 'team' && p.faction === self.faction) continue;
       this.botTargetScratch.push(p.sim.state);
     }
     return this.botTargetScratch;
@@ -749,15 +819,24 @@ export class GameRoom {
     this.enterWreck(victim);
     this.queueEvent({ kind: 'kill', killerId, victimId: victim.id, cause: 'air' });
     const killer = this.players.get(killerId);
-    if (killer && killer !== victim) killer.kills++;
+    // kredyt tylko za zestrzelenie WROGA (faza 18: teamkill bez punktu). W FFA frakcja = id,
+    // więc warunek redukuje się do „nie samobójstwo" → zachowanie z fazy 13 bez zmian.
+    if (killer && killer !== victim && killer.faction !== victim.faction) killer.kills++;
     this.creditAssists(victim, killerId);
   }
 
-  /** Przejście ofiary w spadający wrak (zestrzelenie/kolizja): life 'dying' + zliczenie śmierci. */
+  /** Przejście ofiary w spadający wrak (zestrzelenie/kolizja): life 'dying' + śmierć + zużycie życia. */
   private enterWreck(victim: ServerPlayer): void {
     victim.sim.state.life = 'dying';
     victim.sim.state.lifeTimerS = 0; // licznik spadania (UI/diagnostyka); reset też przy uderzeniu
     victim.deaths++;
+    this.loseLife(victim);
+  }
+
+  /** Zużycie życia w trybie drużynowym (faza 18: eliminacja, MATCH_LIVES na samolot jak SP).
+   *  0 żyć → brak respawnu (canRespawn). W FFA bez efektu (respawn nieskończony, liczy się limit). */
+  private loseLife(victim: ServerPlayer): void {
+    if (this.mode === 'team') victim.livesLeft = Math.max(0, victim.livesLeft - 1);
   }
 
   /**
@@ -797,19 +876,21 @@ export class GameRoom {
     this.creditAssists(victim, null);
   }
 
-  /** Rozbicie o teren: śmierć, event KILL bez sprawcy + asysty dla wcześniejszych napastników. */
+  /** Rozbicie o teren: śmierć, zużycie życia, event KILL bez sprawcy + asysty dla napastników. */
   private onGroundDeath(victim: ServerPlayer): void {
     victim.deaths++;
+    this.loseLife(victim);
     this.queueEvent({ kind: 'kill', killerId: NO_KILLER, victimId: victim.id, cause: 'ground' });
     this.creditAssists(victim, null);
   }
 
-  /** Asysta dla każdego, kto wcześniej trafił ofiarę — poza zabójcą (ma już zestrzelenie). */
+  /** Asysta dla każdego WROGA, kto wcześniej trafił ofiarę — poza zabójcą (ma już zestrzelenie).
+   *  Faza 18: trafienie sojusznika (ta sama frakcja) nie daje asysty. FFA bez zmian (frakcja = id). */
   private creditAssists(victim: ServerPlayer, killerId: number | null): void {
     for (const attackerId of victim.damagedBy) {
       if (attackerId === killerId) continue;
       const attacker = this.players.get(attackerId);
-      if (attacker && attacker !== victim) attacker.assists++;
+      if (attacker && attacker !== victim && attacker.faction !== victim.faction) attacker.assists++;
     }
     victim.damagedBy.clear();
   }
@@ -884,6 +965,16 @@ export class GameRoom {
     return this.players.get(id)?.deaths ?? 0;
   }
 
+  /** Frakcja/drużyna gracza (faza 18) — diagnostyka/testy (FFA: = id; drużynowy: 0..TEAM_COUNT−1). */
+  factionOf(id: number): number {
+    return this.players.get(id)?.faction ?? -1;
+  }
+
+  /** Pozostałe życia gracza w trybie eliminacyjnym (faza 18) — diagnostyka/testy. */
+  livesOf(id: number): number {
+    return this.players.get(id)?.livesLeft ?? 0;
+  }
+
   /**
    * Kontrola strefy KotH w jednym ticku (faza 17, parytet z SP/updateZone). Zbiera ŻYWYCH
    * okupantów (FFA: każdy gracz osobną frakcją = jego id; faza 18 wprowadzi drużyny),
@@ -896,7 +987,7 @@ export class GameRoom {
     for (const p of this.players.values()) {
       const o = this.zoneOccupantScratch[n];
       if (!o) break; // bufor = MAX_PLAYERS_PER_ROOM; nigdy nie przekroczone
-      o.faction = p.id; // FFA: gracz = frakcja (faza 18: drużyny)
+      o.faction = p.faction; // FFA: frakcja = id; drużynowy: drużyna (skrzydłowi liczą się wspólnie)
       o.alive = p.sim.state.life === 'alive';
       o.xM = p.sim.state.position.x;
       o.zM = p.sim.state.position.z;
@@ -913,34 +1004,87 @@ export class GameRoom {
    * rozliczeniu trafień; pierwszy spełniony warunek (strefa / limit zestrzeleń / czasu) kończy mecz.
    */
   private checkMatchEnd(): void {
-    // strefa KotH (faza 17) ma pierwszeństwo: pełne przejęcie = natychmiastowe zwycięstwo
-    // frakcji (FFA: gracza), OBOK limitu zestrzeleń/czasu — to główny cel gry (parytet z SP).
+    // strefa KotH (faza 17) ma pierwszeństwo w OBU trybach: pełne przejęcie = natychmiastowe
+    // zwycięstwo frakcji (FFA: gracza; drużynowy: drużyny) — to główny cel gry (parytet z SP).
     if (this.zone.captured !== null) {
-      this.endMatch(this.zone.captured, 'zone');
+      this.endByFaction(this.zone.captured, 'zone');
       return;
     }
+    // drużynowy (faza 18): eliminacja jak SP (match.ts) — ostatnia drużyna z samolotami wygrywa,
+    // BEZ limitu czasu. Zestrzelenia liczą się jako utrata żyć (1/samolot), nie jako limit FFA.
+    if (this.mode === 'team') {
+      this.checkTeamElimination();
+      return;
+    }
+    // FFA (faza 13): limit zestrzeleń albo czasu — co pierwsze.
     this.ffaScratch.length = 0;
     for (const p of this.players.values()) {
       this.ffaScratch.push({ id: p.id, kills: p.kills, deaths: p.deaths });
     }
     const result = evaluateFfa(this.ffaScratch, this.matchClockS, this.scoreLimit, MATCH_TIME_LIMIT_S);
-    if (result.ended && result.reason) this.endMatch(result.winnerId, result.reason);
+    if (result.ended && result.reason) this.endMatch(result.winnerId, null, result.reason);
+  }
+
+  /**
+   * Eliminacja drużynowa (faza 18, parytet z SP/match.ts): mecz kończy się, gdy zostaje ≤1 drużyna
+   * z samolotami (życiami). Wymaga ≥TEAM_COUNT drużyn w grze (degeneracja: pokój z jedną drużyną
+   * nie „wygrywa przez eliminację" — czeka na strefę). Obustronna eliminacja w tym samym ticku
+   * (0 drużyn w grze) → remis (winningFaction = null). Powód `'score'` (zestrzelenia), bez `'time'`.
+   */
+  private checkTeamElimination(): void {
+    this.teamMembersScratch.length = 0;
+    const factions = new Set<number>();
+    for (const p of this.players.values()) {
+      this.teamMembersScratch.push({ faction: p.faction, livesLeft: p.livesLeft });
+      factions.add(p.faction);
+    }
+    if (factions.size < TEAM_COUNT) return; // mniej niż 2 drużyny → brak rozstrzygnięcia eliminacją
+    const inPlay = factionsInPlay(this.teamMembersScratch);
+    if (inPlay.size > 1) return; // ≥2 drużyny wciąż mają samoloty — mecz trwa
+    const winningFaction = inPlay.size === 1 ? [...inPlay][0]! : null; // 0 = remis (obustronna eliminacja)
+    const winnerId = winningFaction === null ? null : this.topPlayerOfFaction(winningFaction);
+    this.endMatch(winnerId, winningFaction, 'score');
+  }
+
+  /** Kończy mecz z perspektywy zwycięskiej FRAKCJI (przejęcie strefy). FFA: frakcja = id zwycięzcy;
+   *  drużynowy: zwycięska drużyna + jej najlepszy gracz jako `winnerId` (do ekranu wyników). */
+  private endByFaction(faction: number, reason: MatchEndReason): void {
+    if (this.mode === 'team') this.endMatch(this.topPlayerOfFaction(faction), faction, reason);
+    else this.endMatch(faction, null, reason);
+  }
+
+  /** Id najlepszego gracza danej frakcji (ranking FFA: zestrzelenia↓/śmierci↑/id↑) albo null. */
+  private topPlayerOfFaction(faction: number): number | null {
+    let best: ServerPlayer | null = null;
+    for (const p of this.players.values()) {
+      if (p.faction !== faction) continue;
+      if (best === null || compareFfa(p, best) < 0) best = p; // ServerPlayer spełnia FfaScore (id/kills/deaths)
+    }
+    return best ? best.id : null;
   }
 
   /** Kończy mecz: playing → ended, gasi walkę, rozsyła finalną tabelę i loguje wynik. */
-  private endMatch(winnerId: number | null, reason: MatchEndReason): void {
+  private endMatch(winnerId: number | null, winningFaction: number | null, reason: MatchEndReason): void {
     this.state = 'ended';
     this.endedTimerS = 0;
     this.winnerId = winnerId;
+    this.winningFaction = winningFaction;
     this.lastEndReason = reason;
     for (const b of this.pool.bullets) b.active = false;
     this.pendingEvents.length = 0;
     const rows = this.buildStandings();
-    this.broadcastControl({ t: 'matchEnded', winnerId, reason, rows });
+    this.broadcastControl({ t: 'matchEnded', mode: this.mode, winnerId, winningFaction, reason, rows });
     this.broadcastRoomUpdate();
-    const winnerNick = winnerId !== null ? (this.players.get(winnerId)?.nick ?? `#${String(winnerId)}`) : 'brak';
+    const winnerLabel =
+      this.mode === 'team'
+        ? winningFaction !== null
+          ? `drużyna ${String(winningFaction)}`
+          : 'remis'
+        : winnerId !== null
+          ? (this.players.get(winnerId)?.nick ?? `#${String(winnerId)}`)
+          : 'brak';
     this.onInfo?.(
-      `pokój ${this.code}: koniec meczu (${reason}), zwycięzca ${winnerNick}; ` +
+      `pokój ${this.code}: koniec meczu (${this.mode}/${reason}), zwycięzca ${winnerLabel}; ` +
         rows.map((r) => `${r.nick} ${String(r.kills)}/${String(r.deaths)}`).join(', '),
     );
   }
@@ -957,13 +1101,14 @@ export class GameRoom {
     const rows: StandingRow[] = [...this.players.values()].map((p) => ({
       id: p.id,
       nick: p.nick,
+      faction: p.faction, // FFA: frakcja = id; drużynowy: drużyna (faza 18) — klient grupuje/koloruje
       kills: p.kills,
       deaths: p.deaths,
       assists: p.assists,
       pingMs: p.pingMs,
       isBot: p.isBot,
-      // sekundy wyłącznej kontroli strefy przez frakcję gracza (FFA: frakcja = id); faza 17
-      zoneSeconds: Math.round(this.zone.seconds(p.id)),
+      // sekundy wyłącznej kontroli strefy przez frakcję gracza (drużynowy: wspólne dla drużyny); faza 17
+      zoneSeconds: Math.round(this.zone.seconds(p.faction)),
     }));
     rows.sort(compareFfa); // StandingRow spełnia FfaScore strukturalnie (id/kills/deaths)
     return rows;
@@ -978,9 +1123,11 @@ export class GameRoom {
     this.updatePings();
     this.broadcastControl({
       t: 'standings',
+      mode: this.mode, // klient przełącza render FFA↔drużynowy (kolory markerów, scoreboard) — faza 18
       rows: this.buildStandings(),
       scoreLimit: this.scoreLimit,
-      timeLeftS: Math.round(this.timeLeftS),
+      // drużynowy: brak limitu czasu (parytet z SP) → 0; FFA odlicza do MATCH_TIME_LIMIT_S
+      timeLeftS: this.mode === 'team' ? 0 : Math.round(this.timeLeftS),
       // bieżąca okupacja strefy do statusu paska ZoneBar (faza 17); fronty z zoneSeconds wierszy
       zone: { controlling: this.zoneControlling, occupied: this.zoneOccupied },
     });

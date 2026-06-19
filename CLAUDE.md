@@ -8,7 +8,8 @@
 
 ## Status faz
 
-Fazy ukończone: 0–17 (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP i pomiary
+Fazy ukończone: 0–17 + Faza 18 cz.1 (serwer/lobby/protokół; **cz.2 klient — wizualia drużynowe —
+w następnej sesji**) (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP i pomiary
 na VPS po stronie użytkownika** — brak SSH z sesji). Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
@@ -92,7 +93,24 @@ zwycięstwa obok limitu zestrzeleń/czasu (jak SP), autorytatywnie na serwerze; 
 `ZoneBar` (reużyty z SP, własny DOM — `online.html` bez zmian), status z `standings.zone`, fronty z
 `zoneSeconds` (perspektywa-niezależnie), ukryty na wynikach/poza meczem; kolumna „Strefa" w tabeli
 (`match-ui.ts`). Boty kontestują bez zmian (`PATROL_WAYPOINTS` od f12). Testy `zone-control.test.ts`
-+3 (łącznie 397). **Deploy: razem z f15+f16.** Następna: Faza 18 — tryb drużynowy.
++3 (łącznie 397). **Deploy: razem z f15+f16.**
+Faza 18 cz.1 (2026-06-19): parytet MP cz.5 — tryb drużynowy jako OPCJA pokoju (host: FFA/Drużynowy),
+warstwa SERWER+LOBBY+PROTOKÓŁ; **BEZ bumpu protokołu** (addytywne pola JSON, wciąż v3). Model =
+parytet z SP: 2 drużyny, eliminacja (`MATCH_LIVES=1`/samolot, BRAK respawnu, ostatnia drużyna wygrywa),
+strefa KotH OBOK eliminacji, **bez limitu czasu**. Decyzje użytkownika: auto-balans serwera (bez wyboru
+drużyny w lobby), sztywno 1 życie i brak czasu („jak SP, dopracowany wzór"), podział na 2 sesje.
+`shared/world/team.ts` (NOWY): `MatchMode`/`MATCH_MODES`/`TEAM_COUNT`/`clampMatchMode`/`smallerTeamIndex`;
+eliminacja reużywa `world/match.ts` (`factionsInPlay`). Protokół: `CreateRoomMessage.mode`, `RoomSummary.mode`,
+`StandingRow.faction`, `StandingsMessage.mode`, `MatchEndedMessage.mode+winningFaction` (eliminacja =
+`reason 'score'`; `'time'` nieobecne w drużynowym). Serwer (`game-room.ts`): `mode`, `ServerPlayer.faction+livesLeft`,
+`assignFaction`/`assignFactions` (auto-balans), friendly fire ON ale kredyt/asysty tylko między frakcjami,
+`loseLife`+`canRespawn` (gating respawnu), `checkTeamElimination` (guard ≥2 drużyn, remis=null) / `endByFaction` /
+`topPlayerOfFaction`, `endMatch(winnerId, winningFaction, reason)`, strefa/standings po `p.faction`, cele bota
+wg frakcji. Lobby: `room.mode` ustawiane PRZED `addPlayer`; `clampMatchMode` w connection. Klient (wiring):
+select „Tryb" w `lobby-ui` (ukrywa limit zestrzeleń w drużynowym), `net-client.createRoom(..., mode)`. Testy
+`team.test.ts`+7, `team-mode.test.ts`+8 (łącznie 412). **Cz.2 (następna sesja): wizualia klienta** — kolory
+markerów wróg/sojusznik, scoreboard drużynowy, kill-feed teamkill, status strefy wg drużyny, obserwator
+sojuszników. **Deploy front+back razem (po cz.2).**
 Decyzja 2026-06-18: blok parytetu MP↔SP (Fazy 14–18: wizualia/HUD → kolizje+wrak → obserwator →
 strefa KotH → tryb drużynowy) PRZED Bf 109; dotychczasowe fazy przesunięte (Bf 109→19, teren→20,
 dźwięk→21, uszkodzenia→22). Szczegóły: sekcja „Parytet multiplayera" w PLAN.md.

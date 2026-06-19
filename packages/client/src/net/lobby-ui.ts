@@ -7,6 +7,7 @@ import {
   ROOM_CODE_LENGTH,
   sanitizeNick,
   type DifficultyLevel,
+  type MatchMode,
   type RoomPlayer,
   type RoomState,
   type RoomSummary,
@@ -22,6 +23,12 @@ const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   trudny: 'trudny',
 };
 
+/** Tryby meczu w kolejności wyboru (faza 18) + ich etykiety dla selecta. */
+const MODE_OPTIONS: readonly { value: MatchMode; label: string }[] = [
+  { value: 'ffa', label: 'FFA (każdy na każdego)' },
+  { value: 'team', label: 'Drużynowy (2 drużyny)' },
+];
+
 // Ekrany lobby (faza 10) jako vanilla DOM nad canvasem (decyzja PLAN.md — Preact dopiero,
 // gdy vanilla zaboli). Dwa widoki: 'entry' (nick + szybka gra / utwórz / dołącz kodem +
 // lista pokoi) i 'waiting' (poczekalnia: kod pokoju, lista graczy, Start dla hosta) na tle
@@ -30,7 +37,7 @@ const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
 
 export interface LobbyCallbacks {
   onQuickPlay(): void;
-  onCreateRoom(bots: number, difficulty: DifficultyLevel, scoreLimit: number): void;
+  onCreateRoom(bots: number, difficulty: DifficultyLevel, scoreLimit: number, mode: MatchMode): void;
   onJoinRoom(code: string): void;
   onRefreshList(): void;
   onStartMatch(): void;
@@ -52,9 +59,11 @@ export class LobbyUI {
   private readonly entry: HTMLDivElement;
   private readonly waiting: HTMLDivElement;
   private readonly nickInput: HTMLInputElement;
+  private readonly modeSelect: HTMLSelectElement;
   private readonly botCountSelect: HTMLSelectElement;
   private readonly difficultySelect: HTMLSelectElement;
   private readonly scoreLimitSelect: HTMLSelectElement;
+  private readonly matchRow: HTMLDivElement;
   private readonly codeInput: HTMLInputElement;
   private readonly roomListEl: HTMLDivElement;
   private readonly errorEl: HTMLDivElement;
@@ -89,6 +98,18 @@ export class LobbyUI {
       this.beforeAction();
       this.cb.onQuickPlay();
     });
+    // tryb meczu hosta (faza 18): FFA albo drużynowy — drużynowy ukrywa limit zestrzeleń
+    const modeRow = el('div', 'lobby-row lobby-bot-row');
+    const modeLabel = el('label', 'lobby-label');
+    modeLabel.textContent = 'Tryb';
+    this.modeSelect = selectEl(
+      'lobby-select lobby-select-mode',
+      MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+      'ffa',
+    );
+    this.modeSelect.addEventListener('change', () => this.syncModeUI());
+    modeRow.append(modeLabel, this.modeSelect);
+
     // konfiguracja botów hosta (faza 12): liczba 0..MAX_BOTS + poziom trudności
     const botRow = el('div', 'lobby-row lobby-bot-row');
     const botLabel = el('label', 'lobby-label');
@@ -107,8 +128,9 @@ export class LobbyUI {
     );
     botRow.append(botLabel, this.botCountSelect, diffLabel, this.difficultySelect);
 
-    // limit zestrzeleń kończący mecz (faza 13): host wybiera 5/10/20
-    const matchRow = el('div', 'lobby-row lobby-bot-row');
+    // limit zestrzeleń kończący mecz FFA (faza 13): host wybiera 5/10/20. W trybie drużynowym
+    // ukryty (faza 18: eliminacja jak SP — 1 życie/samolot, bez limitu zestrzeleń i czasu).
+    this.matchRow = el('div', 'lobby-row lobby-bot-row');
     const matchLabel = el('label', 'lobby-label');
     matchLabel.textContent = 'Mecz do';
     this.scoreLimitSelect = selectEl(
@@ -118,11 +140,11 @@ export class LobbyUI {
     );
     const matchUnit = el('label', 'lobby-label');
     matchUnit.textContent = 'zestrzeleń';
-    matchRow.append(matchLabel, this.scoreLimitSelect, matchUnit);
+    this.matchRow.append(matchLabel, this.scoreLimitSelect, matchUnit);
 
     const createBtn = button('Utwórz pokój', 'lobby-btn', () => {
       this.beforeAction();
-      this.cb.onCreateRoom(this.botCount, this.difficulty, this.scoreLimit);
+      this.cb.onCreateRoom(this.botCount, this.difficulty, this.scoreLimit, this.mode);
     });
 
     const joinRow = el('div', 'lobby-row lobby-join-row');
@@ -154,14 +176,16 @@ export class LobbyUI {
       sub,
       nickRow,
       quickBtn,
+      modeRow,
       botRow,
-      matchRow,
+      this.matchRow,
       createBtn,
       joinRow,
       this.errorEl,
       listHead,
       this.roomListEl,
     );
+    this.syncModeUI(); // ustaw widoczność limitu zestrzeleń wg startowego trybu
 
     // --- poczekalnia ---
     this.waiting = el('div', 'lobby-screen lobby-waiting');
@@ -185,6 +209,15 @@ export class LobbyUI {
 
   get nick(): string {
     return sanitizeNick(this.nickInput.value);
+  }
+
+  private get mode(): MatchMode {
+    return this.modeSelect.value === 'team' ? 'team' : 'ffa';
+  }
+
+  /** Tryb drużynowy nie ma limitu zestrzeleń ani czasu (eliminacja, faza 18) → ukryj wiersz limitu. */
+  private syncModeUI(): void {
+    this.matchRow.style.display = this.mode === 'team' ? 'none' : '';
   }
 
   private get botCount(): number {
@@ -232,7 +265,8 @@ export class LobbyUI {
       const row = el('div', 'lobby-room-row');
       const info = el('span', '');
       const stateLabel = r.state === 'waiting' ? 'poczekalnia' : r.state === 'playing' ? 'w grze' : 'koniec';
-      info.textContent = `${r.code}  ·  ${String(r.playerCount)}/${String(r.maxPlayers)}  ·  ${stateLabel}`;
+      const modeLabel = r.mode === 'team' ? 'drużynowy' : 'FFA';
+      info.textContent = `${r.code}  ·  ${modeLabel}  ·  ${String(r.playerCount)}/${String(r.maxPlayers)}  ·  ${stateLabel}`;
       const joinBtn = button('Dołącz', 'lobby-btn lobby-btn-small', () => {
         this.beforeAction();
         this.cb.onJoinRoom(r.code);
@@ -379,6 +413,7 @@ const LOBBY_CSS = `
 }
 .lobby-select:focus { border-color: #6aa8da; }
 .lobby-select-bots { min-width: 56px; }
+.lobby-select-mode { min-width: 200px; }
 .lobby-btn {
   font: 600 15px/1 monospace; padding: 11px 22px; cursor: pointer;
   color: #eaf3ff; background: rgba(40,60,80,0.92);

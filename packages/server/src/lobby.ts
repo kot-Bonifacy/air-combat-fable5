@@ -4,9 +4,11 @@ import {
   RECONNECT_WINDOW_MS,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_LENGTH,
+  clampMatchMode,
   clampScoreLimit,
   isValidRoomCode,
   type DifficultyLevel,
+  type MatchMode,
   type RoomSummary,
 } from '@air-combat/shared';
 import { MAX_BOTS_PER_ROOM } from './bot-manager';
@@ -92,9 +94,12 @@ export class Lobby {
     botCount = 0,
     difficulty: DifficultyLevel = QUICKPLAY_DIFFICULTY,
     scoreLimit: number = MATCH_DEFAULT_SCORE_LIMIT,
+    mode: MatchMode = 'ffa',
   ): { room: GameRoom; playerId: number } {
     const room = new GameRoom(this.uniqueCode(), this.seed, this.onRoomError, this.onRoomInfo);
     room.scoreLimit = clampScoreLimit(scoreLimit);
+    // tryb meczu MUSI być ustawiony PRZED addPlayer: enterWorld przydziela frakcję wg trybu (faza 18)
+    room.mode = clampMatchMode(mode);
     this.rooms.set(room.code, room);
     const playerId = room.addPlayer(nick, token, member);
     this.sessions.set(token, room.code);
