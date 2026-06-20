@@ -4,6 +4,7 @@ import {
   ConeGeometry,
   Group,
   type Material,
+  Matrix4,
   Mesh,
   MeshStandardMaterial,
   type Object3D,
@@ -11,6 +12,7 @@ import {
   Vector3,
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { DEFAULT_PLANE_TYPE, type PlaneType } from '@air-combat/shared';
 
 // Rejestr modeli 3D per typ samolotu (faza 19b: drugi samolot). Każdy typ ma własny
@@ -50,6 +52,13 @@ interface ModelSpec {
   hubNode: string | null;
   /** Węzły łopat wygaszane w tarczę przy obrotach; pusty → wszystkie węzły śmigła. */
   bladeNodes: ReadonlySet<string>;
+  /**
+   * Pivot ORAZ oś śmigła liczone z FAKTYCZNEJ geometrii łopat (centroid + normalna dysku), nie z
+   * bbox/originu węzłów. Włączyć, gdy śmigło „nie kręci się współosiowo": origin/bbox bywają obok
+   * wału, a oś modelu bywa pochylona względem +Z (Bf 109 ~15°) → precesja. Domyślnie (brak/false)
+   * — bbox piasty + oś +Z (Spitfire, sprawdzone). Wymaga niepustego `bladeNodes`.
+   */
+  propAxisFromGeometry?: boolean;
 }
 
 /** Węzły dopasowane do tych wzorców znikają (podwozie schowane w locie) — wspólne dla typów. */
@@ -82,17 +91,30 @@ const MODEL_SPECS: Record<PlaneType, ModelSpec> = {
   },
   // Bf 109 ze Sketchfaba (Jankenstein) — faza 19b. Nazwy z bf109-web.glb (zachowane po
   // optymalizacji; kropki sanityzowane: Cube.030 → Cube030). Śmigło: spinner Cube030 + 3
-  // łopaty Cube036/037/038. Podwozie po MATERIALE (pewniejsze niż nazwy goleni/kół) — uwaga:
-  // dzieli materiał z wydechami, więc znikają też króćce wydechowe (akceptowalne w widoku lotu).
-  // fixEulerDeg = best-guess {0,0,0}: jeśli model leci źle, popraw STOPNIE wg ściągi wyżej.
+  // łopaty Cube036/037/038. Orientacja {0,0,0} potwierdzona z pozycji świata węzłów (nos +Z,
+  // góra +Y). Podwozie rozsiane po wielu węzłach/materiałach (zweryfikowane z pozycji świata + log DIAG):
+  //  - koła (mat. Tire) i osłony/wydechy (mat. Landing_Gear_and_Exausts) — łapane też po materiale,
+  //  - golenie główne Cylinder022/029 (z kołami) — po nazwie,
+  //  - golenie na współdzielonym mat. 109_General_Metal: Cylinder019 (kółko ogonowe), Cylinder020 (oś),
+  //  - golenie/owiewki na mat. 109_Body (X=±0.46): Cylinder024 + Cylinder031 — TYLKO po nazwie,
+  //  - Cube034 (Y=7.47, najniższy punkt ogona) — element goleni kółka ogonowego.
+  // NIE chowane: Cylinder021/Cube035 (Y wyżej niż spinner — to nie podwozie). Śmigło: oś modelu jest
+  // pochylona ~15° względem +Z (zmierzone: wektor origin→bbox spinnera = [0, .014, .050]), więc obrót
+  // wokół czystego +Z dawał precesję. propAxisFromGeometry: pivot=centroid łopat, oś=normalna dysku
+  // łopat liczona z faktycznej geometrii → śmigło kręci się współosiowo.
   bf109: {
     url: '/models/bf109/bf109-web.glb',
     fixEulerDeg: { x: 0, y: 0, z: 0 },
     gearNodeNames: new Set<string>([
       'Cube032',
+      'Cube034',
       'Cylinder011',
+      'Cylinder019',
+      'Cylinder020',
       'Cylinder022',
+      'Cylinder024',
       'Cylinder029',
+      'Cylinder031',
       'Cylinder023',
       'Cylinder030',
     ]),
@@ -100,6 +122,7 @@ const MODEL_SPECS: Record<PlaneType, ModelSpec> = {
     propNodeNames: new Set<string>(['Cube030', 'Cube036', 'Cube037', 'Cube038']),
     hubNode: 'Cube030',
     bladeNodes: new Set<string>(['Cube036', 'Cube037', 'Cube038']),
+    propAxisFromGeometry: true,
   },
 };
 
@@ -212,17 +235,28 @@ function propLocalSpinAxis(group: Group, prop: Object3D): Vector3 {
   return axis;
 }
 
+/** Spina węzły śmigła pod pivotem w `centerLocal` (układ grupy). `attach` zachowuje świat. */
+function buildSpinPivotAtLocal(group: Group, nodes: Object3D[], centerLocal: Vector3): Group {
+  const pivot = new Group();
+  group.add(pivot);
+  group.updateMatrixWorld(true);
+  pivot.position.copy(centerLocal);
+  pivot.updateMatrixWorld(true);
+  nodes.forEach((n) => pivot.attach(n));
+  pivot.updateMatrixWorld(true);
+  return pivot;
+}
+
 /**
- * Spina węzły śmigła pod jednym pivotem ustawionym w środku piasty (wspólny
- * bbox), tak by obrót pivota kręcił całością wokół właściwej osi. `attach`
- * zachowuje transformację świata każdego węzła.
+ * Spina węzły śmigła pod jednym pivotem ustawionym w środku piasty (bbox węzła kołpaka),
+ * tak by obrót pivota kręcił całością wokół właściwej osi. `attach` zachowuje świat.
  */
 function buildSpinPivot(group: Group, nodes: Object3D[], hubNode: Object3D | null): Group {
   // KLUCZOWE: model dostał już skalę/pozycję/obrót — odśwież cały podgraf, inaczej
   // bbox liczy się ze starych macierzy i pivot ląduje przy zerze świata (śmigło
   // zaczyna wtedy orbitować daleki punkt zamiast kręcić się w miejscu).
   group.updateMatrixWorld(true);
-  // Środek piasty z węzła kołpaka (leży na osi wału). Wspólny bbox łopat bywa
+  // Środek piasty z bbox węzła kołpaka (leży na osi wału). Wspólny bbox łopat bywa
   // niesymetryczny w pionie i przesuwałby oś obrotu obok rzeczywistej piasty.
   const box = new Box3();
   if (hubNode) {
@@ -231,15 +265,78 @@ function buildSpinPivot(group: Group, nodes: Object3D[], hubNode: Object3D | nul
     const tmp = new Box3();
     nodes.forEach((n) => box.union(tmp.setFromObject(n)));
   }
-  const hubWorld = box.getCenter(new Vector3());
-  const pivot = new Group();
-  group.add(pivot);
+  return buildSpinPivotAtLocal(group, nodes, group.worldToLocal(box.getCenter(new Vector3())));
+}
+
+/**
+ * Środek i OŚ obrotu śmigła policzone z FAKTYCZNEJ geometrii łopat (układ grupy). Origin/bbox
+ * węzłów bywają obok wału, a oś modelu bywa pochylona względem +Z (Bf 109 ~15° w górę) → śmigło
+ * precesuje („nie kręci się współosiowo"). Tu:
+ *   center = centroid wierzchołków łopat (symetryczny dysk → leży na wale),
+ *   axis   = normalna dysku = kierunek NAJMNIEJSZEJ wariancji (dysk jest cienki wzdłuż wału);
+ *            liczona power-iteration na (trace·I − kowariancja) → największy wektor własny tej
+ *            macierzy = najmniejszy wektor własny kowariancji.
+ * Zwraca null, gdy łopaty nie mają geometrii (zostaje ścieżka bbox).
+ */
+function propSpinFromBladeGeometry(
+  group: Group,
+  bladeNodes: Object3D[],
+): { center: Vector3; axis: Vector3 } | null {
   group.updateMatrixWorld(true);
-  pivot.position.copy(group.worldToLocal(hubWorld));
-  pivot.updateMatrixWorld(true);
-  nodes.forEach((n) => pivot.attach(n));
-  pivot.updateMatrixWorld(true);
-  return pivot;
+  const groupInv = group.matrixWorld.clone().invert();
+  const meshToGroup = new Matrix4();
+  const pts: Vector3[] = [];
+  for (const node of bladeNodes) {
+    node.traverse((o) => {
+      if (!(o instanceof Mesh)) return;
+      const pos = o.geometry.getAttribute('position');
+      if (!pos) return;
+      meshToGroup.multiplyMatrices(groupInv, o.matrixWorld); // wierzchołki mesha → układ grupy
+      for (let i = 0; i < pos.count; i++) {
+        pts.push(new Vector3().fromBufferAttribute(pos, i).applyMatrix4(meshToGroup));
+      }
+    });
+  }
+  const n = pts.length;
+  if (n < 3) return null;
+  const c = new Vector3();
+  for (const p of pts) c.add(p);
+  c.multiplyScalar(1 / n);
+  let xx = 0;
+  let xy = 0;
+  let xz = 0;
+  let yy = 0;
+  let yz = 0;
+  let zz = 0;
+  for (const p of pts) {
+    const dx = p.x - c.x;
+    const dy = p.y - c.y;
+    const dz = p.z - c.z;
+    xx += dx * dx;
+    xy += dx * dy;
+    xz += dx * dz;
+    yy += dy * dy;
+    yz += dy * dz;
+    zz += dz * dz;
+  }
+  // M = trace·I − cov ; power iteration → największy wektor własny M = oś najmniejszej wariancji cov.
+  const tr = xx + yy + zz;
+  const m00 = tr - xx;
+  const m11 = tr - yy;
+  const m22 = tr - zz;
+  let ax = 0;
+  let ay = 0;
+  let az = 1; // start ≈ +Z (oś śmigła jest blisko nosa, więc zbiega szybko)
+  for (let it = 0; it < 48; it++) {
+    const nx = m00 * ax - xy * ay - xz * az;
+    const ny = -xy * ax + m11 * ay - yz * az;
+    const nz = -xz * ax - yz * ay + m22 * az;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    ax = nx / len;
+    ay = ny / len;
+    az = nz / len;
+  }
+  return { center: c, axis: new Vector3(ax, ay, az).normalize() };
 }
 
 /**
@@ -293,6 +390,26 @@ interface ModelRefs {
 }
 
 /**
+ * Wspólny dekoder Draco dla wszystkich typów (tworzony leniwie, raz). Bf 109
+ * (`bf109-web.glb`) ma geometrię spakowaną Draco — `GLTFLoader` bez podpiętego
+ * `DRACOLoader` rzuca „No DRACOLoader instance provided" i model spada do bryły
+ * zastępczej. Spitfire (nieskompresowany glTF) loadera Draco po prostu nie użyje.
+ * Pliki dekodera serwujemy z `/draco/` (publicDir → `assets/draco/`, skopiowane z
+ * three) — bez zależności od zewnętrznego CDN. Po bumpie `three` odśwież te pliki
+ * (patrz `assets/draco/README.md`).
+ */
+let sharedDracoLoader: DRACOLoader | null = null;
+function makeGltfLoader(): GLTFLoader {
+  if (!sharedDracoLoader) {
+    sharedDracoLoader = new DRACOLoader();
+    sharedDracoLoader.setDecoderPath('/draco/');
+  }
+  const loader = new GLTFLoader();
+  loader.setDRACOLoader(sharedDracoLoader);
+  return loader;
+}
+
+/**
  * Wczytuje model danego typu i podmienia placeholder w `group`. Skaluje model do
  * `targetWingspanM` (z fizyki), wyśrodkowuje, koryguje orientację osi, chowa podwozie i
  * namierza śmigło do animacji. Błąd wczytania NIE wywraca gry — zostaje bryła zastępcza,
@@ -307,7 +424,7 @@ async function loadPlaneModel(
 ): Promise<void> {
   let gltf;
   try {
-    gltf = await new GLTFLoader().loadAsync(spec.url);
+    gltf = await makeGltfLoader().loadAsync(spec.url);
   } catch (err) {
     console.warn(
       `[plane-mesh] Nie udało się wczytać modelu (${spec.url}) — używam bryły zastępczej.`,
@@ -371,10 +488,22 @@ async function loadPlaneModel(
     });
   }
   if (propNodes.length) {
-    const pivot = buildSpinPivot(group, propNodes, hubNode);
-    refs.prop = pivot;
-    refs.propAxis = propLocalSpinAxis(group, pivot);
-    refs.bladeMats = collectBladeMaterials(pivot, spec.bladeNodes);
+    const blades = propNodes.filter((n) => n.name && spec.bladeNodes.has(n.name));
+    const spin =
+      spec.propAxisFromGeometry && blades.length ? propSpinFromBladeGeometry(group, blades) : null;
+    if (spin) {
+      // Oś i środek z geometrii łopat: pivot bez własnej rotacji (układ = grupa), więc oś w
+      // układzie grupy = oś w układzie pivota → podajemy ją wprost do rotateOnAxis.
+      const pivot = buildSpinPivotAtLocal(group, propNodes, spin.center);
+      refs.prop = pivot;
+      refs.propAxis = spin.axis;
+      refs.bladeMats = collectBladeMaterials(pivot, spec.bladeNodes);
+    } else {
+      const pivot = buildSpinPivot(group, propNodes, hubNode);
+      refs.prop = pivot;
+      refs.propAxis = propLocalSpinAxis(group, pivot);
+      refs.bladeMats = collectBladeMaterials(pivot, spec.bladeNodes);
+    }
   }
 
   if (import.meta.env.DEV) {

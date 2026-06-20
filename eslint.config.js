@@ -19,7 +19,8 @@ function forbidLayerImports(forbidden, message) {
 }
 
 export default tseslint.config(
-  { ignores: ['**/node_modules/**', '**/dist/**', '**/build/**'] },
+  // assets/ = vendored content (modele, tekstury, dekoder Draco) — nigdy nasz kod źródłowy.
+  { ignores: ['**/node_modules/**', '**/dist/**', '**/build/**', 'assets/**'] },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
