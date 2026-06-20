@@ -9,7 +9,9 @@
 ## Status faz
 
 Fazy ukończone: 0–18 (Faza 18 cz.1 serwer/lobby/protokół + cz.2 klient — wizualia drużynowe;
-blok parytetu MP↔SP 14–18 ZAMKNIĘTY) (Faza 13: KOD + artefakty deployu gotowe; **publiczny deploy MP
+blok parytetu MP↔SP 14–18 ZAMKNIĘTY + domknięcie P1–P5 wg `docs/parytet-mp-sp-domkniecie.md`:
+FFA eliminacyjne jak SP, atrybucja CC-BY, onboarding lobby, buffet kamery) (Faza 13: KOD +
+artefakty deployu gotowe; **publiczny deploy MP
 i pomiary na VPS po stronie użytkownika** — brak SSH z sesji). Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
 `https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
 w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
@@ -123,7 +125,26 @@ nagłówek+grupowanie po frakcji `orderedFactions` własna 1. + `teamHeaderRow` 
 `reasonText` (team `'score'`=eliminacja), `ScoreboardOverlay.update(...,mode,localFaction)` tytuł bez zegara,
 `ResultsOverlay.show(msg,localId,localFaction,isHost)` baner wg `winningFaction`, CSS `.mui-team`. Testy 412
 bez nowych (zmiany DOM, kryje typecheck+build); build klient online 41,4→43,6 kB. **Deploy front+back RAZEM;
-smoke online team z botami po stronie użytkownika.** Blok parytetu MP↔SP (14–18) ZAMKNIĘTY → następna: Faza 19.
+smoke online team z botami po stronie użytkownika.** Blok parytetu MP↔SP (14–18) ZAMKNIĘTY.
+Domknięcie parytetu MP↔SP — P1–P5 (2026-06-19/20, wg `docs/parytet-mp-sp-domkniecie.md`): drobne
+różnice MP↔SP wychwycone audytem `main.ts`↔`online-main.ts`/`game-room.ts`, **wszystkie zielone +
+zacommitowane** (404 testy). **P1** — FFA jest ELIMINACYJNE jak SP (1 życie, BRAK respawnu,
+last-man-standing): `canRespawn=livesLeft>0` i `loseLife` w OBU trybach, `checkElimination` wspólne
+FFA+team (FFA frakcja=id; strefa wciąż PRZED eliminacją); usunięto limit zestrzeleń i czasu —
+`evaluateFfa`/`clampScoreLimit`/`FfaEndReason` skasowane (zostały `compareFfa`/`rankFfa`), stałe
+`MATCH_SCORE_LIMIT_OPTIONS`/`MATCH_DEFAULT_SCORE_LIMIT`/`MATCH_TIME_LIMIT_S` usunięte; protokół BEZ
+bumpu (wciąż v3): `MatchEndReason='score'|'zone'` (bez `'time'`), `StandingsMessage` bez `scoreLimit`/
+`timeLeftS`, `CreateRoomMessage` bez `scoreLimit`; klient: `isLost` w FFA bez bramki team, komunikat
+„ZESTRZELONY" (brak respawnu — overlay obserwatora jak SP), HUD bez zegara, lobby bez wiersza „Mecz do N
+zestrzeleń". **Decyzja użytkownika (Q1): wariant (a) pełny parytet SP** — bez limitu czasu/zestrzeleń.
+**P2** — widoczna atrybucja CC-BY Spitfire na ekranie wejściowym lobby (`lobby-ui`, parytet `modelAttribution()`
+z `menu.ts`; wymóg licencji przy publicznym deployu). **P3** — onboarding „JAK GRAĆ" w lobby (tabela
+sterowania bez respawnu-R + „[N] panel sieci”, opis celu = strefa KotH/eliminacja, auto-pokaz przy 1.
+wejściu `air-combat:help-seen-online`). **P4** — trzęsienie kamery przy buffecie online (`chaseCamera.update`
+dostaje `predictor.sim.stallEffects.buffetIntensity`; 0 przy obserwacji — parytet SP). **P5** — sprzątanie:
+martwy kod po P1, `buffetIntensity=0` w HUD przy obserwacji, reset `keyboard.throttle=0.8` przy `enterPlaying`
+(rewanż nie dziedziczy gazu). **Deploy front+back RAZEM (zmiana zachowania serwera + protokół addytywny).**
+Następna: Faza 19 (Bf 109 E).
 Decyzja 2026-06-18: blok parytetu MP↔SP (Fazy 14–18: wizualia/HUD → kolizje+wrak → obserwator →
 strefa KotH → tryb drużynowy) PRZED Bf 109; dotychczasowe fazy przesunięte (Bf 109→19, teren→20,
 dźwięk→21, uszkodzenia→22). Szczegóły: sekcja „Parytet multiplayera" w PLAN.md.

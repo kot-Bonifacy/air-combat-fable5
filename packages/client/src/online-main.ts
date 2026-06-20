@@ -784,6 +784,9 @@ function enterPlaying(): void {
   if (phase === 'playing') return;
   phase = 'playing';
   matchResultsShown = false;
+  // Parytet z SP (P5.1): spawnCombatant resetuje gaz do 0.8 przy każdym wejściu do gry —
+  // bez tego rewanż dziedziczyłby ostatni gaz gracza zamiast startować na połowie mocy.
+  keyboard.throttle = 0.8;
   resetGameState();
   scoreboard.hide();
   results.hide();
