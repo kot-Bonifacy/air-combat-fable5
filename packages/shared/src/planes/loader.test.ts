@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PlaneConfigError } from '../errors';
-import { SPITFIRE_MK2, inducedDragFactor, loadPlaneConfig } from './loader';
+import { BF109_E, SPITFIRE_MK2, inducedDragFactor, loadPlaneConfig } from './loader';
 
 function validRaw(): Record<string, unknown> {
   return {
@@ -31,18 +31,23 @@ function validRaw(): Record<string, unknown> {
     hitRadiusM: 6,
     collisionRadiusM: 3,
     armament: {
-      muzzleVelocityMs: 744,
-      convergenceM: 200,
-      convergenceRiseM: 0.41,
-      fireRateRpmPerGun: 1150,
-      ammoPerGun: 300,
-      dispersionMrad: 3.0,
-      damagePerHit: 1.5,
-      bulletDragK: 0.001,
-      bulletLifetimeS: 3.0,
-      muzzles: [
-        [1.5, -0.25, 1.2],
-        [-1.5, -0.25, 1.2],
+      groups: [
+        {
+          name: '.303',
+          muzzleVelocityMs: 744,
+          convergenceM: 200,
+          convergenceRiseM: 0.41,
+          fireRateRpmPerGun: 1150,
+          ammoPerGun: 300,
+          dispersionMrad: 3.0,
+          damagePerHit: 1.5,
+          bulletDragK: 0.001,
+          bulletLifetimeS: 3.0,
+          muzzles: [
+            [1.5, -0.25, 1.2],
+            [-1.5, -0.25, 1.2],
+          ],
+        },
       ],
     },
     stall: {
@@ -84,6 +89,12 @@ describe('loader konfiguracji samolotu', () => {
   it('SPITFIRE_MK2 ładuje się z JSON (walidacja przy imporcie)', () => {
     expect(SPITFIRE_MK2.name).toBe('Spitfire Mk IIa (Merlin XII, +12 lb boost)');
     expect(SPITFIRE_MK2.wingAreaM2).toBeGreaterThan(0);
+  });
+
+  it('BF109_E ładuje się z JSON (drugi samolot, dwie grupy broni)', () => {
+    expect(BF109_E.name).toBe('Bf 109 E-3 (DB 601A)');
+    expect(BF109_E.armament.groups).toHaveLength(2);
+    expect(BF109_E.armament.groups[1]?.name).toBe('MG FF');
   });
 
   it('brak wymaganego pola → PlaneConfigError z nazwą pola', () => {
@@ -143,30 +154,48 @@ describe('loader konfiguracji samolotu', () => {
     expect(() => loadPlaneConfig(raw)).toThrowError(/nMinG/);
   });
 
+  /** Grupy broni z surowego configu (do mutacji w testach walidacji). */
+  function rawGroups(raw: Record<string, unknown>): Record<string, unknown>[] {
+    return (raw['armament'] as Record<string, unknown>)['groups'] as Record<string, unknown>[];
+  }
+
   it('armament: poprawne uzbrojenie zachowuje wartości i lufy', () => {
     const config = loadPlaneConfig(validRaw());
-    expect(config.armament.muzzleVelocityMs).toBe(744);
-    expect(config.armament.muzzles).toHaveLength(2);
-    expect(config.armament.muzzles[0]?.[0]).toBe(1.5);
+    const gun = config.armament.groups[0];
+    expect(gun?.muzzleVelocityMs).toBe(744);
+    expect(gun?.muzzles).toHaveLength(2);
+    expect(gun?.muzzles[0]?.[0]).toBe(1.5);
     expect(config.hpPool).toBe(120);
   });
 
-  it('armament: pole poza zakresem → PlaneConfigError ze ścieżką', () => {
+  it('armament: brak grup → PlaneConfigError', () => {
     const raw = validRaw();
-    (raw['armament'] as Record<string, unknown>)['muzzleVelocityMs'] = 5; // m/s zamiast realnej
-    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.muzzleVelocityMs/);
+    (raw['armament'] as Record<string, unknown>)['groups'] = [];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.groups/);
+  });
+
+  it('armament: pole poza zakresem → PlaneConfigError ze ścieżką grupy', () => {
+    const raw = validRaw();
+    rawGroups(raw)[0]!['muzzleVelocityMs'] = 5; // m/s zamiast realnej
+    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.groups\[0\]\.muzzleVelocityMs/);
   });
 
   it('armament: literówka w lufach → PlaneConfigError', () => {
     const raw = validRaw();
-    (raw['armament'] as Record<string, unknown>)['muzzles'] = [[1.5, -0.25]]; // brak Z
-    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.muzzles/);
+    rawGroups(raw)[0]!['muzzles'] = [[1.5, -0.25]]; // brak Z
+    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.groups\[0\]\.muzzles/);
   });
 
-  it('armament: nieznane pole → PlaneConfigError', () => {
+  it('armament: brak nazwy grupy → PlaneConfigError', () => {
     const raw = validRaw();
-    (raw['armament'] as Record<string, unknown>)['kadencja'] = 1150;
-    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.kadencja/);
+    delete rawGroups(raw)[0]!['name'];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.groups\[0\]\.name/);
+  });
+
+  it('armament: nieznane pole grupy → PlaneConfigError', () => {
+    const raw = validRaw();
+    rawGroups(raw)[0]!['kadencja'] = 1150;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/armament\.groups\[0\]\.kadencja/);
   });
 
   it('K = 1/(π·e·AR)', () => {

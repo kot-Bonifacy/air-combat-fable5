@@ -69,7 +69,7 @@ function runGunnery(level: DifficultyLevel): number {
     atk.throttle = out.throttle;
     pilotStep(atkSim, plane, demands, FIXED_DT_S);
     updateFire(fc, plane.armament, atk, 0, rng, pool, out.fire, FIXED_DT_S);
-    pool.update(plane.armament.bulletDragK, plane.armament.bulletLifetimeS, FIXED_DT_S);
+    pool.update(FIXED_DT_S);
     for (const b of pool.bullets) {
       if (!b.active) continue;
       if (segmentSphereHit(b.prevPosition, b.position, target.position, plane.hitRadiusM)) {

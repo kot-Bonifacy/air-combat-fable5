@@ -48,6 +48,41 @@ ZAKAZANY — asymetria to feature).
 - Dwa typy samolotów = pierwszy prawdziwy test generyczności kodu; każdy `if (planeType === ...)`
   poza ładowaniem configu to smell
 
-## Wynik (uzupełnić po zakończeniu)
+## Wynik
 
-—
+**Faza podzielona na 19a/19b** (decyzja użytkownika 2026-06-20, wzorem fazy 18 — zakres za duży na jedną
+sesję: fizyka + podwójne uzbrojenie + bump protokołu + model 3D + lobby + balans). Model 3D Bf 109: użytkownik
+wybrał wariant „shortlista CC-BY/CC0 do ręcznego pobrania" (parytet workflow ze Spitfire).
+
+### 19a — warstwa `shared` (2026-06-20, ✅ zacommitowane, 424 testy / typecheck / lint zielone)
+
+- **Refaktor uzbrojenia na grupy broni** (pierwszy test generyczności kodu): `armament` →
+  `{ groups: WeaponGroup[] }`, zero `if (planeType)`. Balistyka **per pocisk** (`Bullet.dragK`/`lifetimeS`,
+  `pool.update(dtS)`, `spawn(...,dragK,lifetimeS)`) — jedna pula miesza typy. `FireControl` **per grupa**
+  (różne kadencje strzelają niezależnie); cache sumy `ammoRemaining` zachowuje snapshot v3 bez zmian.
+  Helpery `totalAmmo`/`allMuzzles`/`primaryGroup`/`resetFireControl`. Konsumenci (server/client/bot/testy)
+  zaktualizowani — całość zielona.
+- **`bf109-e.json` + `BF109_E`** skalibrowane do kolumny Bf 109 E-3 (rozdz. 10): V_max SL 499/465,
+  V_max 5.5k 570/555, V_stall 129/125, climb 15.6/15, roll@350 84/85, turn 22.3/22 — wszystko w tolerancji.
+- **Złote testy SPARAMETRYZOWANE** `describe.each([Spitfire, Bf 109])` (ten sam harness, dwie kolumny) —
+  dowód, że koperta osiągów jest data-driven.
+- **Uzbrojenie zróżnicowane**: Bf 109 = 2× MG 17 (7.92, gęsto) + 2× MG FF (20 mm: wolniejszy tracer, większy
+  łuk, 3 trafienia = kill); testy w `fire.test`.
+- **Scenariusze asymetrii** (turn-fighter ↔ energy-fighter): Spitfire wygrywa zakręt poziomy; Bf 109 wygrywa
+  beczkę, nurkowanie (`diveSpeedTest`) i pościg wznoszący/zoom (`zoomClimbTest`). Żaden nie jest strictly better.
+
+Kryteria spełnione w 19a: złote testy obu samolotów ✅ · matchup asymetryczny ✅ · 20 mm ≠ 7.7 mm ✅ ·
+interfejs instruktora generyczny (bot lata oboma — `primaryGroup` w lead) ✅ · typecheck+test+lint+commit+memory ✅.
+
+> **NAPIĘCIE do świadomości (rozwiązane interpretacją):** kryterium „Bf 109 wygrywa pościg wznoszący" koliduje
+> z kolumną celów (109 climb 15 < Spit 17 USTALONY). Zinterpretowano „pościg wznoszący" jako **zoom climb
+> (energia w pionie)**, który 109 wygrywa przez lepszy współczynnik balistyczny W/(S·cd0) (małe skrzydło).
+> W czystym modelu aero (bez odcięcia gaźnika Merlina pod −G, bez ściśliwości) przewaga 109 w nurkowaniu jest
+> mała — `cd0` 109 ustawione na 0.022 (czystszy płatowiec, w widełkach E-3) dla wyraźnego marginesu energii.
+
+### 19b — integracja (otwarta)
+
+Protokół v4 (bajt typu samolotu w snapshocie/spawnie → deploy front+back RAZEM) · serwer per-player plane
+(dziś jeden `this.plane` na pokój) · klient: rejestr meshy per typ (`plane-mesh.ts` zaszyty pod Spitfire) ·
+model 3D Bf 109 + `LICENSES.md` · wybór samolotu w lobby (per gracz, między respawnami) · HUD: nazwa typu wroga
+przy markerze · render wielogrupowych smugaczy/błysków online · **sesja balansowa 1v1 boty+ludzie oba typy → notatka**.

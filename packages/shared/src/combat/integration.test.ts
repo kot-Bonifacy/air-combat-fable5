@@ -4,7 +4,7 @@ import { FIXED_DT_S } from '../constants';
 import { createRng } from '../math/rng';
 import { SPITFIRE_MK2 } from '../planes/loader';
 import { BulletPool } from './ballistics';
-import { createFireControl, updateFire, type FiringPlatform } from './fire';
+import { createFireControl, primaryGroup, totalAmmo, updateFire, type FiringPlatform } from './fire';
 import { segmentSphereHit } from './hit';
 import { applyDamage, createHealth } from './health';
 
@@ -24,7 +24,7 @@ describe('walka end-to-end: strzał → tor → trafienie → HP → zniszczenie
     const pool = new BulletPool(2000);
     const fc = createFireControl(arm);
     const rng = createRng(7);
-    const targetCenter = new Vector3(0, 0, arm.convergenceM);
+    const targetCenter = new Vector3(0, 0, primaryGroup(arm).convergenceM);
     const targetRadius = 8;
     const health = createHealth(50);
 
@@ -32,7 +32,7 @@ describe('walka end-to-end: strzał → tor → trafienie → HP → zniszczenie
     let hits = 0;
     while (health.alive && ticks < 600) {
       updateFire(fc, arm, platform, 0, rng, pool, true, FIXED_DT_S);
-      pool.update(arm.bulletDragK, arm.bulletLifetimeS, FIXED_DT_S);
+      pool.update(FIXED_DT_S);
       for (const b of pool.bullets) {
         if (!b.active) continue;
         if (segmentSphereHit(b.prevPosition, b.position, targetCenter, targetRadius)) {
@@ -55,9 +55,9 @@ describe('walka end-to-end: strzał → tor → trafienie → HP → zniszczenie
     const fc = createFireControl(arm);
     for (let i = 0; i < 120; i++) {
       updateFire(fc, arm, platform, 0, createRng(1), pool, false, FIXED_DT_S);
-      pool.update(arm.bulletDragK, arm.bulletLifetimeS, FIXED_DT_S);
+      pool.update(FIXED_DT_S);
     }
     expect(pool.activeCount).toBe(0);
-    expect(fc.ammoRemaining).toBe(arm.ammoPerGun * arm.muzzles.length);
+    expect(fc.ammoRemaining).toBe(totalAmmo(arm));
   });
 });

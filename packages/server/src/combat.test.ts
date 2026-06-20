@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIXED_DT_S, SPITFIRE_MK2, type InputFrame } from '@air-combat/shared';
+import { FIXED_DT_S, SPITFIRE_MK2, totalAmmo, type InputFrame } from '@air-combat/shared';
 import { GameRoom } from './game-room';
 
 // Walka sieciowa (faza-11.md): hit detection, HP, kadencja i kredyt zestrzeleń —
@@ -7,8 +7,7 @@ import { GameRoom } from './game-room';
 // (referencje z snapshotEntities()) i puszczają pełną pętlę room.step, więc przechodzą
 // realną ścieżką ognia → pocisk → rewind → trafienie → HP → śmierć → kredyt.
 
-const arm = SPITFIRE_MK2.armament;
-const TOTAL_AMMO = arm.ammoPerGun * arm.muzzles.length;
+const TOTAL_AMMO = totalAmmo(SPITFIRE_MK2.armament);
 const dummyMember = { sendControl() {}, sendSnapshotBytes() {} };
 
 let tokenSeq = 0;

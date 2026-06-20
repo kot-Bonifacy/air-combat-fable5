@@ -320,6 +320,66 @@ export function sustainedTurnTest(plane: PlaneConfig, altitudeM = 500): Sustaine
 }
 
 /**
+ * Pościg nurkujący (faza 19, scenariusz asymetrii): tor prosty −`diveDeg`, pełny
+ * gaz, start z `startSpeedMs`. Zwraca |v| [m/s] po `seconds`. To prędkość rozpędzenia
+ * w nurkowaniu — energy-fighter o lepszym współczynniku balistycznym (W/(S·cd0))
+ * rozpędza się szybciej. Bf 109 (małe skrzydło) wygrywa nurkowanie mimo mniejszej masy.
+ */
+export function diveSpeedTest(
+  plane: PlaneConfig,
+  altitudeM = 4500,
+  startSpeedMs = 120,
+  diveDeg = 35,
+  seconds = 25,
+): number {
+  const state = createPlaneState();
+  const gamma = (-diveDeg * Math.PI) / 180;
+  state.position.set(0, altitudeM, 0);
+  state.velocity.set(0, Math.sin(gamma), Math.cos(gamma)).multiplyScalar(startSpeedMs);
+  state.throttle = 1;
+  alignNoseToVelocity(state);
+
+  const maxTicks = seconds * PHYSICS_HZ;
+  for (let i = 0; i < maxTicks && state.position.y > 300; i++) {
+    alignNoseToVelocity(state);
+    stepPlane(state, plane, nDemandForPitchRate(state, 0), FIXED_DT_S);
+    validatePlaneState(state, 'diveSpeedTest');
+  }
+  return state.velocity.length();
+}
+
+/**
+ * Świeca / zoom climb (faza 19, scenariusz asymetrii „pościg wznoszący"): lot prosty
+ * pod kątem +`climbDeg`, BEZ ciągu (czysta wymiana energii kinetycznej w potencjalną),
+ * start z wysokiej `startSpeedMs`. Zwraca przyrost wysokości [m] do chwili, gdy prędkość
+ * spadnie do `endSpeedMs`. Mniejsza strata energii na opór (lepszy współczynnik balistyczny)
+ * = wyższy zoom → Bf 109 utrzymuje energię w pionie lepiej niż Spitfire (turn-fighter).
+ */
+export function zoomClimbTest(
+  plane: PlaneConfig,
+  startSpeedMs = 180,
+  endSpeedMs = 90,
+  climbDeg = 45,
+  altitudeM = 2000,
+): number {
+  const state = createPlaneState();
+  const gamma = (climbDeg * Math.PI) / 180;
+  state.position.set(0, altitudeM, 0);
+  state.velocity.set(0, Math.sin(gamma), Math.cos(gamma)).multiplyScalar(startSpeedMs);
+  state.throttle = 0;
+  alignNoseToVelocity(state);
+
+  const y0 = state.position.y;
+  const maxTicks = 60 * PHYSICS_HZ;
+  for (let i = 0; i < maxTicks && state.velocity.length() > endSpeedMs; i++) {
+    alignNoseToVelocity(state);
+    stepPlane(state, plane, nDemandForPitchRate(state, 0), FIXED_DT_S);
+    validatePlaneState(state, 'zoomClimbTest');
+  }
+  return state.position.y - y0;
+}
+
+/**
  * Nurkowanie −30° bez ciągu: energia całkowita ½mV² + mgh nie ma prawa rosnąć
  * (sanity bilansu — nośna prostopadła do toru nie wykonuje pracy, opór rozprasza).
  */

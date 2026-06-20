@@ -22,6 +22,7 @@ import {
   PilotControl,
   RESPAWN_DELAY_S,
   SPITFIRE_MK2,
+  allMuzzles,
   applyDamage,
   buildScoreboard,
   createControlDeflections,
@@ -34,6 +35,7 @@ import {
   lookaheadSurfaceM,
   pilotStep,
   planesCollide,
+  resetFireControl,
   resetHealth,
   segmentSphereHit,
   selectNearestTarget,
@@ -341,8 +343,7 @@ function spawnCombatant(c: Combatant, pos: Vector3, heading: Vector3): void {
   c.state.iasMs = SPAWN_SPEED_MS;
   c.state.life = 'alive';
   c.state.lifeTimerS = 0;
-  c.fire.ammoRemaining = AMMO_MAX;
-  c.fire.cooldownS = 0;
+  resetFireControl(c.fire, plane.armament); // pełny zapas wszystkich grup broni + zerowanie cooldownów
   c.smokeAccumS = 0;
   c.damagedBy.clear(); // nowe życie → czysta lista napastników (kredyt asyst)
   resetHealth(c.health);
@@ -391,8 +392,8 @@ function physicsStep(dtS: number): void {
     for (const c of botSlots) if (c.active) stepBot(c, dtS);
   }
 
-  // pociski żyją niezależnie od stanu samolotów
-  pool.update(plane.armament.bulletDragK, plane.armament.bulletLifetimeS, dtS);
+  // pociski żyją niezależnie od stanu samolotów (balistyka per pocisk z grupy broni)
+  pool.update(dtS);
 
   if (gameMode === 'combat') {
     resolveCombatHits();
@@ -956,7 +957,7 @@ const world = createWorld(scene, terrain);
 const explosions = new Explosions(scene);
 const smoke = new SmokeTrails(scene);
 const tracers = new BulletTracers(scene, BULLET_POOL_CAPACITY);
-const muzzleFlash = new MuzzleFlash(scene, plane.armament.muzzles);
+const muzzleFlash = new MuzzleFlash(scene, allMuzzles(plane.armament));
 
 scene.add(new AmbientLight(0xffffff, 0.4));
 const sun = new DirectionalLight(0xffffff, 1.2);

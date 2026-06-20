@@ -1,0 +1,91 @@
+{
+  "name": "Bf 109 E-3 (DB 601A)",
+  "massKg": 2610,
+  "wingAreaM2": 16.16,
+  "aspectRatio": 6.1,
+  "oswaldE": 0.6,
+  "cd0": 0.022,
+  "clMax": 2.0,
+  "clAlphaPerRad": 5.0,
+  "enginePowerW": 780000,
+  "fullThrottleHeightM": 4500,
+  "propEfficiency": 0.8,
+  "staticThrustN": 6800,
+  "nMaxG": 8,
+  "nMinG": -4,
+  "rollRateCurve": [
+    [120, 38],
+    [250, 92],
+    [350, 85],
+    [480, 45],
+    [640, 15]
+  ],
+  "alignTauS": 0.4,
+  "weathervaneMaxRateDegS": 120,
+  "sideslipDampingS": 0.5,
+  "sideslipMaxAccelG": 0.3,
+  "hpPool": 110,
+  "hitRadiusM": 5.5,
+  "collisionRadiusM": 3,
+  "armament": {
+    "groups": [
+      {
+        "name": "MG 17",
+        "muzzleVelocityMs": 755,
+        "convergenceM": 300,
+        "convergenceRiseM": 0.8,
+        "fireRateRpmPerGun": 1200,
+        "ammoPerGun": 1000,
+        "dispersionMrad": 2.0,
+        "damagePerHit": 1.4,
+        "bulletDragK": 0.001,
+        "bulletLifetimeS": 3.0,
+        "muzzles": [
+          [0.3, 0.35, 1.6],
+          [-0.3, 0.35, 1.6]
+        ]
+      },
+      {
+        "name": "MG FF",
+        "muzzleVelocityMs": 600,
+        "convergenceM": 300,
+        "convergenceRiseM": 1.2,
+        "fireRateRpmPerGun": 520,
+        "ammoPerGun": 60,
+        "dispersionMrad": 3.5,
+        "damagePerHit": 40,
+        "bulletDragK": 0.0016,
+        "bulletLifetimeS": 2.5,
+        "muzzles": [
+          [2.0, -0.2, 1.0],
+          [-2.0, -0.2, 1.0]
+        ]
+      }
+    ]
+  },
+  "stall": {
+    "buffetOnsetRatio": 0.9,
+    "aileronEffectiveness": 0.3,
+    "wingDropDelayS": 1.0,
+    "wingDropRateDegS": 40
+  },
+  "gTolerance": {
+    "onsetG": 4.0,
+    "toleranceGS": 6.0,
+    "recoveryRatePerS": 0.17,
+    "greyoutReserve": 0.7
+  },
+  "instructor": {
+    "aggressivenessRoll": 7.0,
+    "aggressivenessPitch": 5.0,
+    "bankThresholdDeg": 20,
+    "pushoverConeDeg": 20,
+    "smoothingTauS": 0.08,
+    "yawGain": 0.5,
+    "maxYawRateDegS": 10
+  },
+  "wreck": {
+    "baseLoadG": 0.35,
+    "pitchAuthority": 0.3
+  }
+}

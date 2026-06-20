@@ -1,5 +1,6 @@
 import { PlaneConfigError } from '../errors';
 import spitfireMk2Raw from './spitfire-mk2.json';
+import bf109Raw from './bf109-e.json';
 
 /**
  * Parametry samolotu — schemat z docs/fizyka-lotu.md rozdz. 9.
@@ -86,9 +87,17 @@ export interface WreckConfig {
   pitchAuthority: number;
 }
 
-/** Parametry uzbrojenia strzeleckiego (faza 5, docs/phases/faza-05.md). */
-export interface Armament {
-  /** Prędkość wylotowa pocisku względem samolotu [m/s] (.303 ≈ 744). */
+/**
+ * Jedna GRUPA broni (faza 5; faza 19: wiele typów uzbrojenia na samolocie).
+ * Grupa = zestaw luf tego samego typu (np. wszystkie .303, albo 2× MG FF 20 mm)
+ * o wspólnej balistyce, kadencji i zapasie. Samolot ma ≥1 grupę (Spitfire: jedna
+ * z 8 kaemami; Bf 109 E-3: MG 17 + MG FF). Każda grupa strzela niezależnie własną
+ * kadencją i wytwarza pociski o własnej balistyce (prędkość/opór/dmg/czas życia).
+ */
+export interface WeaponGroup {
+  /** Nazwa typu broni do HUD/debug (np. ".303 Browning", "MG 17", "MG FF"). */
+  name: string;
+  /** Prędkość wylotowa pocisku względem samolotu [m/s] (.303 ≈ 744, MG FF ≈ 600). */
   muzzleVelocityMs: number;
   /** Odległość konwergencji luf [m] — punkt, w którym schodzą się strumienie. */
   convergenceM: number;
@@ -98,7 +107,7 @@ export interface Armament {
    * siadały NA linii celownika, nie pod nią. 0 = brak kompensacji.
    */
   convergenceRiseM: number;
-  /** Kadencja POJEDYNCZEJ lufy [pocisków/min]; salwa = wszystkie lufy naraz. */
+  /** Kadencja POJEDYNCZEJ lufy [pocisków/min]; salwa = wszystkie lufy grupy naraz. */
   fireRateRpmPerGun: number;
   /** Zapas amunicji na lufę [szt.]. */
   ammoPerGun: number;
@@ -112,9 +121,18 @@ export interface Armament {
   bulletLifetimeS: number;
   /**
    * Pozycje wylotów luf w body frame [m] (+Z nos, +Y góra, +X LEWE skrzydło).
-   * Liczba pozycji = liczba luf. Kierunek każdego pocisku: do punktu konwergencji.
+   * Liczba pozycji = liczba luf w grupie. Kierunek każdego pocisku: do punktu konwergencji.
    */
   muzzles: readonly (readonly [x: number, y: number, z: number])[];
+}
+
+/**
+ * Uzbrojenie samolotu = lista grup broni (faza 19). Pierwsza grupa jest „główna"
+ * (primaryGroup) — używana tam, gdzie potrzeba jednej reprezentatywnej broni
+ * (wyprzedzenie bota, kosmetyczne smugacze online). Strzelają WSZYSTKIE grupy.
+ */
+export interface Armament {
+  groups: readonly WeaponGroup[];
 }
 
 /** Parametry przeciągnięcia (fizyka-lotu.md rozdz. 6.5). */
@@ -155,8 +173,8 @@ type NumericKey = Exclude<
   'name' | 'rollRateCurve' | 'stall' | 'gTolerance' | 'instructor' | 'armament' | 'wreck'
 >;
 
-/** Pola skalarne uzbrojenia (bez `muzzles`, walidowanego osobno). */
-type ArmamentNumericKey = Exclude<keyof Armament, 'muzzles'>;
+/** Pola skalarne grupy broni (bez `name`/`muzzles`, walidowanych osobno). */
+type WeaponGroupNumericKey = Exclude<keyof WeaponGroup, 'name' | 'muzzles'>;
 
 // Zakresy sanity per pole — łapią literówki i pomyłki jednostek
 // (np. moc w kW zamiast W wypada poniżej minimum).
@@ -183,7 +201,7 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   collisionRadiusM: [0.5, 30],
 };
 
-const ARMAMENT_RANGES: Record<ArmamentNumericKey, readonly [min: number, max: number]> = {
+const WEAPON_GROUP_RANGES: Record<WeaponGroupNumericKey, readonly [min: number, max: number]> = {
   muzzleVelocityMs: [100, 1500],
   convergenceM: [50, 1000],
   convergenceRiseM: [0, 5],
@@ -235,7 +253,11 @@ const KNOWN_KEYS = new Set<string>([
   ...Object.keys(NUMERIC_RANGES),
 ]);
 
-const ARMAMENT_KNOWN_KEYS = new Set<string>(['muzzles', ...Object.keys(ARMAMENT_RANGES)]);
+const WEAPON_GROUP_KNOWN_KEYS = new Set<string>([
+  'name',
+  'muzzles',
+  ...Object.keys(WEAPON_GROUP_RANGES),
+]);
 
 function checkNumericFields(
   obj: Record<string, unknown>,
@@ -301,38 +323,58 @@ function checkRollRateCurve(obj: Record<string, unknown>, problems: string[]): v
   });
 }
 
-function checkMuzzles(armament: Record<string, unknown>, problems: string[]): void {
-  const muzzles = armament['muzzles'];
+function checkMuzzles(group: Record<string, unknown>, prefix: string, problems: string[]): void {
+  const muzzles = group['muzzles'];
   if (!Array.isArray(muzzles) || muzzles.length < 1) {
-    problems.push('armament.muzzles: oczekiwano tablicy ≥1 pozycji [x,y,z] w body frame [m]');
+    problems.push(`${prefix}muzzles: oczekiwano tablicy ≥1 pozycji [x,y,z] w body frame [m]`);
     return;
   }
   muzzles.forEach((m, i) => {
     if (!Array.isArray(m) || m.length !== 3) {
-      problems.push(`armament.muzzles[${String(i)}]: oczekiwano trójki [x,y,z]`);
+      problems.push(`${prefix}muzzles[${String(i)}]: oczekiwano trójki [x,y,z]`);
       return;
     }
     (m as unknown[]).forEach((v, axis) => {
       if (typeof v !== 'number' || !Number.isFinite(v) || v < -15 || v > 15) {
         problems.push(
-          `armament.muzzles[${String(i)}][${String(axis)}]: ${JSON.stringify(v)} poza [−15, 15] m`,
+          `${prefix}muzzles[${String(i)}][${String(axis)}]: ${JSON.stringify(v)} poza [−15, 15] m`,
         );
       }
     });
   });
 }
 
+function checkWeaponGroup(raw: unknown, prefix: string, problems: string[]): void {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    problems.push(`${prefix.slice(0, -1)}: oczekiwano obiektu grupy broni`);
+    return;
+  }
+  const group = raw as Record<string, unknown>;
+  const name = group['name'];
+  if (typeof name !== 'string' || name.trim() === '') {
+    problems.push(`${prefix}name: oczekiwano niepustego stringa, jest ${JSON.stringify(name)}`);
+  }
+  checkNumericFields(group, WEAPON_GROUP_RANGES, prefix, problems);
+  checkMuzzles(group, prefix, problems);
+  for (const key of Object.keys(group)) {
+    if (!WEAPON_GROUP_KNOWN_KEYS.has(key)) problems.push(`${prefix}${key}: nieznane pole (literówka?)`);
+  }
+}
+
 function checkArmament(obj: Record<string, unknown>, problems: string[]): void {
   const section = obj['armament'];
   if (typeof section !== 'object' || section === null || Array.isArray(section)) {
-    problems.push('armament: oczekiwano obiektu');
+    problems.push('armament: oczekiwano obiektu z polem groups');
     return;
   }
-  const armament = section as Record<string, unknown>;
-  checkNumericFields(armament, ARMAMENT_RANGES, 'armament.', problems);
-  checkMuzzles(armament, problems);
-  for (const key of Object.keys(armament)) {
-    if (!ARMAMENT_KNOWN_KEYS.has(key)) problems.push(`armament.${key}: nieznane pole (literówka?)`);
+  const groups = (section as Record<string, unknown>)['groups'];
+  if (!Array.isArray(groups) || groups.length < 1) {
+    problems.push('armament.groups: oczekiwano tablicy ≥1 grupy broni');
+    return;
+  }
+  groups.forEach((g, i) => checkWeaponGroup(g, `armament.groups[${String(i)}].`, problems));
+  for (const key of Object.keys(section as Record<string, unknown>)) {
+    if (key !== 'groups') problems.push(`armament.${key}: nieznane pole (literówka?)`);
   }
 }
 
@@ -378,6 +420,9 @@ export function loadPlaneConfig(raw: unknown, source = 'konfiguracja samolotu'):
 
 /** Spitfire Mk IIa — walidowany przy imporcie modułu (fail fast). */
 export const SPITFIRE_MK2: PlaneConfig = loadPlaneConfig(spitfireMk2Raw, 'spitfire-mk2.json');
+
+/** Bf 109 E-3 (DB 601A) — energy-fighter (faza 19), walidowany przy imporcie. */
+export const BF109_E: PlaneConfig = loadPlaneConfig(bf109Raw, 'bf109-e.json');
 
 /** Współczynnik oporu indukowanego K = 1/(π·e·AR) z biegunowej Cd = Cd0 + K·Cl². */
 export function inducedDragFactor(plane: PlaneConfig): number {

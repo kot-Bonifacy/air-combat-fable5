@@ -33,18 +33,23 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
     hitRadiusM: 6,
     collisionRadiusM: 3,
     armament: {
-      muzzleVelocityMs: 744,
-      convergenceM: 200,
-      convergenceRiseM: 0.41,
-      fireRateRpmPerGun: 1150,
-      ammoPerGun: 300,
-      dispersionMrad: 3,
-      damagePerHit: 1.5,
-      bulletDragK: 0.001,
-      bulletLifetimeS: 3,
-      muzzles: [
-        [1.5, -0.25, 1.2],
-        [-1.5, -0.25, 1.2],
+      groups: [
+        {
+          name: '.303',
+          muzzleVelocityMs: 744,
+          convergenceM: 200,
+          convergenceRiseM: 0.41,
+          fireRateRpmPerGun: 1150,
+          ammoPerGun: 300,
+          dispersionMrad: 3,
+          damagePerHit: 1.5,
+          bulletDragK: 0.001,
+          bulletLifetimeS: 3,
+          muzzles: [
+            [1.5, -0.25, 1.2],
+            [-1.5, -0.25, 1.2],
+          ],
+        },
       ],
     },
     stall: {

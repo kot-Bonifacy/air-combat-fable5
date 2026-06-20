@@ -33,6 +33,7 @@ import {
   getRight,
   getUp,
   nAvailG,
+  primaryGroup,
   surfaceHeightM,
   totalAmmo,
   type EntitySnapshot,
@@ -280,7 +281,9 @@ let extrapolatingCount = 0;
 // --- walka (faza 11): pociski są autorytatywne na serwerze; klient rysuje WYŁĄCZNIE
 //     kosmetyczne smugacze z eventu MUZZLE (z pozy strzelca), a hit marker / kill feed
 //     z eventów HIT / KILL. Żadnej hit-detekcji po stronie klienta. ---
-const arm = plane.armament;
+// Kosmetyczne smugacze online używają grupy GŁÓWNEJ (Spitfire ma jedną; render
+// wielu typów broni dla Bf 109 → faza 19b, gdy event MUZZLE rozróżni grupy).
+const arm = primaryGroup(plane.armament);
 const cosmeticPool = new BulletPool(BULLET_POOL_CAPACITY);
 const tracers = new BulletTracers(scene, BULLET_POOL_CAPACITY);
 const tracerCounter = new Map<number, number>(); // ciągłość kadencji smugaczy per strzelec
@@ -463,7 +466,7 @@ function spawnCosmeticVolley(ownerId: number, seed: number, shots: number): void
     cosmVel.copy(cosmDir).multiplyScalar(arm.muzzleVelocityMs);
     const tracer = counter % 3 === 0;
     counter++;
-    cosmeticPool.spawn(cosmMuzzle, cosmVel, 0, ownerId, tracer);
+    cosmeticPool.spawn(cosmMuzzle, cosmVel, 0, ownerId, tracer, arm.bulletDragK, arm.bulletLifetimeS);
   }
   tracerCounter.set(ownerId, counter);
 }
@@ -932,7 +935,7 @@ function escapeHtml(s: string): string {
 
 // --- render walki (faza 11): smugacze, hit marker, kill feed ---
 function updateCombatVisuals(frameDtS: number): void {
-  cosmeticPool.update(arm.bulletDragK, arm.bulletLifetimeS, frameDtS);
+  cosmeticPool.update(frameDtS); // balistyka per pocisk (dragK/lifetime z grupy przy spawnie)
   tracers.update(cosmeticPool.bullets, 1);
 
   if (hitMarkerTimerS > 0) {

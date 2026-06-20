@@ -30,6 +30,7 @@ import {
   nearestToroidalImage,
   pilotStep,
   planesCollide,
+  resetFireControl,
   resetHealth,
   segmentSphereHit,
   smallerTeamIndex,
@@ -600,8 +601,7 @@ export class GameRoom {
     for (const player of this.players.values()) this.fireWeapon(player, dtS);
 
     // 4) ruch pocisków + 5) hit detection z cofnięciem celów (lag compensation)
-    const arm = this.plane.armament;
-    this.pool.update(arm.bulletDragK, arm.bulletLifetimeS, dtS);
+    this.pool.update(dtS); // balistyka per pocisk (dragK/lifetime z grupy broni przy strzale)
     this.resolveHits();
 
     // 6) rozstrzygnięcie końca meczu (po rozliczeniu trafień tego ticku) — strefa albo eliminacja
@@ -925,9 +925,7 @@ export class GameRoom {
 
     // nowe życie: pełne HP, pełna amunicja, czysta lista napastników (kredyt asyst)
     resetHealth(player.health, this.plane.hpPool);
-    player.fire.cooldownS = 0;
-    player.fire.ammoRemaining = totalAmmo(this.plane.armament);
-    player.fire.shotCounter = 0;
+    resetFireControl(player.fire, this.plane.armament); // pełny zapas wszystkich grup + zerowanie cooldownów
     player.damagedBy.clear();
     // nietykalność po (re)spawnie (anty-spawn-kill); znika po czasie albo gdy gracz strzeli
     player.protectionTimerS = SPAWN_PROTECTION_S;

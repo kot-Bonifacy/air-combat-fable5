@@ -3,6 +3,7 @@ import {
   FIXED_DT_S,
   MIN_SPAWN_CLEARANCE_M,
   SPITFIRE_MK2,
+  totalAmmo,
   type ControlMessage,
   type InputFrame,
 } from '@air-combat/shared';
@@ -13,8 +14,7 @@ import { GameRoom } from './game-room';
 // (last-man-standing) albo ktoś przejmie strefę. Testy puszczają realną pętlę room.step i
 // sterują stanem encji bezpośrednio (referencje z snapshotEntities()), jak combat.test.
 
-const arm = SPITFIRE_MK2.armament;
-const TOTAL_AMMO = arm.ammoPerGun * arm.muzzles.length;
+const TOTAL_AMMO = totalAmmo(SPITFIRE_MK2.armament);
 
 function input(over: Partial<InputFrame> = {}): InputFrame {
   return {

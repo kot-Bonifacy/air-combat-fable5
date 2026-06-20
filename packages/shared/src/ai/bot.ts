@@ -1,4 +1,5 @@
 import { Quaternion, Vector3 } from 'three';
+import { primaryGroup } from '../combat/fire';
 import { createRng } from '../math/rng';
 import { getForward, getRight, getUp } from '../math/frame';
 import { Instructor, type PilotDemands } from '../instructor/instructor';
@@ -174,7 +175,9 @@ export class Bot {
         self.velocity,
         tgtPos,
         target.velocity,
-        plane.armament.muzzleVelocityMs,
+        // wyprzedzenie liczone dla broni głównej (jedna prędkość wylotowa); rachunek i tak
+        // pomija grawitację/opór, więc reprezentatywna grupa wystarcza (faza 19)
+        primaryGroup(plane.armament).muzzleVelocityMs,
         this.lead,
       );
       this.perception.hasTarget = true;

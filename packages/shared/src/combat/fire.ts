@@ -1,6 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import { MRAD_TO_RAD } from '../constants';
-import type { Armament } from '../planes/loader';
+import type { Armament, WeaponGroup } from '../planes/loader';
 import type { BulletPool } from './ballistics';
 
 // Kontrola ognia (faza-05.md krok 4): kadencja, amunicja, konwergencja luf i
@@ -8,6 +8,10 @@ import type { BulletPool } from './ballistics';
 // rozjeżdża się i trafianie frustruje (200 m = historyczny default RAF).
 // Rozrzut z seeded RNG z shared: ten sam strumień liczb po obu stronach sieci
 // przy tym samym seedzie (przygotowanie pod serwer w fazie 11).
+//
+// Faza 19: samolot ma WIELE grup broni (Bf 109 E-3: 2× MG 17 + 2× MG FF). Każda
+// grupa strzela niezależnie własną kadencją i produkuje pociski o własnej balistyce
+// (prędkość/opór/czas życia → różny tracer i łuk). FireControl trzyma stan per grupa.
 
 /** Minimum stanu samolotu potrzebne do oddania strzału (PlaneState spełnia). */
 export interface FiringPlatform {
@@ -16,27 +20,78 @@ export interface FiringPlatform {
   orientation: Quaternion;
 }
 
-/** Stan spustu/magazynka jednego samolotu. */
-export interface FireControl {
-  /** Czas do następnej możliwej salwy [s]; ≤0 = gotów. */
+/** Stan spustu/magazynka JEDNEJ grupy broni. */
+export interface GroupFireControl {
+  /** Czas do następnej możliwej salwy tej grupy [s]; ≤0 = gotów. */
   cooldownS: number;
-  /** Pozostała amunicja łącznie (wszystkie lufy). */
+  /** Pozostała amunicja grupy łącznie (wszystkie lufy grupy). */
   ammoRemaining: number;
-  /** Licznik wystrzelonych pocisków — co 3. jest smugaczem (tracer). */
+  /** Licznik wystrzelonych pocisków grupy — co 3. jest smugaczem (tracer). */
   shotCounter: number;
 }
 
+/** Stan spustu/magazynka całego samolotu — po jednym podstanie na grupę broni. */
+export interface FireControl {
+  /**
+   * Łączna pozostała amunicja (suma wszystkich grup) — cache trzymany na bieżąco,
+   * by snapshot (faza 14) kodował ułamek amunicji bez sumowania grup przy każdym
+   * enkodowaniu. Niezmiennik: `ammoRemaining === Σ groups[i].ammoRemaining`.
+   */
+  ammoRemaining: number;
+  /** Stan per grupa broni (równoległy do `armament.groups`). */
+  groups: GroupFireControl[];
+}
+
+/** Amunicja jednej grupy = zapas na lufę × liczba luf grupy. */
+function groupAmmo(group: WeaponGroup): number {
+  return group.ammoPerGun * group.muzzles.length;
+}
+
+/** Łączny zapas amunicji samolotu (wszystkie grupy, wszystkie lufy). */
 export function totalAmmo(armament: Armament): number {
-  return armament.ammoPerGun * armament.muzzles.length;
+  let sum = 0;
+  for (const g of armament.groups) sum += groupAmmo(g);
+  return sum;
+}
+
+/** Wszystkie pozycje luf samolotu (spłaszczone grupy) — do błysków wylotowych w kliencie. */
+export function allMuzzles(armament: Armament): readonly (readonly [number, number, number])[] {
+  return armament.groups.flatMap((g) => g.muzzles);
+}
+
+/**
+ * Grupa „główna" (pierwsza zadeklarowana) — reprezentatywna broń tam, gdzie potrzeba
+ * JEDNEJ (wyprzedzenie bota: rachunek z jedną prędkością wylotową; kosmetyczne smugacze
+ * online). JSON ma listować dominujący typ pierwszy.
+ */
+export function primaryGroup(armament: Armament): WeaponGroup {
+  const g = armament.groups[0];
+  if (!g) throw new Error('armament.groups puste — walidacja loadera powinna to złapać');
+  return g;
 }
 
 export function createFireControl(armament: Armament): FireControl {
-  return { cooldownS: 0, ammoRemaining: totalAmmo(armament), shotCounter: 0 };
+  return {
+    ammoRemaining: totalAmmo(armament),
+    groups: armament.groups.map((g) => ({ cooldownS: 0, ammoRemaining: groupAmmo(g), shotCounter: 0 })),
+  };
 }
 
-/** Odstęp między salwami [s] z kadencji jednej lufy (salwa = wszystkie naraz). */
-export function volleyIntervalS(armament: Armament): number {
-  return 60 / armament.fireRateRpmPerGun;
+/** Reset spustu i magazynka do pełna (nowe życie/respawn) — pełny zapas, cooldowny zerowane. */
+export function resetFireControl(fc: FireControl, armament: Armament): void {
+  fc.ammoRemaining = totalAmmo(armament);
+  armament.groups.forEach((g, i) => {
+    const gfc = fc.groups[i];
+    if (!gfc) return;
+    gfc.cooldownS = 0;
+    gfc.ammoRemaining = groupAmmo(g);
+    gfc.shotCounter = 0;
+  });
+}
+
+/** Odstęp między salwami grupy [s] z kadencji jednej lufy (salwa = wszystkie lufy grupy naraz). */
+export function volleyIntervalS(group: WeaponGroup): number {
+  return 60 / group.fireRateRpmPerGun;
 }
 
 /**
@@ -89,33 +144,44 @@ const scratchDir = new Vector3();
 const scratchVel = new Vector3();
 
 /**
- * Jedna salwa: po jednym pocisku z każdej lufy (lub mniej, gdy kończy się
- * amunicja). Pocisk dziedziczy prędkość samolotu (muzzleVel jest względem niego).
- * Zwraca liczbę wystrzelonych pocisków.
+ * Jedna salwa JEDNEJ grupy: po jednym pocisku z każdej lufy grupy (lub mniej, gdy
+ * kończy się amunicja). Pocisk dziedziczy prędkość samolotu (muzzleVel względem niego)
+ * oraz balistykę grupy (dragK, lifetime). Zwraca liczbę wystrzelonych pocisków.
  */
-function fireVolley(
+function fireGroupVolley(
   fc: FireControl,
-  armament: Armament,
+  gfc: GroupFireControl,
+  group: WeaponGroup,
   platform: FiringPlatform,
   ownerId: number,
   rng: () => number,
   pool: BulletPool,
   rewindTicks: number,
 ): number {
-  const dispersionRad = armament.dispersionMrad * MRAD_TO_RAD;
+  const dispersionRad = group.dispersionMrad * MRAD_TO_RAD;
   let fired = 0;
-  for (const muzzle of armament.muzzles) {
-    if (fc.ammoRemaining <= 0) break;
+  for (const muzzle of group.muzzles) {
+    if (gfc.ammoRemaining <= 0) break;
     scratchMuzzleWorld.set(muzzle[0], muzzle[1], muzzle[2]);
-    aimDirectionBody(scratchMuzzleWorld, armament.convergenceM, armament.convergenceRiseM, scratchDir);
+    aimDirectionBody(scratchMuzzleWorld, group.convergenceM, group.convergenceRiseM, scratchDir);
     applyDispersion(scratchDir, dispersionRad, rng);
     // body → world
     scratchDir.applyQuaternion(platform.orientation);
     scratchMuzzleWorld.applyQuaternion(platform.orientation).add(platform.position);
-    scratchVel.copy(platform.velocity).addScaledVector(scratchDir, armament.muzzleVelocityMs);
-    const tracer = fc.shotCounter % 3 === 0;
-    fc.shotCounter++;
-    pool.spawn(scratchMuzzleWorld, scratchVel, armament.damagePerHit, ownerId, tracer, rewindTicks);
+    scratchVel.copy(platform.velocity).addScaledVector(scratchDir, group.muzzleVelocityMs);
+    const tracer = gfc.shotCounter % 3 === 0;
+    gfc.shotCounter++;
+    pool.spawn(
+      scratchMuzzleWorld,
+      scratchVel,
+      group.damagePerHit,
+      ownerId,
+      tracer,
+      group.bulletDragK,
+      group.bulletLifetimeS,
+      rewindTicks,
+    );
+    gfc.ammoRemaining--;
     fc.ammoRemaining--;
     fired++;
   }
@@ -124,8 +190,9 @@ function fireVolley(
 
 /**
  * Krok kontroli ognia — wołać co tick fizyki. Gdy spust trzymany i kadencja
- * pozwala, oddaje salwy (pętla while obsługuje też krok wolniejszy niż odstęp
- * salw, np. tryb F4). Zwraca liczbę pocisków wystrzelonych w tym ticku
+ * pozwala, KAŻDA grupa broni oddaje swoje salwy niezależnie (różne kadencje →
+ * MG 17 prują gęsto, MG FF rzadziej). Pętla while obsługuje też krok wolniejszy
+ * niż odstęp salw. Zwraca łączną liczbę pocisków wystrzelonych w tym ticku
  * (>0 = klient może błysnąć lufami).
  */
 export function updateFire(
@@ -141,17 +208,21 @@ export function updateFire(
   // 0 = offline/serwer lokalny (zachowanie z fazy 5 bez zmian).
   rewindTicks = 0,
 ): number {
-  fc.cooldownS -= dtS;
-  if (!triggerHeld) {
-    if (fc.cooldownS < 0) fc.cooldownS = 0; // gotów do natychmiastowego strzału po naciśnięciu
-    return 0;
-  }
-  const interval = volleyIntervalS(armament);
   let fired = 0;
-  // limit iteracji = bezpiecznik przed pętlą przy patologicznym dtS
-  for (let guard = 0; guard < 32 && fc.cooldownS <= 0 && fc.ammoRemaining > 0; guard++) {
-    fired += fireVolley(fc, armament, platform, ownerId, rng, pool, rewindTicks);
-    fc.cooldownS += interval;
-  }
+  armament.groups.forEach((group, i) => {
+    const gfc = fc.groups[i];
+    if (!gfc) return;
+    gfc.cooldownS -= dtS;
+    if (!triggerHeld) {
+      if (gfc.cooldownS < 0) gfc.cooldownS = 0; // gotów do natychmiastowego strzału po naciśnięciu
+      return;
+    }
+    const interval = volleyIntervalS(group);
+    // limit iteracji = bezpiecznik przed pętlą przy patologicznym dtS
+    for (let guard = 0; guard < 32 && gfc.cooldownS <= 0 && gfc.ammoRemaining > 0; guard++) {
+      fired += fireGroupVolley(fc, gfc, group, platform, ownerId, rng, pool, rewindTicks);
+      gfc.cooldownS += interval;
+    }
+  });
   return fired;
 }

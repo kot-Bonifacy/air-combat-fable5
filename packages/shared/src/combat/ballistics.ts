@@ -28,6 +28,13 @@ export interface Bullet {
   active: boolean;
   /** Obrażenia zadawane przez to trafienie [HP]. */
   damage: number;
+  /**
+   * Współczynnik oporu kwadratowego k [1/m] tego pocisku (a = −k·|v|·v). PER POCISK,
+   * bo jedna pula miesza typy o różnej balistyce (faza 19: .303 vs łukowy 20 mm MG FF).
+   */
+  dragK: number;
+  /** Czas życia [s] — po nim slot gaśnie (cap zasięgu; per pocisk, różny dla typów broni). */
+  lifetimeS: number;
   /** Id właściciela (kill credit; teraz lokalnie 0, używane od fazy 11). */
   ownerId: number;
   /** Czy klient ma rysować ten pocisk jako smugę (co N-ty — ustawia spawner). */
@@ -50,6 +57,8 @@ function createBullet(): Bullet {
     ageS: 0,
     active: false,
     damage: 0,
+    dragK: 0,
+    lifetimeS: 0,
     ownerId: 0,
     tracer: false,
     rewindTicks: 0,
@@ -67,12 +76,12 @@ function createBullet(): Bullet {
  * to osobny punkt bez rotacji, więc może mieć dokładniejszy schemat niż płatowiec.
  *
  * `prevPosition` zapisywane PRZED ruchem — odcinek prev→pos jest wejściem do
- * hit-detekcji (segment vs sfera).
+ * hit-detekcji (segment vs sfera). `dragK` brany Z POCISKU (różny per typ broni).
  */
-export function stepBullet(bullet: Bullet, dragK: number, dtS: number): void {
+export function stepBullet(bullet: Bullet, dtS: number): void {
   bullet.prevPosition.copy(bullet.position);
   const v = bullet.velocity;
-  const dragMag = dragK * v.length();
+  const dragMag = bullet.dragK * v.length();
   const ax = -dragMag * v.x;
   const ay = -GRAVITY_MS2 - dragMag * v.y;
   const az = -dragMag * v.z;
@@ -118,6 +127,8 @@ export class BulletPool {
     damage: number,
     ownerId: number,
     tracer: boolean,
+    dragK: number,
+    lifetimeS: number,
     rewindTicks = 0,
   ): Bullet | null {
     const slot = this.freeSlot();
@@ -129,18 +140,20 @@ export class BulletPool {
     slot.ageS = 0;
     slot.active = true;
     slot.damage = damage;
+    slot.dragK = dragK;
+    slot.lifetimeS = lifetimeS;
     slot.ownerId = ownerId;
     slot.tracer = tracer;
     slot.rewindTicks = rewindTicks;
     return slot;
   }
 
-  /** Kroczy wszystkie aktywne pociski; gasi te starsze niż `lifetimeS`. */
-  update(dragK: number, lifetimeS: number, dtS: number): void {
+  /** Kroczy wszystkie aktywne pociski; gasi te starsze niż ICH `lifetimeS` (per pocisk). */
+  update(dtS: number): void {
     for (const b of this.bullets) {
       if (!b.active) continue;
-      stepBullet(b, dragK, dtS);
-      if (b.ageS >= lifetimeS) b.active = false;
+      stepBullet(b, dtS);
+      if (b.ageS >= b.lifetimeS) b.active = false;
     }
   }
 

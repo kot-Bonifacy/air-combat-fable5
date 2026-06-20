@@ -9,7 +9,7 @@ import { BulletPool, stepBullet, type Bullet } from './ballistics';
 const V0_MS = 744; // prędkość wylotowa .303 (≈ wartość z konfiguracji)
 const DRAG_K = 0.001; // [1/m] — kalibracja: v(300 m) ≈ 0.74·v0
 
-function makeBullet(velocity: Vector3): Bullet {
+function makeBullet(velocity: Vector3, dragK = 0, lifetimeS = Infinity): Bullet {
   return {
     position: new Vector3(0, 0, 0),
     prevPosition: new Vector3(),
@@ -18,6 +18,8 @@ function makeBullet(velocity: Vector3): Bullet {
     ageS: 0,
     active: true,
     damage: 0,
+    dragK,
+    lifetimeS,
     ownerId: 0,
     tracer: false,
     rewindTicks: 0,
@@ -26,12 +28,12 @@ function makeBullet(velocity: Vector3): Bullet {
 
 /** Strzał poziomy wzdłuż +Z; opad [m] i prędkość [m/s] dokładnie na z = targetZ. */
 function measureAtZ(dragK: number, dtS: number, targetZ: number): { dropM: number; speedMs: number } {
-  const b = makeBullet(new Vector3(0, 0, V0_MS));
+  const b = makeBullet(new Vector3(0, 0, V0_MS), dragK);
   for (let i = 0; i < 100_000; i++) {
     const prevZ = b.position.z;
     const prevY = b.position.y;
     const prevSpeed = b.velocity.length();
-    stepBullet(b, dragK, dtS);
+    stepBullet(b, dtS);
     if (b.position.z >= targetZ) {
       const alpha = (targetZ - prevZ) / (b.position.z - prevZ);
       const y = prevY + alpha * (b.position.y - prevY);
@@ -69,9 +71,9 @@ describe('balistyka pocisku', () => {
 
   it('zasięg w czasie życia: zgodny z referencją (<1%) i w paśmie ~1.1 km', () => {
     function rangeAfter(dtS: number, durationS: number): number {
-      const b = makeBullet(new Vector3(0, 0, V0_MS));
+      const b = makeBullet(new Vector3(0, 0, V0_MS), DRAG_K);
       const steps = Math.round(durationS / dtS);
-      for (let i = 0; i < steps; i++) stepBullet(b, DRAG_K, dtS);
+      for (let i = 0; i < steps; i++) stepBullet(b, dtS);
       return b.position.z;
     }
     const coarse = rangeAfter(FIXED_DT_S, 3);
@@ -83,7 +85,7 @@ describe('balistyka pocisku', () => {
 
   it('prevPosition zapisany przed ruchem (odcinek do hit-detekcji)', () => {
     const b = makeBullet(new Vector3(0, 0, V0_MS));
-    stepBullet(b, 0, FIXED_DT_S);
+    stepBullet(b, FIXED_DT_S);
     expect(b.prevPosition.z).toBe(0);
     expect(b.position.z).toBeCloseTo(V0_MS * FIXED_DT_S, 6);
   });
@@ -96,30 +98,30 @@ describe('pula pocisków', () => {
   it('spawn zwraca slot z puli (reużycie, zero nowych obiektów)', () => {
     const pool = new BulletPool(8);
     for (let i = 0; i < 50; i++) {
-      const b = pool.spawn(ORIGIN, VEL, 3, 0, false);
+      const b = pool.spawn(ORIGIN, VEL, 3, 0, false, DRAG_K, 3);
       expect(b).not.toBeNull();
       expect(pool.bullets).toContain(b); // zawsze jeden z prealokowanych
       if (b) b.active = false; // zwolnij, by kolejny spawn wziął wolny slot
     }
   });
 
-  it('activeCount rośnie ze spawnem, maleje po wygaśnięciu', () => {
+  it('activeCount rośnie ze spawnem, maleje po wygaśnięciu (czas życia per pocisk)', () => {
     const pool = new BulletPool(8);
-    pool.spawn(ORIGIN, VEL, 3, 0, true);
-    pool.spawn(ORIGIN, VEL, 3, 0, false);
+    pool.spawn(ORIGIN, VEL, 3, 0, true, DRAG_K, 0.05);
+    pool.spawn(ORIGIN, VEL, 3, 0, false, DRAG_K, 0.05);
     expect(pool.activeCount).toBe(2);
-    // czas życia 0.05 s → po kilku krokach 1/60 s oba gasną
-    for (let i = 0; i < 5; i++) pool.update(DRAG_K, 0.05, FIXED_DT_S);
+    // czas życia 0.05 s (z pocisku) → po kilku krokach 1/60 s oba gasną
+    for (let i = 0; i < 5; i++) pool.update(FIXED_DT_S);
     expect(pool.activeCount).toBe(0);
   });
 
   it('pełna pula nadpisuje najstarszy pocisk (graceful degradation)', () => {
     const pool = new BulletPool(2);
-    const a = pool.spawn(ORIGIN, VEL, 3, 0, false);
-    pool.update(DRAG_K, 10, FIXED_DT_S); // a postarzeje
-    const b = pool.spawn(ORIGIN, VEL, 3, 0, false);
+    const a = pool.spawn(ORIGIN, VEL, 3, 0, false, DRAG_K, 10);
+    pool.update(FIXED_DT_S); // a postarzeje
+    const b = pool.spawn(ORIGIN, VEL, 3, 0, false, DRAG_K, 10);
     expect(pool.activeCount).toBe(2);
-    const c = pool.spawn(ORIGIN, VEL, 3, 0, false); // brak wolnych → najstarszy = a
+    const c = pool.spawn(ORIGIN, VEL, 3, 0, false, DRAG_K, 10); // brak wolnych → najstarszy = a
     expect(c).toBe(a);
     expect(b?.active).toBe(true);
   });

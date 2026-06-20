@@ -2,19 +2,22 @@ import { Quaternion, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { FIXED_DT_S } from '../constants';
 import { createRng } from '../math/rng';
-import { SPITFIRE_MK2, type Armament } from '../planes/loader';
+import { BF109_E, SPITFIRE_MK2, type Armament, type WeaponGroup } from '../planes/loader';
 import { BulletPool } from './ballistics';
 import {
   aimDirectionBody,
+  allMuzzles,
   createFireControl,
+  primaryGroup,
   totalAmmo,
   updateFire,
   volleyIntervalS,
   type FiringPlatform,
 } from './fire';
 
-function testArmament(over: Partial<Armament> = {}): Armament {
+function testGroup(over: Partial<WeaponGroup> = {}): WeaponGroup {
   return {
+    name: 'test',
     muzzleVelocityMs: 744,
     convergenceM: 200,
     convergenceRiseM: 0,
@@ -32,6 +35,11 @@ function testArmament(over: Partial<Armament> = {}): Armament {
   };
 }
 
+/** Uzbrojenie jednogrupowe z nadpisaniami grupy (większość testów). */
+function testArmament(over: Partial<WeaponGroup> = {}): Armament {
+  return { groups: [testGroup(over)] };
+}
+
 function platformAtOrigin(): FiringPlatform {
   return { position: new Vector3(), velocity: new Vector3(), orientation: new Quaternion() };
 }
@@ -39,11 +47,12 @@ function platformAtOrigin(): FiringPlatform {
 describe('kontrola ognia — kadencja i amunicja', () => {
   it('salwa = jeden pocisk z każdej lufy', () => {
     const arm = testArmament();
+    const muzzles = allMuzzles(arm).length;
     const pool = new BulletPool(16);
     const fc = createFireControl(arm);
     const fired = updateFire(fc, arm, platformAtOrigin(), 0, createRng(1), pool, true, FIXED_DT_S);
-    expect(fired).toBe(arm.muzzles.length);
-    expect(pool.activeCount).toBe(arm.muzzles.length);
+    expect(fired).toBe(muzzles);
+    expect(pool.activeCount).toBe(muzzles);
   });
 
   it('kadencja blokuje drugą salwę w tym samym oknie', () => {
@@ -61,7 +70,7 @@ describe('kontrola ognia — kadencja i amunicja', () => {
     const pool = new BulletPool(16);
     const fc = createFireControl(arm);
     const platform = platformAtOrigin();
-    const interval = volleyIntervalS(arm);
+    const interval = volleyIntervalS(primaryGroup(arm));
     let total = 0;
     for (let i = 0; i < 10; i++) {
       total += updateFire(fc, arm, platform, 0, createRng(1), pool, true, interval);
@@ -77,22 +86,69 @@ describe('kontrola ognia — kadencja i amunicja', () => {
     const platform = platformAtOrigin();
     updateFire(fc, arm, platform, 0, createRng(1), pool, true, FIXED_DT_S); // salwa, cooldown > 0
     updateFire(fc, arm, platform, 0, createRng(1), pool, false, 1.0); // spust puszczony
-    expect(fc.cooldownS).toBe(0);
+    expect(fc.groups[0]?.cooldownS).toBe(0);
+  });
+});
+
+describe('wiele grup broni (faza 19: różne kadencje strzelają niezależnie)', () => {
+  // Grupa szybka (1200 rpm, 2 lufy) + wolna (300 rpm, 1 lufa) — jak MG 17 + MG FF.
+  const fast = testGroup({ name: 'szybka', fireRateRpmPerGun: 1200, ammoPerGun: 1000, muzzles: [[1, 0, 1]] });
+  const slow = testGroup({
+    name: 'wolna',
+    fireRateRpmPerGun: 300,
+    ammoPerGun: 1000,
+    muzzleVelocityMs: 600,
+    bulletDragK: 0.0014,
+    muzzles: [[-1, 0, 1]],
+  });
+  const arm: Armament = { groups: [fast, slow] };
+
+  it('totalAmmo i allMuzzles sumują wszystkie grupy', () => {
+    expect(totalAmmo(arm)).toBe(2000);
+    expect(allMuzzles(arm).length).toBe(2);
+  });
+
+  it('grupa szybka oddaje więcej salw niż wolna w tym samym czasie', () => {
+    const pool = new BulletPool(4096);
+    const fc = createFireControl(arm);
+    const platform = platformAtOrigin();
+    let total = 0;
+    for (let i = 0; i < 60; i++) {
+      total += updateFire(fc, arm, platform, 0, createRng(1), pool, true, FIXED_DT_S); // 1 s ognia
+    }
+    const fastFired = fc.groups[0]!.ammoRemaining; // pozostało
+    const slowFired = fc.groups[1]!.ammoRemaining;
+    // szybka grupa zużyła WIĘCEJ amunicji (mniej zostało) niż wolna
+    expect(fastFired).toBeLessThan(slowFired);
+    // łączny licznik = suma obu grup, niezmiennik cache: fc.ammoRemaining
+    expect(2000 - fc.ammoRemaining).toBe(total);
+  });
+
+  it('pociski grup mają różną prędkość i opór (łuk MG FF)', () => {
+    const pool = new BulletPool(64);
+    const fc = createFireControl(arm);
+    updateFire(fc, arm, platformAtOrigin(), 0, createRng(1), pool, true, FIXED_DT_S);
+    const speeds = pool.bullets.filter((b) => b.active).map((b) => b.velocity.length());
+    const dragKs = pool.bullets.filter((b) => b.active).map((b) => b.dragK);
+    expect(Math.max(...speeds)).toBeCloseTo(744, 0); // szybka grupa
+    expect(Math.min(...speeds)).toBeCloseTo(600, 0); // wolna (MG FF)
+    expect(Math.max(...dragKs)).toBeGreaterThan(Math.min(...dragKs)); // różny opór
   });
 });
 
 describe('konwergencja luf', () => {
   it('strumienie z obu skrzydeł schodzą się dokładnie na convergenceM', () => {
     const arm = testArmament({ convergenceM: 200 });
+    const muzzles = allMuzzles(arm).length;
     const pool = new BulletPool(16);
     const fc = createFireControl(arm);
     updateFire(fc, arm, platformAtOrigin(), 0, createRng(1), pool, true, FIXED_DT_S);
 
-    for (let i = 0; i < arm.muzzles.length; i++) {
+    for (let i = 0; i < muzzles; i++) {
       const b = pool.bullets[i];
       if (!b?.active) throw new Error('brak pocisku');
       const dir = b.velocity.clone().normalize();
-      const t = (arm.convergenceM - b.position.z) / dir.z; // dolot do z = convergenceM
+      const t = (200 - b.position.z) / dir.z; // dolot do z = convergenceM
       const xAtConv = b.position.x + t * dir.x;
       const yAtConv = b.position.y + t * dir.y;
       expect(xAtConv).toBeCloseTo(0, 5);
@@ -125,6 +181,7 @@ describe('konwergencja luf', () => {
 describe('rozrzut z seeded RNG', () => {
   it('ten sam seed → identyczne prędkości pocisków (determinizm klient↔serwer)', () => {
     const arm = testArmament({ dispersionMrad: 4 });
+    const muzzles = allMuzzles(arm).length;
     const run = (): Vector3[] => {
       const pool = new BulletPool(16);
       const fc = createFireControl(arm);
@@ -133,7 +190,7 @@ describe('rozrzut z seeded RNG', () => {
     };
     const a = run();
     const b = run();
-    expect(a.length).toBe(arm.muzzles.length);
+    expect(a.length).toBe(muzzles);
     a.forEach((v, i) => {
       expect(v.x).toBe(b[i]?.x);
       expect(v.y).toBe(b[i]?.y);
@@ -161,21 +218,64 @@ describe('smugacze i bilans obrażeń', () => {
     const pool = new BulletPool(32);
     const fc = createFireControl(arm);
     const platform = platformAtOrigin();
-    const interval = volleyIntervalS(arm);
+    const interval = volleyIntervalS(primaryGroup(arm));
     for (let i = 0; i < 6; i++) updateFire(fc, arm, platform, 0, createRng(1), pool, true, interval);
     const tracers = pool.bullets.filter((b) => b.tracer).length;
     expect(tracers).toBe(4);
   });
 
   it('Spitfire .303: słabe działka — zestrzelenie wymaga długiej serii', () => {
-    const arm = SPITFIRE_MK2.armament;
-    const bulletsToKill = Math.ceil(SPITFIRE_MK2.hpPool / arm.damagePerHit);
-    const bulletsPerSecond = (arm.fireRateRpmPerGun / 60) * arm.muzzles.length;
+    const gun = primaryGroup(SPITFIRE_MK2.armament);
+    const bulletsToKill = Math.ceil(SPITFIRE_MK2.hpPool / gun.damagePerHit);
+    const bulletsPerSecond = (gun.fireRateRpmPerGun / 60) * gun.muzzles.length;
     const ttkPerfectS = bulletsToKill / bulletsPerSecond; // 100% trafień (dolne ograniczenie)
     const ttk30pctS = ttkPerfectS / 0.3; // realistyczna celność ~30%
     expect(bulletsToKill).toBeGreaterThan(40); // dużo trafień = słabe kaemy
     expect(ttkPerfectS).toBeLessThan(1); // nawet idealny ogień to seria, nie błysk
     expect(ttk30pctS).toBeGreaterThan(1.2); // realistycznie 1.5-2 s na muszce
     expect(ttk30pctS).toBeLessThan(3);
+  });
+});
+
+describe('Bf 109 E-3 — zróżnicowane uzbrojenie (MG 17 + MG FF)', () => {
+  const arm = BF109_E.armament;
+
+  it('dwie grupy broni: szybki kaem MG 17 + wolne działko MG FF', () => {
+    expect(arm.groups.length).toBe(2);
+    expect(arm.groups[0]?.name).toBe('MG 17');
+    expect(arm.groups[1]?.name).toBe('MG FF');
+  });
+
+  it('MG FF 20 mm wali mocno: zestrzelenie w 2-4 trafienia (kontra długa seria MG 17)', () => {
+    const cannon = arm.groups[1]!;
+    const hitsToKill = Math.ceil(BF109_E.hpPool / cannon.damagePerHit);
+    expect(hitsToKill).toBeGreaterThanOrEqual(2);
+    expect(hitsToKill).toBeLessThanOrEqual(4);
+    const mg = arm.groups[0]!;
+    expect(Math.ceil(BF109_E.hpPool / mg.damagePerHit)).toBeGreaterThan(40); // kaem = długa seria
+  });
+
+  it('MG FF: wolniejszy tracer i większy łuk (opad na 250 m) niż MG 17', () => {
+    const mg = arm.groups[0]!;
+    const cannon = arm.groups[1]!;
+    expect(cannon.muzzleVelocityMs).toBeLessThan(mg.muzzleVelocityMs); // wolniejszy pocisk
+
+    // opad pocisku wystrzelonego poziomo wzdłuż +Z do dolotu z = 250 m
+    const dropAt250 = (g: WeaponGroup): number => {
+      const pool = new BulletPool(1);
+      pool.spawn(
+        new Vector3(),
+        new Vector3(0, 0, g.muzzleVelocityMs),
+        0,
+        0,
+        false,
+        g.bulletDragK,
+        g.bulletLifetimeS,
+      );
+      const b = pool.bullets[0]!;
+      while (b.active && b.position.z < 250) pool.update(FIXED_DT_S);
+      return -b.position.y;
+    };
+    expect(dropAt250(cannon)).toBeGreaterThan(dropAt250(mg)); // haubiczna balistyka = większy łuk
   });
 });
