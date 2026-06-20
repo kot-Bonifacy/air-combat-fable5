@@ -156,6 +156,25 @@ Niezmienniki w mocy: serwer autorytetem (5), pakiety gry binarne (6), `shared` b
 `wss://` na produkcji (10), walidacja każdego inputu (11). Pliki `faza-14..18.md` powstają w
 swoich sesjach (zasada „nie scaffolduj na zapas").
 
+### Domknięcie P1–P5 (2026-06-19/20) — `docs/parytet-mp-sp-domkniecie.md`
+
+Po bloku 14–18 audyt `main.ts` ↔ `online-main.ts`/`game-room.ts` wychwycił drobne pozostałe różnice.
+Pięć punktów (kolejność P4→P2→P3→P1→P5), wszystkie zrobione, zielone i zacommitowane:
+
+- **P1 — FFA jako tryb ELIMINACYJNY (pełny parytet SP).** Decyzja użytkownika (Q1): **wariant (a)** —
+  1 życie, BRAK respawnu, last-man-standing, **BEZ limitu zestrzeleń i BEZ limitu czasu**. To zmienia
+  wcześniejszą notkę „strefa OBOK limitu zestrzeleń/czasu": po P1 jedynymi warunkami końca FFA są
+  **eliminacja** (`checkElimination`, wspólne z drużynowym; FFA frakcja=id) **albo strefa KotH** (wciąż
+  sprawdzana PRZED eliminacją). Usunięto `evaluateFfa`/`clampScoreLimit` i stałe limitu zestrzeleń/czasu;
+  protokół BEZ bumpu (wciąż v3): `MatchEndReason='score'|'zone'` (bez `'time'`), `StandingsMessage` bez
+  `scoreLimit`/`timeLeftS`, `CreateRoomMessage` bez `scoreLimit`. **Deploy front+back RAZEM.**
+- **P2 — atrybucja CC-BY** modelu Spitfire na ekranie wejściowym lobby (compliance, wymóg licencji).
+- **P3 — onboarding „JAK GRAĆ"** w lobby (tabela sterowania + cel = strefa KotH/eliminacja, auto-pokaz
+  przy 1. wejściu).
+- **P4 — trzęsienie kamery przy buffecie** online (`chaseCamera.update` dostaje realny `buffetIntensity`).
+- **P5 — sprzątanie:** martwy kod po P1, zerowanie buffetu w HUD przy obserwacji, reset gazu (`0.8`) przy
+  `enterPlaying`.
+
 ---
 
 ## Architektura sieci (skrót — szczegóły w fazach 8–12)
