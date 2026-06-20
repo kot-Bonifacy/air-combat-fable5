@@ -1,5 +1,17 @@
 # Domknięcie parytetu MP ↔ SP — plan przeniesienia rozwiązań z single-player
 
+> **STATUS: ✅ ZREALIZOWANE (2026-06-19/20).** Wszystkie punkty P1–P5 wdrożone, zielone
+> (404 testy, typecheck, lint) i zacommitowane. Treść poniżej to **historyczny plan** (kontekst,
+> kroki, prompty) — zostawiony jako ślad decyzji i pułapek. Przegląd całości i statusu:
+> [`parytet-mp-sp.md`](parytet-mp-sp.md).
+>
+> Wynik per punkt:
+> - **P1** — FFA eliminacyjne jak SP (1 życie, brak respawnu, bez limitu zestrzeleń/czasu;
+>   `checkElimination`, usunięte `evaluateFfa`/limity). Decyzja Q1 = **wariant (a)**. Commit `33b03c1`.
+> - **P2** — atrybucja CC-BY w lobby; **P3** — onboarding „JAK GRAĆ". Commit `8b91729`.
+> - **P4** — buffet kamery online. Commit `ccab4b5`.
+> - **P5** — sprzątanie (martwy kod, HUD przy obserwacji, reset gazu `enterPlaying`). Commity `33b03c1` + `3a37790`.
+
 > Plan w formie „vibecodingu": każdy punkt ma gotowy kontekst, pliki, kroki, pułapki,
 > weryfikację i prompt do wklejenia. Sesje robić **pojedynczo** (jak fazy), z `/clear`
 > między nimi; po każdej `npm run typecheck && npm test && npm run lint` na zielono.

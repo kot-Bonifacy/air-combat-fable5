@@ -109,6 +109,9 @@ więcej samolotów (Hurricane, Bf 110) · tryb treningowy z samouczkiem
 
 ## Parytet multiplayera (Fazy 14–18) — domknięcie różnic MP ↔ SP
 
+> Przewodnik/indeks całości (fazy 14–18 + domknięcie P1–P5, mapa SP→MP, status, otwarte sprawy):
+> [`docs/parytet-mp-sp.md`](docs/parytet-mp-sp.md).
+
 Multiplayer (fazy 8–13) powstawał jako FFA deathmatch i jest uboższy od trybu single-player
 (`packages/client/src/main.ts`) — brakuje warstwy wizualnej/feedbacku, trybu obserwatora oraz
 kilku mechanik serwerowych. Ten blok (decyzja 2026-06-18: **pełny parytet przed Bf 109**)

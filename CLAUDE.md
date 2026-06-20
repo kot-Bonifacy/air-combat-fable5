@@ -8,146 +8,32 @@
 
 ## Status faz
 
-Fazy ukończone: 0–18 (Faza 18 cz.1 serwer/lobby/protokół + cz.2 klient — wizualia drużynowe;
-blok parytetu MP↔SP 14–18 ZAMKNIĘTY + domknięcie P1–P5 wg `docs/parytet-mp-sp-domkniecie.md`:
-FFA eliminacyjne jak SP, atrybucja CC-BY, onboarding lobby, buffet kamery) (Faza 13: KOD +
-artefakty deployu gotowe; **publiczny deploy MP
-i pomiary na VPS po stronie użytkownika** — brak SSH z sesji). Faza 7 wdrożona na VPS 2026-06-15 (tag `demo-1`) — publiczne demo
-`https://dogfight.tatanga.eu` (port 8087). Faza 8 (2026-06-15): protokół binarny DataView
-w `shared/net` + autorytatywny serwer (`packages/server`: game-room/connection/server) 60 Hz
-+ snapshoty 30 Hz. Faza 9 (2026-06-16): client prediction + reconciliation własnego samolotu
-i interpolacja obcych — wspólny `stepPilotedPlane` (`shared/world/piloted-plane.ts`) używany
-przez serwer i klienta; moduły `packages/client/src/net/` (net-client, prediction, interpolation,
-net-conditions[+panel], net-debug-overlay); symulator warunków sieci (dev) + overlay metryk.
-Faza 10 (2026-06-16): lobby i pokoje — rejestr wielu pokoi (`server/lobby.ts`) + maszyna stanów
-`GameRoom` (waiting/playing/ended); protokół lobby = osobny kanał JSON (createRoom/joinRoom/
-quickPlay/startMatch + roomJoined/roomUpdate/matchStarted); token sesji + reconnect (okno 60 s,
-brak wycieku pokoi); klient: leniwe łączenie, ekrany lobby vanilla DOM (`client/src/net/lobby-ui.ts`),
-poczekalnia na tle `/dogfight-splash.jpg` (asset w repo od fazy 13, wpis w `assets/LICENSES.md`).
-Faza 11 (2026-06-17): walka sieciowa autorytatywna — pociski na serwerze (pula per-pokój) +
-hit detection z lag-compensation (`shared/combat/lag-comp.ts` `PositionHistory`; rewind celów =
-echo ticku `ackServerTick` + bufor interpolacji, cap 250 ms; cofamy TYLKO cele); HP/kill credit/
-asysty serwerowo; eventy binarne MUZZLE/HIT/KILL (`MSG_EVENT`, protokół v2); klient: spust w INPUT,
-kosmetyczne smugacze z eventu MUZZLE (RNG z seeda = strumień serwera), hit marker/kill feed = echo
-serwera. Benchmark 8 graczy ognia = 0,476 ms/tick (dev). **OTWARTE dla użytkownika po deployu:
-sesja 2-os. ping ~150 ms (ocena „co widzę, to trafiam") + pomiar CPU 8 graczy na VPS → memory.**
-Faza 12 (2026-06-17): boty na serwerze — bot = `ServerPlayer` (member=null, isBot), protokołowo
-nieodróżnialny od gracza (te same ścieżki combat/HP/snapshot/eventy); `server/bot-manager.ts` =
-kontrolery AI (`Bot` z fazy 6) + decymacja myślenia 10 Hz (`BOT_THINK_INTERVAL=6`, sterowanie co tick),
-unikanie ziemi też 10 Hz; host wybiera 0–7 botów + poziom przy tworzeniu pokoju (`CreateRoomMessage`
-+bots/+difficulty, connection klampuje); sprzątanie pokoi po `humanCount` (boty nie trzymają pokoju);
-„Szybka gra" zasiewa 3 boty. Benchmark 1 gracz + 7 botów = 0,309 ms/tick (dev).
-Faza 13 (2026-06-17, KAMIEŃ MILOWY — kod): pętla meczu FFA — `shared/world/ffa.ts` (`evaluateFfa`:
-koniec przy limicie zestrzeleń [5/10/20] lub czasu 15 min, zwycięzca = lider `rankFfa`); maszyna
-meczu w `GameRoom.step` (playing liczy zegar + `checkMatchEnd`; `ended` → `matchEnded`, po 15 s
-auto-`waiting`; rewanż = `start()` także z `ended`); respawn z ochroną `SPAWN_PROTECTION_S=3`
-(`resolveHits` pomija cel, ogień ją znosi) + wybór miejsca z dala od wrogów (`shared/world/spawn.ts`);
-scoreboard (Tab) + ekran wyników + rewanż (`client/src/net/match-ui.ts`), HUD z wynikiem/zegarem;
-standings 2 Hz + ping serwerowy z echa ticku (diagnostyka); protokół BEZ bumpu (+`scoreLimit`,
-+`standings`/`matchEnded`/`serverShutdown`); `/health` (http.Server + WebSocketServer) + graceful
-shutdown (`notifyShutdown` → komunikat zamiast spinnera). **Błąd naprawiony**: `defaultServerUrl` →
-`wss://<host>/ws` na produkcji (był `:3001`); nginx `/ws → backend:3001`. Deploy: `Dockerfile.backend`
-(esbuild bundle, ws+pino external) + compose backend (mem_limit 256m/cpus 0.5/healthcheck) +
-runbook `deploy/WDROZENIE-NA-VPS.md` sekcja „Faza 13". **OTWARTE (użytkownik): deploy na VPS,
-smoke 2 os. przez wss://, `docker stats` przy pełnym pokoju → memory; tag `mp-1`.**
-Faza 14 (2026-06-18): parytet wizualny MP↔SP — klient online dostał te same moduły co SP:
-wybuchy (event KILL), dym uszkodzeń wg `healthFrac` (`damageSmokeTier`), błysk luf własnego
-samolotu (lokalny MUZZLE), markery wrogów ze spottingiem `SPOT_RANGE_M` (kolor FFA per id),
-celownik + znacznik nosa, ostrzeżenie granicy areny, lista uczestników (`RosterOverlay` ze
-`standings`) i pełny HUD-G (G-LOC/stall/szarzenie + sztuczny horyzont) — dane lotu z lokalnej
-predykcji (`Predictor.sim`), amunicja ze snapshotu. **Protokół v3** (`PROTOCOL_VERSION` 2→3):
-encja snapshotu +1 bajt amunicji (`ammoFrac`), `SNAPSHOT_ENTITY_BYTES` 30→31; `Explosions`/
-`SmokeTrails` dostały `clear()` (reset meczu). Elementy DOM/CSS przeniesione do `online.html`.
-Faza 15 (2026-06-18): parytet MP cz.2 — serwerowy model śmierci (BEZ bumpu protokołu —
-`'dying'`/`'collision'` w protokole od f11). Zestrzelenie w powietrzu i zderzenie samolot↔samolot
-nie kończą encji od razu (`'dead'`), tylko czynią z niej spadający wrak (`'dying'` → `stepWreck` →
-`wreckImpact` → `'dead'`), jak w SP. `ServerPlayer.prevPos` + `resolvePlaneCollisions` (zamiatany
-`planesCollide` r=`collisionRadiusM`, po ruchu przed historią/ogniem; oba → wrak, cause `'collision'`
-bez kredytu); korekta `prevPos` po zawinięciu torusa (`nearestToroidalImage` — bez ruszania
-współdzielonego `stepPilotedPlane`); nietykalni po respawnie nie zderzają się. `enterWreck`
-(`'dying'`+`deaths`) wspólny dla zestrzelenia i kolizji; `onGroundDeath` (rozbicie żywego) bez zmian.
-`stepWreckEntity`: wrak gracza steruje się inputem (`keyboardDemands`), bot leci neutralnie.
-**Decyzja (uzgodniona z użytkownikiem): wrak GRACZA może strzelać** (parytet z SP; bot-wrak nie) —
-wrak nie jest celem ani się nie zderza, ale broń działa. Klient f14 zgodny (interpolator/`reconcile`
-obsługują `'dying'`), lokalny wrak gracza w pełni grywalny dopiero z f16 → **deploy f15+f16 razem**.
-Testy `server/collision.test.ts` (+7, łącznie 388).
-Faza 16 (2026-06-18): parytet MP cz.3 — kliencka warstwa śmierci (BEZ zmian protokołu). Zestrzelony
-gracz STERUJE własnym spadającym wrakiem (lokalna predykcja `'dying'`), dym wraku, wybuch dopiero
-przy uderzeniu w ziemię, nakładka decyzji, tryb obserwatora i kamera orbitalna — brak „pustego kadru".
-Wspólna `stepWreckPiloted` (`shared/world/piloted-plane.ts`) = autorytatywny krok wraku dla SERWERA
-i predykcji KLIENTA (niezmiennik reconciliation jak `stepPilotedPlane`); serwer zrefaktorowany na nią
-(usunięte `stepWreckEntity`), bez zmiany zachowania. `Predictor.predict` liczy `'dying'`; `reconcile`
-rozróżnia ciągłość fazy (żywy→żywy / wrak→wrak = replay bufora) od zmiany fazy (snap + reset).
-`online-main`: `OrbitCamera`+`cameraMode` (C), `DownedOverlay` (obserwator/tabela/opuść pokój),
-maszyna `playerDeath` (`enterPlayerWreck`/`onLocalRespawn`/`updateDeathState`), tryb obserwatora
-(LPM cyklicznie zmienia oglądany samolot, kamera za interpolowaną pozą), dym wraku (`WRECK_TIER`),
-wybuch `dying→dead` (lokalny i obcy, porównanie `lifeById`), `onKill` mały błysk przy zestrzeleniu/
-kolizji (pełny przy `'ground'`), `updateMouseAimEnabled` (mysz tylko w pościgowej + gdy żywy).
-Testy +6 (łącznie 394). **Deploy: f15 + f16 razem.**
-Faza 17 (2026-06-19): parytet MP cz.4 — kontrola strefy KotH online jako DODATKOWY warunek
-zwycięstwa obok limitu zestrzeleń/czasu (jak SP), autorytatywnie na serwerze; **BEZ bumpu protokołu**
-(addytywne pola JSON w `standings`, wciąż v3). Decyzja użytkownika: tylko `ZoneBar`, bez znacznika 3D
-(szczyt góry = punkt orientacyjny). Serwer (`game-room.ts`): `ZoneControl` w `step()` po ruchu/kolizjach
-(FFA: frakcja = `id`, liczą się tylko żywi — świeży wrak strefy nie kontestuje); `checkMatchEnd` sprawdza
-`zone.captured` PRZED `evaluateFfa` → `endMatch(_, 'zone')`; `buildStandings` +`zoneSeconds`,
-`broadcastStandings` +`zone={controlling,occupied}`; `start()` resetuje strefę. Protokół: `MatchEndReason`
-+`'zone'`, `StandingRow.zoneSeconds`, `ZoneStatus`, `StandingsMessage.zone`. Klient (`online-main.ts`):
-`ZoneBar` (reużyty z SP, własny DOM — `online.html` bez zmian), status z `standings.zone`, fronty z
-`zoneSeconds` (perspektywa-niezależnie), ukryty na wynikach/poza meczem; kolumna „Strefa" w tabeli
-(`match-ui.ts`). Boty kontestują bez zmian (`PATROL_WAYPOINTS` od f12). Testy `zone-control.test.ts`
-+3 (łącznie 397). **Deploy: razem z f15+f16.**
-Faza 18 cz.1 (2026-06-19): parytet MP cz.5 — tryb drużynowy jako OPCJA pokoju (host: FFA/Drużynowy),
-warstwa SERWER+LOBBY+PROTOKÓŁ; **BEZ bumpu protokołu** (addytywne pola JSON, wciąż v3). Model =
-parytet z SP: 2 drużyny, eliminacja (`MATCH_LIVES=1`/samolot, BRAK respawnu, ostatnia drużyna wygrywa),
-strefa KotH OBOK eliminacji, **bez limitu czasu**. Decyzje użytkownika: auto-balans serwera (bez wyboru
-drużyny w lobby), sztywno 1 życie i brak czasu („jak SP, dopracowany wzór"), podział na 2 sesje.
-`shared/world/team.ts` (NOWY): `MatchMode`/`MATCH_MODES`/`TEAM_COUNT`/`clampMatchMode`/`smallerTeamIndex`;
-eliminacja reużywa `world/match.ts` (`factionsInPlay`). Protokół: `CreateRoomMessage.mode`, `RoomSummary.mode`,
-`StandingRow.faction`, `StandingsMessage.mode`, `MatchEndedMessage.mode+winningFaction` (eliminacja =
-`reason 'score'`; `'time'` nieobecne w drużynowym). Serwer (`game-room.ts`): `mode`, `ServerPlayer.faction+livesLeft`,
-`assignFaction`/`assignFactions` (auto-balans), friendly fire ON ale kredyt/asysty tylko między frakcjami,
-`loseLife`+`canRespawn` (gating respawnu), `checkTeamElimination` (guard ≥2 drużyn, remis=null) / `endByFaction` /
-`topPlayerOfFaction`, `endMatch(winnerId, winningFaction, reason)`, strefa/standings po `p.faction`, cele bota
-wg frakcji. Lobby: `room.mode` ustawiane PRZED `addPlayer`; `clampMatchMode` w connection. Klient (wiring):
-select „Tryb" w `lobby-ui` (ukrywa limit zestrzeleń w drużynowym), `net-client.createRoom(..., mode)`. Testy
-`team.test.ts`+7, `team-mode.test.ts`+8 (łącznie 412).
-Faza 18 cz.2 (2026-06-19): parytet MP cz.5 dok. — wizualia KLIENTA dla trybu drużynowego; zmiany WYŁĄCZNIE
-po stronie klienta z pól protokołu z cz.1 → **BEZ zmian protokołu, wciąż v3**. Zasada: snapshot binarny NIE
-niesie frakcji → klient czyta z `standings.rows[].faction` (JSON 2 Hz); `online-main.ts` trzyma `matchMode`/
-`factionById`/`localFaction` (odbudowa `rebuildFactions` z każdego standings, reset w `resetGameState`).
-`entityColorHex` zna tryb: drużynowy sojusznik zielony `FRIEND_COLOR`/wróg czerwony `FOE_COLOR` wg frakcji,
-FFA paleta per id; markery `setFoe(faction!==localFaction)` w team / `setColorHex` w FFA. Kill-feed teamkill
-(`mode==='team'` + te same frakcje) „(sojusznik!)" + BEZ złotego markera (serwer nie kredytuje). `updateZoneBar`
-po FRAKCJI (`r.faction===localFaction`, `controlling===localFaction`) — w FFA frakcja=id → jak f17. Obserwator:
-`playerHasTeammates`+`isSpectatable` zawęża do żywych sojuszników w team (parytet SP). Roster `isLost`=team &
-`deaths>=MATCH_LIVES` & faza∉{alive,dying} (z `lifeById`). `match-ui.ts`: `standingsNodes` (FFA płaska / team
-nagłówek+grupowanie po frakcji `orderedFactions` własna 1. + `teamHeaderRow` agregat Z/Ś/A+strefa raz),
-`reasonText` (team `'score'`=eliminacja), `ScoreboardOverlay.update(...,mode,localFaction)` tytuł bez zegara,
-`ResultsOverlay.show(msg,localId,localFaction,isHost)` baner wg `winningFaction`, CSS `.mui-team`. Testy 412
-bez nowych (zmiany DOM, kryje typecheck+build); build klient online 41,4→43,6 kB. **Deploy front+back RAZEM;
-smoke online team z botami po stronie użytkownika.** Blok parytetu MP↔SP (14–18) ZAMKNIĘTY.
-Domknięcie parytetu MP↔SP — P1–P5 (2026-06-19/20, wg `docs/parytet-mp-sp-domkniecie.md`): drobne
-różnice MP↔SP wychwycone audytem `main.ts`↔`online-main.ts`/`game-room.ts`, **wszystkie zielone +
-zacommitowane** (404 testy). **P1** — FFA jest ELIMINACYJNE jak SP (1 życie, BRAK respawnu,
-last-man-standing): `canRespawn=livesLeft>0` i `loseLife` w OBU trybach, `checkElimination` wspólne
-FFA+team (FFA frakcja=id; strefa wciąż PRZED eliminacją); usunięto limit zestrzeleń i czasu —
-`evaluateFfa`/`clampScoreLimit`/`FfaEndReason` skasowane (zostały `compareFfa`/`rankFfa`), stałe
-`MATCH_SCORE_LIMIT_OPTIONS`/`MATCH_DEFAULT_SCORE_LIMIT`/`MATCH_TIME_LIMIT_S` usunięte; protokół BEZ
-bumpu (wciąż v3): `MatchEndReason='score'|'zone'` (bez `'time'`), `StandingsMessage` bez `scoreLimit`/
-`timeLeftS`, `CreateRoomMessage` bez `scoreLimit`; klient: `isLost` w FFA bez bramki team, komunikat
-„ZESTRZELONY" (brak respawnu — overlay obserwatora jak SP), HUD bez zegara, lobby bez wiersza „Mecz do N
-zestrzeleń". **Decyzja użytkownika (Q1): wariant (a) pełny parytet SP** — bez limitu czasu/zestrzeleń.
-**P2** — widoczna atrybucja CC-BY Spitfire na ekranie wejściowym lobby (`lobby-ui`, parytet `modelAttribution()`
-z `menu.ts`; wymóg licencji przy publicznym deployu). **P3** — onboarding „JAK GRAĆ" w lobby (tabela
-sterowania bez respawnu-R + „[N] panel sieci”, opis celu = strefa KotH/eliminacja, auto-pokaz przy 1.
-wejściu `air-combat:help-seen-online`). **P4** — trzęsienie kamery przy buffecie online (`chaseCamera.update`
-dostaje `predictor.sim.stallEffects.buffetIntensity`; 0 przy obserwacji — parytet SP). **P5** — sprzątanie:
-martwy kod po P1, `buffetIntensity=0` w HUD przy obserwacji, reset `keyboard.throttle=0.8` przy `enterPlaying`
-(rewanż nie dziedziczy gazu). **Deploy front+back RAZEM (zmiana zachowania serwera + protokół addytywny).**
-Następna: Faza 19 (Bf 109 E).
-Decyzja 2026-06-18: blok parytetu MP↔SP (Fazy 14–18: wizualia/HUD → kolizje+wrak → obserwator →
-strefa KotH → tryb drużynowy) PRZED Bf 109; dotychczasowe fazy przesunięte (Bf 109→19, teren→20,
-dźwięk→21, uszkodzenia→22). Szczegóły: sekcja „Parytet multiplayera" w PLAN.md.
+Fazy ukończone: **0–18 + domknięcie parytetu MP↔SP (P1–P5)**. Szczegóły każdej fazy w
+`docs/phases/faza-NN.md` i `memory/`; cały wysiłek parytetu MP↔SP (fazy 14–18 + P1–P5) spięty
+w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwarte sprawy).
+
+| #     | Temat                                                                 | Stan / uwaga |
+| ----- | --------------------------------------------------------------------- | ------------ |
+| 0–6   | Fundament: monorepo, fizyka lotu, świat, broń, bot AI                 | ✅ grywalny dogfight SP |
+| 7     | Wczesny deploy: publiczne demo SP                                     | ✅ `https://dogfight.tatanga.eu` (port 8087, tag `demo-1`) |
+| 8     | Multiplayer: protokół binarny + serwer autorytatywny                  | ✅ fizyka 60 Hz / snapshoty 30 Hz |
+| 9     | Prediction + reconciliation + interpolacja                            | ✅ wspólny `stepPilotedPlane` |
+| 10    | Lobby i pokoje                                                        | ✅ rejestr pokoi + reconnect (token, okno 60 s) |
+| 11    | Walka sieciowa: hit detection + lag‑comp                              | ✅ kod; ⏳ user: ping ~150 ms 2‑os. + CPU 8 graczy na VPS |
+| 12    | Boty na serwerze                                                      | ✅ bot = `ServerPlayer`, nieodróżnialny protokołowo |
+| 13    | Pętla meczu FFA + deploy MP (kamień milowy)                           | ✅ kod; ⏳ user: deploy/smoke wss:// + `docker stats`, tag `mp-1` |
+| 14–18 | **Parytet MP↔SP**: wizualia → wrak → obserwator → strefa → drużyny    | ✅ → `docs/parytet-mp-sp.md` |
+| P1–P5 | **Domknięcie parytetu**: FFA eliminacja, CC-BY, onboarding, buffet, sprzątanie | ✅ zacommitowane (404 testy zielone) |
+
+**Protokół: `PROTOCOL_VERSION = 3`** (bumpnięty w f14, +1 bajt amunicji; fazy 15–18 i P1–P5 bez
+bumpu — addytywne JSON albo usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
+
+⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
+→ overlay obserwatora; drużynowy) + zaległe pomiary VPS — pełna lista w `docs/parytet-mp-sp.md`
+(„Otwarte sprawy"). Brak SSH z sesji.
+
+**Następna: Faza 19 — Bf 109 E + balans.** (Decyzja 2026-06-18: pełny parytet MP↔SP przed Bf 109;
+fazy przesunięte — Bf 109→19, teren→20, dźwięk→21, uszkodzenia→22. Szczegóły: „Parytet multiplayera" w PLAN.md.)
 
 ## Stack (skrót)
 
@@ -239,6 +125,7 @@ memory/
 ## Referencje
 
 - Pełny plan, decyzje, ryzyka: `PLAN.md`
+- Parytet MP↔SP (fazy 14–18 + domknięcie P1–P5): `docs/parytet-mp-sp.md` (przewodnik/indeks)
 - Projekt modelu lotu (fazy 1–3): `docs/fizyka-lotu.md`
 - Aktualna faza: `docs/phases/faza-NN.md` (NN z linii statusu)
 - Konfiguracja docelowego VPS (poza repo): `C:\AI\vps_home_pl_konfiguracja.md`
