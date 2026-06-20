@@ -80,7 +80,8 @@ export class Combatant {
     this.fire = createFireControl(plane.armament);
     this.demands = createPilotDemands();
     this.rng = createRng(seed ^ 0x9e37);
-    this.model = createPlaneMesh(wingspanM);
+    // SP lata wyłącznie Spitfire'em (drugi samolot dotyczy multiplayera, faza 19b).
+    this.model = createPlaneMesh('spitfire', wingspanM);
     this.mesh = this.model.object;
     this.mesh.visible = false;
   }

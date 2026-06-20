@@ -11,6 +11,7 @@ import {
   type GameEvent,
   type InputFrame,
   type MatchMode,
+  type PlaneType,
   type MatchEndedMessage,
   type RoomJoinedMessage,
   type RoomListMessage,
@@ -212,6 +213,11 @@ export class NetClient {
 
   joinRoom(code: string): void {
     this.sendControl({ t: 'joinRoom', code });
+  }
+
+  /** Wybór typu samolotu w poczekalni (faza 19b; serwer klampuje i stosuje przy spawnie). */
+  selectPlane(plane: PlaneType): void {
+    this.sendControl({ t: 'selectPlane', plane });
   }
 
   quickPlay(): void {

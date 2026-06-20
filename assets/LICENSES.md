@@ -6,6 +6,7 @@ w którym trafia do repo (niezmiennik nr 8 z CLAUDE.md).
 | Plik w `assets/` | Nazwa / autor | Źródło (URL) | Licencja | Zmiany |
 | ---------------- | ------------- | ------------ | -------- | ------ |
 | `models/spitfire/` | Supermarine Spitfire Mk.IIa / barking_dogo | https://sketchfab.com/3d-models/supermarine-spitfire-mkiia-a49be5ab6d624e75b55231948a31b1b3 | CC-BY 4.0 | auto-skala do rozpiętości i reorientacja osi przy imporcie (kod, nie plik) |
+| `models/bf109/` | Messerschmitt BF 109 / Jankenstein | https://sketchfab.com/3d-models/messerschmitt-bf-109-5a14d8cc4ee14c9bbd5ba13a38f44f44 | CC-BY 4.0 | optymalizacja do `bf109-web.glb` (2,72 MB); auto-skala do rozpiętości i reorientacja osi przy imporcie (faza 19b) |
 | `dogfight-splash.jpg` | Grafika promo „Dogfight" / Tatanga (własna) | — (materiał projektu) | własny (©, all rights reserved) | tło ekranu poczekalni lobby (faza 10) |
 
 ## Pełne uznania autorstwa (formuła wymagana przez autora)
@@ -18,3 +19,13 @@ w którym trafia do repo (niezmiennik nr 8 z CLAUDE.md).
 > licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
 
 Oryginał formuły i licencji: `assets/models/spitfire/license.txt`.
+
+**`models/bf109/`** — model 3D Messerschmitta Bf 109 (drugi samolot, faza 19b):
+
+> This work is based on "Messerschmitt BF 109"
+> (https://sketchfab.com/3d-models/messerschmitt-bf-109-5a14d8cc4ee14c9bbd5ba13a38f44f44)
+> by Jankenstein (https://sketchfab.com/Jankenstein)
+> licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Oryginał formuły i licencji: `assets/models/bf109/license.txt`. Atrybucja widoczna też na ekranie
+wejściowym lobby (wymóg CC-BY przy publicznym deployu).

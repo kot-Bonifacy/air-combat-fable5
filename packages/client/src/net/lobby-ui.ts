@@ -2,11 +2,14 @@ import {
   DIFFICULTY_LEVELS,
   MAX_NICK_LENGTH,
   MAX_PLAYERS_PER_ROOM,
+  PLANE_TYPES,
   ROOM_CODE_LENGTH,
   ZONE_CAPTURE_SECONDS,
+  planeLabelOf,
   sanitizeNick,
   type DifficultyLevel,
   type MatchMode,
+  type PlaneType,
   type RoomPlayer,
   type RoomState,
   type RoomSummary,
@@ -76,11 +79,15 @@ export interface LobbyCallbacks {
   onRefreshList(): void;
   onStartMatch(): void;
   onLeaveRoom(): void;
+  /** Wybór typu samolotu w poczekalni (faza 19b; FFA — w drużynowym sprzęt wg strony). */
+  onSelectPlane(plane: PlaneType): void;
 }
 
 export interface WaitingView {
   code: string;
   state: RoomState;
+  /** Tryb meczu (faza 19b) — FFA pokazuje wybór samolotu; drużynowy: sprzęt wg strony. */
+  mode: MatchMode;
   players: RoomPlayer[];
   hostId: number;
   youId: number;
@@ -104,6 +111,10 @@ export class LobbyUI {
   private readonly waitingPlayersEl: HTMLDivElement;
   private readonly startBtn: HTMLButtonElement;
   private readonly waitingHintEl: HTMLDivElement;
+  // wybór samolotu w poczekalni (faza 19b): FFA — select; drużynowy — notka „wg drużyny"
+  private readonly planeRow: HTMLDivElement;
+  private readonly planeLabel: HTMLLabelElement;
+  private readonly planeSelect: HTMLSelectElement;
 
   constructor(private readonly cb: LobbyCallbacks) {
     injectStyles();
@@ -114,7 +125,7 @@ export class LobbyUI {
     const title = el('div', 'lobby-title');
     title.textContent = 'AIR COMBAT — DOGFIGHT';
     const sub = el('div', 'lobby-sub');
-    sub.textContent = 'Spitfire Mk II — multiplayer';
+    sub.textContent = 'Spitfire Mk II vs Bf 109 E — multiplayer';
 
     const nickRow = el('div', 'lobby-row');
     const nickLabel = el('label', 'lobby-label');
@@ -221,11 +232,33 @@ export class LobbyUI {
     codeCaption.textContent = 'Kod pokoju (podaj znajomym)';
     this.waitingCodeEl = el('div', 'lobby-code');
     this.waitingPlayersEl = el('div', 'lobby-players');
+    // wybór samolotu (faza 19b): w FFA gracz wybiera typ; w drużynowym sprzęt zależy od strony
+    this.planeRow = el('div', 'lobby-row lobby-bot-row');
+    this.planeLabel = el('label', 'lobby-label');
+    this.planeLabel.textContent = 'Twój samolot';
+    this.planeSelect = selectEl(
+      'lobby-select lobby-select-mode',
+      PLANE_TYPES.map((t) => ({ value: t, label: planeLabelOf(t) })),
+      PLANE_TYPES[0] ?? 'spitfire',
+    );
+    this.planeSelect.addEventListener('change', () => {
+      this.cb.onSelectPlane(this.planeSelect.value as PlaneType);
+    });
+    this.planeRow.append(this.planeLabel, this.planeSelect);
     this.waitingHintEl = el('div', 'lobby-sub');
     this.startBtn = button('Start meczu', 'lobby-btn lobby-btn-primary', () => this.cb.onStartMatch());
     const leaveBtn = button('Wyjdź', 'lobby-btn lobby-btn-small', () => this.cb.onLeaveRoom());
     const panel = el('div', 'lobby-panel');
-    panel.append(wTitle, codeCaption, this.waitingCodeEl, this.waitingPlayersEl, this.waitingHintEl, this.startBtn, leaveBtn);
+    panel.append(
+      wTitle,
+      codeCaption,
+      this.waitingCodeEl,
+      this.waitingPlayersEl,
+      this.planeRow,
+      this.waitingHintEl,
+      this.startBtn,
+      leaveBtn,
+    );
     this.waiting.append(panel);
 
     // --- nakładka „jak grać" (onboarding, parytet z menu.ts SP) ---
@@ -349,8 +382,21 @@ export class LobbyUI {
       tag.textContent = p.id === view.hostId ? 'HOST' : p.id === view.youId ? 'TY' : '';
       const name = el('span', 'lobby-player-name');
       name.textContent = p.nick; // textContent → bez interpretacji HTML (XSS)
-      row.append(tag, name);
+      // typ samolotu przy nicku (faza 19b: widać, kto czym leci)
+      const plane = el('span', 'lobby-player-plane');
+      plane.textContent = planeLabelOf(p.planeType);
+      row.append(tag, name, plane);
       this.waitingPlayersEl.append(row);
+    }
+    // wybór samolotu: FFA — select ustawiony na MÓJ typ z serwera; drużynowy — notka „wg drużyny"
+    if (view.mode === 'team') {
+      this.planeLabel.textContent = 'Sprzęt: wg drużyny (Spitfire / Bf 109)';
+      this.planeSelect.style.display = 'none';
+    } else {
+      this.planeLabel.textContent = 'Twój samolot';
+      this.planeSelect.style.display = '';
+      const mine = view.players.find((p) => p.id === view.youId);
+      if (mine && this.planeSelect.value !== mine.planeType) this.planeSelect.value = mine.planeType;
     }
     const isHost = view.youId === view.hostId;
     this.startBtn.style.display = isHost ? '' : 'none';
@@ -415,13 +461,21 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
  */
 function attributionEl(): HTMLDivElement {
   const wrap = el('div', 'lobby-attribution');
-  wrap.append(document.createTextNode('Model: „Supermarine Spitfire Mk.IIa" — '));
-  const a = document.createElement('a');
-  a.textContent = 'barking_dogo';
-  a.href = 'https://sketchfab.com/barking_dogo';
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  wrap.append(a, document.createTextNode(' (Sketchfab) — licencja CC-BY 4.0'));
+  const link = (label: string, href: string): HTMLAnchorElement => {
+    const a = document.createElement('a');
+    a.textContent = label;
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    return a;
+  };
+  // CC-BY 4.0 wymaga widocznego uznania autorstwa KAŻDEGO użytego modelu (publiczny deploy
+  // ładuje oba GLB — Spitfire i Bf 109; faza 19b).
+  wrap.append(document.createTextNode('Modele: „Supermarine Spitfire Mk.IIa" — '));
+  wrap.append(link('barking_dogo', 'https://sketchfab.com/barking_dogo'));
+  wrap.append(document.createTextNode('; „Messerschmitt BF 109" — '));
+  wrap.append(link('Jankenstein', 'https://sketchfab.com/Jankenstein'));
+  wrap.append(document.createTextNode(' (Sketchfab) — licencja CC-BY 4.0'));
   return wrap;
 }
 
@@ -522,6 +576,7 @@ const LOBBY_CSS = `
 .lobby-player-row { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: rgba(12,22,34,0.8); border-radius: 5px; }
 .lobby-player-tag { width: 44px; font-size: 12px; font-weight: 700; color: #ffd24a; }
 .lobby-player-name { color: #eaf3ff; }
+.lobby-player-plane { margin-left: auto; padding-left: 12px; font-size: 12px; color: #9fc4e6; }
 .lobby-attribution { margin-top: 16px; font: 11px/1.4 monospace; color: #5f7488; max-width: 34em; text-align: center; }
 .lobby-attribution a { color: #6a93b8; }
 .lobby-help {

@@ -10,9 +10,9 @@ import {
   MAX_EVENTS_PER_FRAME,
   MAX_PLAYERS_PER_ROOM,
   PHYSICS_HZ,
+  DEFAULT_PLANE_TYPE,
   PositionHistory,
   SPAWN_PROTECTION_S,
-  SPITFIRE_MK2,
   applyDamage,
   chooseSpawnIndex,
   compareFfa,
@@ -29,6 +29,9 @@ import {
   MATCH_LIVES,
   nearestToroidalImage,
   pilotStep,
+  PLANE_TYPES,
+  planeConfigOf,
+  planeTypeForTeam,
   planesCollide,
   resetFireControl,
   resetHealth,
@@ -56,6 +59,7 @@ import {
   type PilotDemands,
   type PlaneConfig,
   type PlaneState,
+  type PlaneType,
   type RoomPlayer,
   type RoomState,
   type RoomSummary,
@@ -139,13 +143,22 @@ interface ServerPlayer {
   /** Pozostałe życia w trybie eliminacyjnym (drużynowy, faza 18): MATCH_LIVES na samolot, jak SP.
    *  0 = brak respawnu (gracz przechodzi w obserwatora). W FFA bez znaczenia (respawn nieskończony). */
   livesLeft: number;
+  /** Wybór samolotu gracza z poczekalni (faza 19b; FFA). Bot: losowany przy dodaniu. Stosowany
+   *  przy (re)spawnie; w drużynowym ignorowany (sprzęt wg strony — planeTypeForTeam). */
+  selectedType: PlaneType;
+  /** Typ samolotu, którym encja LATA w bieżącym życiu (faza 19b) — ustawiany w spawn(); kodowany
+   *  do snapshotu (v4) i do roster. */
+  planeType: PlaneType;
+  /** Konfiguracja fizyki/uzbrojenia bieżącego samolotu (faza 19b) — per gracz, nie per pokój. */
+  plane: PlaneConfig;
   readonly sim: SimPlane;
   readonly instructor: Instructor;
   readonly demands: PilotDemands;
   /** HP — autorytet serwera (niezmiennik nr 5). Kodowane do snapshotu jako ułamek. */
-  readonly health: Health;
-  /** Kontrola ognia (kadencja + amunicja) liczona serwerowo — klient nie może jej oszukać. */
-  readonly fire: FireControl;
+  health: Health;
+  /** Kontrola ognia (kadencja + amunicja) liczona serwerowo — klient nie może jej oszukać.
+   *  Re-tworzona przy zmianie typu samolotu (liczba grup broni różni się: Spitfire 1, Bf 109 2). */
+  fire: FireControl;
   /** Strumień RNG rozrzutu (osobny per gracz). */
   readonly rng: () => number;
   /** Zestrzelenia wrogów (kredyt), asysty i śmierci w bieżącym meczu (tabela wyników, faza 13). */
@@ -182,7 +195,6 @@ interface ServerPlayer {
 
 export class GameRoom {
   readonly terrain: Terrain;
-  readonly plane: PlaneConfig = SPITFIRE_MK2;
   state: RoomState = 'waiting';
   /** Tryb meczu (faza 18): 'ffa' (deathmatch + respawn, faza 13) albo 'team' (drużynowy,
    *  eliminacja jak SP). Ustawiany przez lobby przy tworzeniu pokoju; stały przez życie pokoju. */
@@ -292,7 +304,9 @@ export class GameRoom {
   }
 
   roomPlayers(): RoomPlayer[] {
-    return [...this.players.values()].map((p) => ({ id: p.id, nick: p.nick }));
+    // planeType = typ EFEKTYWNY (FFA: wybór gracza; drużynowy: wg strony) — poczekalnia pokazuje,
+    // czym gracz poleci, zanim mecz wystartuje (faza 19b).
+    return [...this.players.values()].map((p) => ({ id: p.id, nick: p.nick, planeType: this.effectiveType(p) }));
   }
 
   /**
@@ -310,13 +324,21 @@ export class GameRoom {
   /**
    * Dokłada bota jako pełnoprawną encję pokoju (member=null, sterowany przez AI). Bot NIGDY
    * nie zostaje hostem ani nie trzyma pokoju przy życiu (patrz humanCount). Nick z puli [BOT].
+   * `planeType` wymusza samolot (sesje balansowe/testy); bez niego bot losuje typ (faza 19b).
    */
-  addBot(difficulty: DifficultyLevel): number {
-    const player = this.createPlayer(this.botManager.nextName(), '', null, true);
+  addBot(difficulty: DifficultyLevel, planeType?: PlaneType): number {
+    const player = this.createPlayer(this.botManager.nextName(), '', null, true, planeType);
     // strumień RNG bota osobny od strumienia rozrzutu ognia (inna stała mieszająca)
     this.botManager.add(player.id, difficulty, (player.id + 1) ^ 0x0b07);
     this.enterWorld(player); // spawn() zresetuje też kontroler AI (isBot)
     return player.id;
+  }
+
+  /** Wariant samolotu bota losowany deterministycznie z id (różnorodność w pokoju + powtarzalność
+   *  testów; faza 19b). W trybie drużynowym i tak nadpisywany sprzętem strony (effectiveType). */
+  private randomBotType(id: number): PlaneType {
+    const h = ((id + 1) * 2654435761) >>> 0;
+    return PLANE_TYPES[h % PLANE_TYPES.length] ?? DEFAULT_PLANE_TYPE;
   }
 
   /** Tworzy encję (gracz lub bot) i wpisuje do mapy; nie spawnuje ani nie ustawia hosta. */
@@ -325,18 +347,26 @@ export class GameRoom {
     sessionToken: string,
     member: RoomMember | null,
     isBot: boolean,
+    forcedType?: PlaneType,
   ): ServerPlayer {
     const id = this.nextId++;
     const slot = this.nextSlot++ % SPAWN_RING_SLOTS;
+    // typ startowy: wymuszony (testy/balans) > losowy (bot) > domyślny Spitfire (gracz). Efektywny
+    // typ na życie ustala spawn()→applyPlaneSelection (drużynowy nadpisuje wg strony).
+    const initType = forcedType ?? (isBot ? this.randomBotType(id) : DEFAULT_PLANE_TYPE);
+    const initPlane = planeConfigOf(initType);
     const player: ServerPlayer = {
       id,
       faction: id, // FFA domyślnie; tryb drużynowy nadpisze w assignFaction (auto-balans)
       livesLeft: MATCH_LIVES,
+      selectedType: initType,
+      planeType: initType,
+      plane: initPlane,
       sim: createSimPlane(id + 1),
       instructor: new Instructor(),
       demands: createPilotDemands(),
-      health: createHealth(this.plane.hpPool),
-      fire: createFireControl(this.plane.armament),
+      health: createHealth(initPlane.hpPool),
+      fire: createFireControl(initPlane.armament),
       rng: createRng((id + 1) ^ 0x9e37),
       kills: 0,
       assists: 0,
@@ -404,6 +434,43 @@ export class GameRoom {
       p.faction = t;
       counts[t] = (counts[t] ?? 0) + 1;
     }
+  }
+
+  /** Efektywny typ samolotu gracza (faza 19b): drużynowy — sprzęt wg strony (planeTypeForTeam);
+   *  FFA — wybór gracza (selectedType). Jedno źródło dla roster i (re)spawnu. */
+  private effectiveType(player: ServerPlayer): PlaneType {
+    return this.mode === 'team' ? planeTypeForTeam(player.faction) : player.selectedType;
+  }
+
+  /**
+   * Ustawia samolot gracza na bieżące życie wg typu efektywnego (faza 19b). Gdy typ się zmienił
+   * (zmiana wyboru, przydział drużyny, late-join): podmienia konfigurację, RE-TWORZY kontrolę ognia
+   * (liczba grup broni różni się: Spitfire 1, Bf 109 2 — resetFireControl nie zmienia długości)
+   * i HP, po czym przebudowuje źródła snapshotu (ammoMax/planeType/ref fire). Zwraca true, gdy
+   * doszło do zmiany (caller nie musi już resetować HP/ognia — są świeże).
+   */
+  private applyPlaneSelection(player: ServerPlayer): boolean {
+    const type = this.effectiveType(player);
+    if (type === player.planeType) return false;
+    player.planeType = type;
+    player.plane = planeConfigOf(type);
+    player.health = createHealth(player.plane.hpPool);
+    player.fire = createFireControl(player.plane.armament);
+    this.rebuildSnapshotSources(); // nowe ref fire/health + ammoMax + planeType per encja
+    return true;
+  }
+
+  /**
+   * Wybór samolotu gracza w poczekalni (faza 19b; FFA — w drużynowym sprzęt wg strony, więc
+   * wybór jest ignorowany w efektywnym typie). Zapamiętuje wybór i odświeża roster (efektywny typ
+   * w roomPlayers); stosowany przy najbliższym (re)spawnie — w praktyce na starcie meczu. Boty i
+   * nieznani gracze ignorowani (niezmiennik nr 11: walidacja w connection przez clampPlaneType).
+   */
+  selectPlane(id: number, type: PlaneType): void {
+    const player = this.players.get(id);
+    if (!player || player.isBot || player.selectedType === type) return;
+    player.selectedType = type;
+    this.broadcastRoomUpdate(); // roster pokazuje nowy (efektywny) typ w poczekalni
   }
 
   /** Czy gracz o tym id istnieje (np. po reconnect/leave). */
@@ -620,7 +687,7 @@ export class GameRoom {
       const event = stepPilotedPlane(
         player.sim,
         player.instructor,
-        this.plane,
+        player.plane,
         player.demands,
         input,
         this.terrain,
@@ -639,7 +706,7 @@ export class GameRoom {
       if (input) player.lastProcessedSeq = input.sequence;
       stepWreckPiloted(
         player.sim,
-        this.plane,
+        player.plane,
         player.demands,
         input,
         this.terrain,
@@ -685,7 +752,7 @@ export class GameRoom {
         this.botManager.think(
           player.id,
           state,
-          this.plane,
+          player.plane,
           this.collectBotTargets(player),
           this.terrain,
           player.demands,
@@ -693,7 +760,7 @@ export class GameRoom {
         );
       }
       state.throttle = this.botManager.controlOf(player.id).throttle;
-      pilotStep(player.sim, this.plane, player.demands, dtS);
+      pilotStep(player.sim, player.plane, player.demands, dtS);
       wrapToArena(state.position, scratchBotWrap);
       validatePlaneState(state, `serwer ${this.code}: bot ${String(player.id)}`);
       this.fixWrapPrev(player);
@@ -703,7 +770,7 @@ export class GameRoom {
       // → 'dead' → odliczanie respawnu. Ta sama ścieżka co wrak gracza (stepWreckPiloted).
       stepWreckPiloted(
         player.sim,
-        this.plane,
+        player.plane,
         player.demands,
         null,
         this.terrain,
@@ -744,7 +811,7 @@ export class GameRoom {
     // pozycji strzelca (nie cofamy strzelca — pułapka faza-11.md), cele cofamy w resolveHits.
     const fired = updateFire(
       player.fire,
-      this.plane.armament,
+      player.plane.armament,
       state,
       player.id,
       player.rng,
@@ -777,7 +844,6 @@ export class GameRoom {
    * ON (FFA; drużyny w fazie 13). Pocisk trafia najwyżej jeden cel.
    */
   private resolveHits(): void {
-    const hitRadius = this.plane.hitRadiusM;
     for (const b of this.pool.bullets) {
       if (!b.active) continue;
       for (const target of this.players.values()) {
@@ -788,7 +854,8 @@ export class GameRoom {
         const center = this.history.sample(target.id, targetTick, scratchHitCenter)
           ? scratchHitCenter
           : ts.position;
-        if (!segmentSphereHit(b.prevPosition, b.position, center, hitRadius)) continue;
+        // promień sfery trafień per CEL (faza 19b: Bf 109 5,5 m < Spitfire 6 m)
+        if (!segmentSphereHit(b.prevPosition, b.position, center, target.plane.hitRadiusM)) continue;
         b.active = false;
         target.damagedBy.add(b.ownerId);
         if (applyDamage(target.health, b.damage) === 'destroyed') {
@@ -844,14 +911,24 @@ export class GameRoom {
     for (const p of this.players.values()) {
       if (p.sim.state.life === 'alive' && p.protectionTimerS <= 0) live.push(p);
     }
-    const r = this.plane.collisionRadiusM;
     for (let i = 0; i < live.length; i++) {
       const a = live[i]!;
       if (a.sim.state.life !== 'alive') continue; // a zginął w tej klatce (wcześniejsza para)
       for (let j = i + 1; j < live.length; j++) {
         const b = live[j]!;
         if (b.sim.state.life !== 'alive') continue;
-        if (!planesCollide(a.prevPos, a.sim.state.position, r, b.prevPos, b.sim.state.position, r)) continue;
+        // promień kolizji per płatowiec (faza 19b): suma promieni środków (mix typów dozwolony)
+        if (
+          !planesCollide(
+            a.prevPos,
+            a.sim.state.position,
+            a.plane.collisionRadiusM,
+            b.prevPos,
+            b.sim.state.position,
+            b.plane.collisionRadiusM,
+          )
+        )
+          continue;
         this.onCollisionDeath(a);
         this.onCollisionDeath(b);
         break;
@@ -897,6 +974,9 @@ export class GameRoom {
    * bez niego (start meczu / wejście do poczekalni) bierze stały slot gracza (równy rozrzut).
    */
   private spawn(player: ServerPlayer, useSelection = false): void {
+    // typ samolotu na to życie (faza 19b): drużynowy wg strony, FFA wg wyboru gracza. Gdy się
+    // zmienił, applyPlaneSelection podmienił już plane/fire/health i przebudował źródła snapshotu.
+    this.applyPlaneSelection(player);
     const slotIndex = useSelection ? this.chooseSpawnSlot(player) : player.slot;
     const ring = this.spawnRing[slotIndex]!;
     player.spawnPos.copy(ring.pos);
@@ -924,8 +1004,8 @@ export class GameRoom {
     player.demands.yawRateRadS = 0;
 
     // nowe życie: pełne HP, pełna amunicja, czysta lista napastników (kredyt asyst)
-    resetHealth(player.health, this.plane.hpPool);
-    resetFireControl(player.fire, this.plane.armament); // pełny zapas wszystkich grup + zerowanie cooldownów
+    resetHealth(player.health, player.plane.hpPool);
+    resetFireControl(player.fire, player.plane.armament); // pełny zapas wszystkich grup + zerowanie cooldownów
     player.damagedBy.clear();
     // nietykalność po (re)spawnie (anty-spawn-kill); znika po czasie albo gdy gracz strzeli
     player.protectionTimerS = SPAWN_PROTECTION_S;
@@ -1130,15 +1210,16 @@ export class GameRoom {
   }
 
   private rebuildSnapshotSources(): void {
-    const ammoMax = totalAmmo(this.plane.armament);
     this.snapshotSources = [...this.players.values()].map((p) => ({
       id: p.id,
       state: p.sim.state,
       health: p.health,
-      // żywe referencje (state/health/fire) — pole `ammoRemaining` mutuje się co tick,
-      // więc snapshot zawsze koduje aktualny stan bez przebudowy źródeł
+      // żywe referencje (state/health/fire) — pole `ammoRemaining` mutuje się co tick, więc snapshot
+      // zawsze koduje aktualny stan bez przebudowy źródeł. ammoMax/planeType per gracz (faza 19b);
+      // przy zmianie typu applyPlaneSelection przebudowuje źródła (świeże ref fire/health + ammoMax).
       fire: p.fire,
-      ammoMax,
+      ammoMax: totalAmmo(p.plane.armament),
+      planeType: p.planeType,
     }));
   }
 
@@ -1158,6 +1239,7 @@ export class GameRoom {
       t: 'roomUpdate',
       hostId: this.hostId,
       state: this.state,
+      mode: this.mode, // faza 19b: poczekalnia wie, czy pokazać wybór samolotu (FFA)
       players: this.roomPlayers(),
     });
   }

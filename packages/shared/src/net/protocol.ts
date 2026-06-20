@@ -3,6 +3,7 @@ import { NetError } from '../errors';
 import type { DifficultyLevel } from '../ai/difficulty';
 import type { LifePhase, PlaneState } from '../physics/state';
 import type { MatchMode } from '../world/team';
+import { planeTypeFromCode, planeTypeToCode, type PlaneType } from '../planes/plane-type';
 
 // Protokół sieciowy fazy 8 (docs/phases/faza-08.md).
 //
@@ -26,8 +27,12 @@ import type { MatchMode } from '../world/team';
  * encji dokłada bajt HP; doszła binarna ramka EVENT (muzzle/hit/kill).
  * v3 (faza 14): snapshot encji dokłada bajt amunicji (ułamek) — klient online nie
  * symuluje ognia lokalnie, więc HUD czyta amunicję z autorytetu serwera.
+ * v4 (faza 19b): snapshot encji dokłada bajt TYPU SAMOLOTU (drugi samolot, Bf 109) — klient
+ * dobiera mesh i etykietę HUD per encja, a lokalna predykcja per typ. Lobby: RoomPlayer niesie
+ * wybrany typ, wiadomość `selectPlane` go zmienia (deploy front+back RAZEM — niespójna wersja
+ * = błąd handshake).
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** Tag pierwszego bajtu ramki binarnej: wejście gracza (klient → serwer). */
 export const MSG_INPUT = 1;
@@ -220,6 +225,8 @@ export interface EntitySnapshot {
   healthFrac: number;
   /** Ułamek amunicji 0..1 (faza 14) — ogień liczy serwer; klient tylko pokazuje w HUD. */
   ammoFrac: number;
+  /** Typ samolotu encji (faza 19b) — klient dobiera mesh i etykietę HUD; lokalnie też predykcję. */
+  planeType: PlaneType;
 }
 
 export interface Snapshot {
@@ -241,10 +248,12 @@ export interface SnapshotEntitySource {
   fire: { ammoRemaining: number };
   /** Pełny zapas amunicji [pociski] — stały per płatowiec (do ułamka amunicji). */
   ammoMax: number;
+  /** Typ samolotu encji (faza 19b) — kodowany jednym bajtem (snapshot v4). */
+  planeType: PlaneType;
 }
 
 export const SNAPSHOT_HEADER_BYTES = 10; // u8 type | u32 tick | u32 ack | u8 count
-export const SNAPSHOT_ENTITY_BYTES = 31; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp | u8 ammo
+export const SNAPSHOT_ENTITY_BYTES = 32; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp | u8 ammo | u8 planeType
 
 /** Rozmiar snapshotu [bajty] dla zadanej liczby encji — do budżetu pasma. */
 export function snapshotByteLength(entityCount: number): number {
@@ -293,6 +302,7 @@ export function encodeSnapshot(
     view.setUint8(o + 29, Math.round(clamp(hpFrac, 0, 1) * 255));
     const ammoFrac = e.ammoMax > 0 ? e.fire.ammoRemaining / e.ammoMax : 0;
     view.setUint8(o + 30, Math.round(clamp(ammoFrac, 0, 1) * 255));
+    view.setUint8(o + 31, planeTypeToCode(e.planeType));
     o += SNAPSHOT_ENTITY_BYTES;
   }
   return o;
@@ -336,6 +346,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
     const throttle = view.getUint8(o + 28) / 255;
     const healthFrac = view.getUint8(o + 29) / 255;
     const ammoFrac = view.getUint8(o + 30) / 255;
+    const planeType = planeTypeFromCode(view.getUint8(o + 31));
     entities.push({
       id,
       life: lifePhaseFromCode(flags),
@@ -347,6 +358,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
       throttle,
       healthFrac,
       ammoFrac,
+      planeType,
     });
     o += SNAPSHOT_ENTITY_BYTES;
   }
@@ -566,6 +578,8 @@ export interface RoomSummary {
 export interface RoomPlayer {
   id: number;
   nick: string;
+  /** Wybrany/efektywny typ samolotu (faza 19b) — FFA: wybór gracza; drużynowy: wg strony. */
+  planeType: PlaneType;
 }
 
 // --- klient → serwer ---
@@ -601,6 +615,13 @@ export interface CreateRoomMessage {
 export interface JoinRoomMessage {
   t: 'joinRoom';
   code: string;
+}
+
+/** Klient → serwer: wybór typu samolotu (faza 19b; tylko FFA — w drużynowym sprzęt wg strony).
+ *  Serwer klampuje (clampPlaneType, niezm. nr 11) i stosuje przy najbliższym (re)spawnie. */
+export interface SelectPlaneMessage {
+  t: 'selectPlane';
+  plane: PlaneType;
 }
 
 /** Klient → serwer: szybka gra — dołącz do publicznego pokoju albo utwórz go. */
@@ -645,6 +666,9 @@ export interface RoomJoinedMessage {
   youId: number;
   hostId: number;
   state: RoomState;
+  /** Tryb meczu pokoju (faza 19b) — poczekalnia wie, czy pokazać wybór samolotu (FFA) czy sprzęt
+   *  jest wg strony (drużynowy). */
+  mode: MatchMode;
   players: RoomPlayer[];
 }
 
@@ -653,6 +677,8 @@ export interface RoomUpdateMessage {
   t: 'roomUpdate';
   hostId: number;
   state: RoomState;
+  /** Tryb meczu pokoju (faza 19b) — jak w RoomJoinedMessage (wybór samolotu w poczekalni). */
+  mode: MatchMode;
   players: RoomPlayer[];
 }
 
@@ -741,6 +767,7 @@ export type ControlMessage =
   | ListRoomsMessage
   | CreateRoomMessage
   | JoinRoomMessage
+  | SelectPlaneMessage
   | QuickPlayMessage
   | StartMatchMessage
   | LeaveRoomMessage
@@ -759,6 +786,7 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'listRooms',
   'createRoom',
   'joinRoom',
+  'selectPlane',
   'quickPlay',
   'startMatch',
   'leaveRoom',

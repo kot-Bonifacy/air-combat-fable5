@@ -1,0 +1,11 @@
+Model Information:
+* title:	Messerschmitt BF 109
+* source:	https://sketchfab.com/3d-models/messerschmitt-bf-109-5a14d8cc4ee14c9bbd5ba13a38f44f44
+* author:	Jankenstein (https://sketchfab.com/Jankenstein)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Messerschmitt BF 109" (https://sketchfab.com/3d-models/messerschmitt-bf-109-5a14d8cc4ee14c9bbd5ba13a38f44f44) by Jankenstein (https://sketchfab.com/Jankenstein) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

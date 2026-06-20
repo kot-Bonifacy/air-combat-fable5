@@ -28,6 +28,7 @@ import {
   type InputFrame,
   type SnapshotEntitySource,
 } from './protocol';
+import type { PlaneType } from '../planes/plane-type';
 
 function makeInput(over: Partial<InputFrame> = {}): InputFrame {
   return {
@@ -129,13 +130,14 @@ function makeEntity(
   health = { hp: 120, maxHp: 120 },
   fire = { ammoRemaining: 2400 },
   ammoMax = 2400,
+  planeType: PlaneType = 'spitfire',
 ): SnapshotEntitySource {
   const state = createPlaneState();
   state.position.set(1234.5, 678.25, -9000.75);
   state.orientation.set(0.1, 0.2, 0.3, 0.9).normalize();
   state.velocity.set(120, -5, 30);
   state.throttle = 0.8;
-  return { id, state: Object.assign(state, over), health, fire, ammoMax };
+  return { id, state: Object.assign(state, over), health, fire, ammoMax, planeType };
 }
 
 describe('protokół SNAPSHOT round-trip', () => {
@@ -185,6 +187,18 @@ describe('protokół SNAPSHOT round-trip', () => {
     encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, [quarter]);
     const snap = decodeSnapshot(new DataView(buf.buffer));
     expect(snap.entities[0]?.ammoFrac).toBeCloseTo(0.25, 2);
+  });
+
+  it('zachowuje typ samolotu każdej encji (protokół v4)', () => {
+    const entities = [
+      makeEntity(0, {}, { hp: 120, maxHp: 120 }, { ammoRemaining: 2400 }, 2400, 'spitfire'),
+      makeEntity(1, {}, { hp: 110, maxHp: 110 }, { ammoRemaining: 2120 }, 2120, 'bf109'),
+    ];
+    const buf = new Uint8Array(snapshotByteLength(entities.length));
+    encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, entities);
+    const snap = decodeSnapshot(new DataView(buf.buffer));
+    expect(snap.entities[0]?.planeType).toBe('spitfire');
+    expect(snap.entities[1]?.planeType).toBe('bf109');
   });
 
   it('clampuje prędkość na granicy zakresu kwantyzacji', () => {

@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: **0–18 + domknięcie parytetu MP↔SP (P1–P5)**; **Faza 19 w toku (19a ✅, 19b ⏳)**. Szczegóły
+Fazy ukończone: **0–18 + domknięcie parytetu MP↔SP (P1–P5) + Faza 19 (19a ✅, 19b ✅)**. Szczegóły
 każdej fazy w `docs/phases/faza-NN.md` i `memory/`; cały wysiłek parytetu MP↔SP (fazy 14–18 + P1–P5) spięty
 w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwarte sprawy).
 
@@ -25,19 +25,18 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 | 14–18 | **Parytet MP↔SP**: wizualia → wrak → obserwator → strefa → drużyny    | ✅ → `docs/parytet-mp-sp.md` |
 | P1–P5 | **Domknięcie parytetu**: FFA eliminacja, CC-BY, onboarding, buffet, sprzątanie | ✅ zacommitowane (404 testy zielone) |
 | 19a   | **Drugi samolot (shared)**: Bf 109 E-3, uzbrojenie w grupach, balistyka per-pocisk, złote testy `describe.each` | ✅ 424 testy zielone (`bf109-e.json`, asymetria turn↔energy) |
-| 19b   | **Drugi samolot (integracja)**: protokół v4 (bajt typu), per-player plane serwer, rejestr meshy + model 3D, wybór w lobby, HUD typ wroga, balans 1v1 | ⏳ → `docs/phases/faza-19.md` |
+| 19b   | **Drugi samolot (integracja)**: protokół v4 (bajt typu), per-player plane serwer, rejestr meshy + model 3D Bf 109, wybór w lobby, HUD typ wroga, balans 1v1 | ✅ 440 testów zielone; ⏳ user: playtest balansu + weryfikacja wzrokowa modelu + smoke v4 |
 
-**Protokół: `PROTOCOL_VERSION = 3`** (bumpnięty w f14, +1 bajt amunicji; fazy 15–18 i P1–P5 bez
-bumpu — addytywne JSON albo usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
+**Protokół: `PROTOCOL_VERSION = 4`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu;
+fazy 15–18 i P1–P5 bez bumpu — addytywne JSON albo usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
 
 ⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
-→ overlay obserwatora; drużynowy) + zaległe pomiary VPS — pełna lista w `docs/parytet-mp-sp.md`
-(„Otwarte sprawy"). Brak SSH z sesji.
+→ overlay obserwatora; drużynowy; v4 z wyborem samolotu) + playtest balansu 1v1 Spitfire↔Bf 109 +
+weryfikacja wzrokowa modelu Bf 109 (orientacja/śmigło/podwozie — fixEuler best-guess) + zaległe pomiary VPS —
+pełna lista w `docs/parytet-mp-sp.md` („Otwarte sprawy"). Brak SSH z sesji.
 
-**Następna: Faza 19b — integracja Bf 109** (protokół v4 = bajt typu samolotu → deploy front+back RAZEM;
-per-player plane na serwerze, rejestr meshy + model 3D Bf 109, wybór w lobby, HUD typ wroga, balans 1v1).
-Warstwa shared (19a: `bf109-e.json`, uzbrojenie w grupach, złote testy obu samolotów) ✅ — `docs/phases/faza-19.md`.
-(Decyzja 2026-06-18: pełny parytet MP↔SP przed Bf 109; Bf 109→19, teren→20, dźwięk→21, uszkodzenia→22.)
+**Następna: Faza 20 — teren** (timebox twardy! po przekroczeniu: zamknij co działa, reszta do backlogu PLAN.md).
+(Decyzja 2026-06-18: pełny parytet MP↔SP przed Bf 109; Bf 109→19 ✅, teren→20, dźwięk→21, uszkodzenia→22.)
 
 ## Stack (skrót)
 

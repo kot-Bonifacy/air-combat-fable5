@@ -428,3 +428,12 @@ export const BF109_E: PlaneConfig = loadPlaneConfig(bf109Raw, 'bf109-e.json');
 export function inducedDragFactor(plane: PlaneConfig): number {
   return 1 / (Math.PI * plane.oswaldE * plane.aspectRatio);
 }
+
+/**
+ * Rozpiętość skrzydeł [m] z geometrii: b = √(AR·S) (definicja wydłużenia AR = b²/S).
+ * Jedyne źródło prawdy do auto-skalowania modelu 3D w kliencie (Spitfire ≈ 11,2 m,
+ * Bf 109 E ≈ 9,9 m) — bez osobnego pola w JSON, które mogłoby się rozjechać z aerodynamiką.
+ */
+export function wingspanM(plane: PlaneConfig): number {
+  return Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
+}

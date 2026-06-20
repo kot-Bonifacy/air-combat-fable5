@@ -80,9 +80,36 @@ interfejs instruktora generyczny (bot lata oboma — `primaryGroup` w lead) ✅ 
 > W czystym modelu aero (bez odcięcia gaźnika Merlina pod −G, bez ściśliwości) przewaga 109 w nurkowaniu jest
 > mała — `cd0` 109 ustawione na 0.022 (czystszy płatowiec, w widełkach E-3) dla wyraźnego marginesu energii.
 
-### 19b — integracja (otwarta)
+### 19b — integracja (2026-06-20, ✅ zacommitowane, 440 testów / typecheck / lint / build zielone)
 
-Protokół v4 (bajt typu samolotu w snapshocie/spawnie → deploy front+back RAZEM) · serwer per-player plane
-(dziś jeden `this.plane` na pokój) · klient: rejestr meshy per typ (`plane-mesh.ts` zaszyty pod Spitfire) ·
-model 3D Bf 109 + `LICENSES.md` · wybór samolotu w lobby (per gracz, między respawnami) · HUD: nazwa typu wroga
-przy markerze · render wielogrupowych smugaczy/błysków online · **sesja balansowa 1v1 boty+ludzie oba typy → notatka**.
+Decyzje użytkownika (2026-06-20): wybór samolotu **tylko w poczekalni** (po P1 brak respawnu → „zmiana między
+respawnami" martwa); w trybie **drużynowym sprzęt wg strony** (drużyna 0 = Spitfire/Alianci, 1 = Bf 109/Oś),
+w FFA wolny wybór per gracz; model 3D **wpięty teraz** z best-guess (weryfikacja wzrokowa user-side).
+
+- **Protokół v4** (`PROTOCOL_VERSION` 3→4): snapshot encji +1 bajt **typu samolotu** (`SNAPSHOT_ENTITY_BYTES`
+  31→32), nowy rejestr `planes/plane-type.ts` (`PlaneType`, `PLANE_TYPES` = kolejność na drucie, `planeTypeToCode`/
+  `FromCode`, `clampPlaneType`, `planeConfigOf`, `planeLabelOf`, `planeTypeForTeam`); `RoomPlayer.planeType`,
+  `mode` w `RoomJoined`/`RoomUpdate`, wiadomość `selectPlane`. **Deploy front+back RAZEM** (niespójna wersja = błąd
+  handshake). Helper `wingspanM(config)=√(AR·S)` w loaderze (auto-skala modelu z geometrii, bez pola w JSON).
+- **Serwer per-player plane**: usunięty `GameRoom.plane`; `ServerPlayer` ma `selectedType`/`planeType`/`plane`/`health`/
+  `fire` PER GRACZ. `effectiveType` (team→strona, FFA→wybór), `applyPlaneSelection` (zmiana typu → re-create `fire`
+  bo liczba grup różni się 1↔2 + HP + przebudowa źródeł snapshotu), `selectPlane`, `addBot(diff, type?)` (forsowany
+  typ; bez niego losowany z id). Hit radius per CEL, promień kolizji per płatowiec (suma), `ammoMax`/`planeType` per
+  encja w snapshocie. Connection routuje `selectPlane` (clampPlaneType, niezm. 11), `mode` w roomJoined.
+- **Klient**: rejestr meshy `plane-mesh.ts` per typ (`ModelSpec`: URL/orientacja/węzły śmigła+podwozia; Bf 109 ukrywa
+  podwozie też po MATERIALE — pewniejsze), `createPlaneMesh(type, wingspan)`. `online-main` reaguje na typ z własnej
+  encji (`setLocalPlane`: świeży predyktor + amunicja + błysk luf z OBU grup), mesh per encja wg `planeType`, kosmetyczne
+  smugacze z luf strzelca, HUD: etykieta typu wroga przy markerze (`EnemyMarker.setType`). Lobby: selektor samolotu w
+  poczekalni (FFA; drużynowy → „sprzęt wg drużyny"), typ przy nicku w roster, atrybucja CC-BY OBU modeli.
+- **Model 3D Bf 109** (Jankenstein, CC-BY 4.0) — `bf109-web.glb` (2,72 MB, nazwy węzłów zachowane), wpis w `LICENSES.md`
+  + atrybucja w lobby. fixEuler best-guess `{0,0,0}` — **weryfikacja wzrokowa orientacji/śmigła user-side** (jak Spitfire).
+- **Sesja balansowa 1v1** (`balance.test.ts`, harness pełnej walki serwera, boty „trudny" oba typy, 8 ziaren × 2 sloty):
+  **Bf 109 16/16, pełne HP, Spitfire 0 obrażeń** — generyczne AI nie turn-fightuje, więc energy-fighter czysto wygrywa
+  każdy merge; osiągi per kolumna 19a NIENARUSZONE. Decyzja usera: **akceptacja + playtest** (bez nerfu do średniej —
+  asymetria to feature, a bot to słaby probierz stylu gry). Test asercjonuje tylko ODPORNOŚĆ mieszanej walki (każdy
+  pojedynek rozstrzyga się bez NaN/zawieszenia), rozkład loguje do notatki. **Prawdziwy balans „oba wygrywają" =
+  human playtest (user-side).**
+
+Kryteria spełnione w 19b: protokół v4 + per-player plane ✅ · model 3D + LICENSES ✅ · wybór w lobby ✅ · HUD typ wroga ✅ ·
+boty oba typy bez zmian AI ✅ · typecheck+test(440)+lint+build ✅. **Otwarte (user): playtest balansu 1v1 + weryfikacja
+wzrokowa modelu Bf 109 (orientacja/śmigło/podwozie) + smoke online v4 (deploy front+back RAZEM).**

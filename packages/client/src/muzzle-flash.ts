@@ -51,9 +51,11 @@ export class MuzzleFlash {
   private readonly material: MeshBasicMaterial;
   private readonly texture: Texture;
   private readonly muzzles: readonly (readonly [number, number, number])[];
+  private readonly scene: Scene;
   private ageS = FLASH_S; // start wygaszony
 
   constructor(scene: Scene, muzzles: readonly (readonly [number, number, number])[]) {
+    this.scene = scene;
     this.muzzles = muzzles;
     this.texture = makeFlashTexture();
     this.material = new MeshBasicMaterial({
@@ -72,6 +74,14 @@ export class MuzzleFlash {
   /** Odpal błysk (na każdej oddanej salwie — re-strob). */
   flash(): void {
     this.ageS = 0;
+  }
+
+  /** Zwalnia zasoby i zdejmuje mesh ze sceny (przy zmianie typu lokalnego samolotu, faza 19b). */
+  dispose(): void {
+    this.scene.remove(this.mesh);
+    this.mesh.geometry.dispose();
+    this.material.dispose();
+    this.texture.dispose();
   }
 
   /**

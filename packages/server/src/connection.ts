@@ -7,6 +7,7 @@ import {
   PROTOCOL_VERSION,
   SNAPSHOT_HZ,
   clampMatchMode,
+  clampPlaneType,
   decodeInput,
   parseControlMessage,
   sanitizeNick,
@@ -212,6 +213,13 @@ export class Connection implements RoomMember {
         this.enterRoom(result.room, result.playerId);
         return;
       }
+      case 'selectPlane': {
+        // wybór samolotu w poczekalni (faza 19b); clampPlaneType broni przed wartością z sieci
+        // (niezmiennik nr 11). Poza pokojem ignorowany.
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        this.room.selectPlane(this.playerId, clampPlaneType(msg.plane));
+        return;
+      }
       case 'startMatch': {
         if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
         if (this.room.hostId !== this.playerId) {
@@ -269,6 +277,7 @@ export class Connection implements RoomMember {
       youId: playerId,
       hostId: room.hostId ?? playerId,
       state: room.state,
+      mode: room.mode, // faza 19b: klient wie, czy oferować wybór samolotu (FFA)
       players: room.roomPlayers(),
     };
     this.sendControl(msg);

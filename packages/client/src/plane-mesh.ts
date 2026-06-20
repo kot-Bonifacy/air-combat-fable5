@@ -11,54 +11,97 @@ import {
   Vector3,
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DEFAULT_PLANE_TYPE, type PlaneType } from '@air-combat/shared';
+
+// Rejestr modeli 3D per typ samolotu (faza 19b: drugi samolot). Każdy typ ma własny
+// ModelSpec: URL, korektę orientacji do naszego body frame oraz NAZWANE węzły śmigła i
+// podwozia (nazwy ze Sketchfaba są nic nieznaczące → trzymamy je w danych, nie zgadujemy
+// regexem). Bf 109 dodatkowo ukrywa podwozie po NAZWIE MATERIAŁU (109_Landing_Gear..., Tire)
+// — to odporne na re-eksport modelu. Błąd wczytania KAŻDEGO typu → bryła zastępcza (gra leci
+// dalej). Spitfire bez zmian względem faz 7/14.
 
 /**
- * Ścieżka modelu serwowana przez Vite z `assets/` (publicDir → ../../assets).
- * Rozpakuj paczkę "glTF" ze Sketchfaba do `assets/models/spitfire/`, tak by
- * istniał `assets/models/spitfire/scene.gltf`. Pojedynczy plik glb → zmień na
- * '/models/spitfire.glb'. Patrz assets/models/spitfire/README.md.
+ * Opis modelu 3D jednego typu. Pozycję/skalę/orientację reszta loadera liczy sama z bbox;
+ * tu tylko to, czego z geometrii nie da się zgadnąć: orientacja źródła i które węzły to
+ * śmigło/podwozie.
  */
-const MODEL_URL = '/models/spitfire/scene.gltf';
+interface ModelSpec {
+  /** Ścieżka serwowana przez Vite z `assets/` (publicDir → ../../assets). */
+  url: string;
+  /**
+   * Korekta orientacji modelu do naszego body frame (+Z nos, +Y góra, +X lewe skrzydło).
+   * Orientacji ze Sketchfaba nie da się przewidzieć — ŚCIĄGA do strojenia wzrokowego:
+   *   leci tyłem (nos w −Z) ........ y: 180
+   *   leci bokiem .................. y: 90  lub  y: −90
+   *   do góry nogami ............... z: 180
+   *   nos w dół/górę (model Z-up) .. x: 90  lub  x: −90
+   */
+  fixEulerDeg: { x: number; y: number; z: number };
+  /** Dokładne nazwy węzłów podwozia do ukrycia (po sanityzacji three: kropki znikają). */
+  gearNodeNames: ReadonlySet<string>;
+  /**
+   * Opcjonalny wzorzec NAZWY MATERIAŁU podwozia — ukrywa mesh niezależnie od nazwy węzła
+   * (Bf 109: 109_Landing_Gear_and_Exausts, Tire). Bardziej odporne niż nazwy węzłów.
+   */
+  gearMaterialRe: RegExp | null;
+  /** Dokładne nazwy węzłów śmigła (kręcone jako całość). */
+  propNodeNames: ReadonlySet<string>;
+  /** Węzeł na osi wału (kołpak) — środek obrotu śmigła; null → bbox wszystkich węzłów śmigła. */
+  hubNode: string | null;
+  /** Węzły łopat wygaszane w tarczę przy obrotach; pusty → wszystkie węzły śmigła. */
+  bladeNodes: ReadonlySet<string>;
+}
 
-/**
- * Korekta orientacji modelu do naszego body frame (+Z nos, +Y góra, +X lewe
- * skrzydło). Orientacji modelu ze Sketchfaba nie da się przewidzieć z góry.
- * JEŚLI po wczytaniu samolot leci nie tak — popraw te STOPNIE (ściąga):
- *   leci tyłem (nos w −Z) ........ y: 180
- *   leci bokiem .................. y: 90  lub  y: −90
- *   do góry nogami ............... z: 180
- *   nos w dół/górę (model Z-up) .. x: 90  lub  x: −90
- */
-const MODEL_FIX_EULER_DEG = { x: 0, y: 0, z: 0 };
-
-/** Węzły dopasowane do tych wzorców znikają (podwozie schowane w locie). */
+/** Węzły dopasowane do tych wzorców znikają (podwozie schowane w locie) — wspólne dla typów. */
 const GEAR_NAME_RE = /gear|wheel|undercarriage|landing|podwozie|ko[łl]o|strut|oleo|tire|tyre/i;
-/** Węzły pasujące tu są kręcone jak śmigło. */
+/** Węzły pasujące tu są kręcone jak śmigło — wspólne dla typów. */
 const PROP_NAME_RE = /prop|spinner|airscrew|blade|śmig/i;
 
-// Model ze Sketchfaba ma nic nieznaczące nazwy węzłów (Cube043_12, …), więc
-// poza wzorcami trzymamy DOKŁADNE nazwy wskazane ręcznie (dev: Alt+klik).
-// Nazwy ustalone z analizy geometrii scene.gltf (tmp-analyze-gltf): kropki
-// z glTF three sanityzuje do pustego znaku (Cube.004_128 → Cube004_128).
-/** Dokładne nazwy węzłów podwozia do ukrycia (golenie + koła główne, pary L/P). */
-const GEAR_NODE_NAMES = new Set<string>([
-  'Cube004_128',
-  'Cube022_116',
-  'Cylinder012_111',
-  'Cylinder046_132',
-  'Cylinder004_113',
-  'Cylinder033_131',
-  'Cube032_112',
-  'Cube006_130',
-  'Cylinder013_110',
-  'Cylinder027_129',
-]);
-/** Dokładne nazwy węzłów śmigła (kręcone jako całość): łopaty + kołpak. */
-const PROP_NODE_NAMES = new Set<string>(['Cube041_86', 'Circle_91']);
-/** Węzeł leżący na osi wału (kołpak) — wyznacza środek obrotu śmigła. */
-const PROP_HUB_NODE = 'Circle_91';
-/** Węzeł łopat (bez kołpaka) — tylko on jest wygaszany do tarczy przy obrotach. */
-const PROP_BLADE_NODE = 'Cube041_86';
+const MODEL_SPECS: Record<PlaneType, ModelSpec> = {
+  // Spitfire ze Sketchfaba (barking_dogo) — konfiguracja z faz 7/14, nazwy węzłów z analizy
+  // geometrii (Cube.004_128 → Cube004_128: three sanityzuje kropki do pustego znaku).
+  spitfire: {
+    url: '/models/spitfire/scene.gltf',
+    fixEulerDeg: { x: 0, y: 0, z: 0 },
+    gearNodeNames: new Set<string>([
+      'Cube004_128',
+      'Cube022_116',
+      'Cylinder012_111',
+      'Cylinder046_132',
+      'Cylinder004_113',
+      'Cylinder033_131',
+      'Cube032_112',
+      'Cube006_130',
+      'Cylinder013_110',
+      'Cylinder027_129',
+    ]),
+    gearMaterialRe: null,
+    propNodeNames: new Set<string>(['Cube041_86', 'Circle_91']),
+    hubNode: 'Circle_91',
+    bladeNodes: new Set<string>(['Cube041_86']),
+  },
+  // Bf 109 ze Sketchfaba (Jankenstein) — faza 19b. Nazwy z bf109-web.glb (zachowane po
+  // optymalizacji; kropki sanityzowane: Cube.030 → Cube030). Śmigło: spinner Cube030 + 3
+  // łopaty Cube036/037/038. Podwozie po MATERIALE (pewniejsze niż nazwy goleni/kół) — uwaga:
+  // dzieli materiał z wydechami, więc znikają też króćce wydechowe (akceptowalne w widoku lotu).
+  // fixEulerDeg = best-guess {0,0,0}: jeśli model leci źle, popraw STOPNIE wg ściągi wyżej.
+  bf109: {
+    url: '/models/bf109/bf109-web.glb',
+    fixEulerDeg: { x: 0, y: 0, z: 0 },
+    gearNodeNames: new Set<string>([
+      'Cube032',
+      'Cylinder011',
+      'Cylinder022',
+      'Cylinder029',
+      'Cylinder023',
+      'Cylinder030',
+    ]),
+    gearMaterialRe: /landing_gear|exaust|exhaust|tire|tyre/i,
+    propNodeNames: new Set<string>(['Cube030', 'Cube036', 'Cube037', 'Cube038']),
+    hubNode: 'Cube030',
+    bladeNodes: new Set<string>(['Cube036', 'Cube037', 'Cube038']),
+  },
+};
 
 /** Dev: ustaw na true, by wypisać drzewo węzłów modelu (np. po podmianie .glb). */
 const DUMP_NODES = false;
@@ -89,12 +132,12 @@ export interface PlaneModel {
   /**
    * Spełnia się, gdy asynchroniczne wczytanie modelu glTF dobiegło końca —
    * zarówno po sukcesie, jak i po błędzie (zostaje wtedy bryła zastępcza).
-   * Ekran ładowania czeka na to, by menu pokazało się z gotowym Spitfire'em.
+   * Ekran ładowania czeka na to, by menu pokazało się z gotowym modelem.
    */
   ready: Promise<void>;
   /**
    * Wołać co klatkę: kręci śmigłem proporcjonalnie do gazu (0..1).
-   * `engineRunning=false` (zestrzelony wrak) → śmigło wytraca obroty aż do zera.
+   * `engineRunning=false` (zestrzelony wrak) → śmigło wytraca obroty.
    */
   update(dtS: number, throttle01: number, engineRunning?: boolean): void;
 }
@@ -202,34 +245,45 @@ function buildSpinPivot(group: Group, nodes: Object3D[], hubNode: Object3D | nul
 /**
  * Klonuje materiały łopat (dzielą materiał z kadłubem!) i włącza im
  * przezroczystość, by dało się je wygaszać niezależnie od reszty modelu.
- * Kołpak pomijamy — ma zostać pełny.
+ * `bladeNodes` zawęża do łopat (kołpak zostaje pełny); pusty → cały pivot.
  */
-function collectBladeMaterials(pivot: Group): Material[] {
-  let bladeRoot: Object3D | null = null;
-  pivot.traverse((o) => {
-    if (!bladeRoot && o.name === PROP_BLADE_NODE) bladeRoot = o;
-  });
+function collectBladeMaterials(pivot: Group, bladeNodes: ReadonlySet<string>): Material[] {
+  const roots: Object3D[] = [];
+  if (bladeNodes.size > 0) {
+    pivot.traverse((o) => {
+      if (o.name && bladeNodes.has(o.name)) roots.push(o);
+    });
+  }
+  const sources = roots.length > 0 ? roots : [pivot];
   const mats: Material[] = [];
   const prep = (mat: Material): Material => {
     const c = mat.clone();
     c.transparent = true;
     return c;
   };
-  (bladeRoot ?? pivot).traverse((o) => {
-    if (!(o instanceof Mesh)) return;
-    o.material = Array.isArray(o.material) ? o.material.map(prep) : prep(o.material);
-    if (Array.isArray(o.material)) mats.push(...o.material);
-    else mats.push(o.material);
-  });
+  for (const root of sources) {
+    root.traverse((o) => {
+      if (!(o instanceof Mesh)) return;
+      o.material = Array.isArray(o.material) ? o.material.map(prep) : prep(o.material);
+      if (Array.isArray(o.material)) mats.push(...o.material);
+      else mats.push(o.material);
+    });
+  }
   return mats;
 }
 
-function matchesGear(name: string): boolean {
-  return GEAR_NODE_NAMES.has(name) || GEAR_NAME_RE.test(name);
+function matchesGear(name: string, spec: ModelSpec): boolean {
+  return spec.gearNodeNames.has(name) || GEAR_NAME_RE.test(name);
 }
 
-function matchesProp(name: string): boolean {
-  return PROP_NODE_NAMES.has(name) || (PROP_NAME_RE.test(name) && !GEAR_NAME_RE.test(name));
+function matchesProp(name: string, spec: ModelSpec): boolean {
+  return spec.propNodeNames.has(name) || (PROP_NAME_RE.test(name) && !GEAR_NAME_RE.test(name));
+}
+
+/** Czy któryś materiał mesha pasuje do wzorca podwozia (Bf 109: detekcja po materiale). */
+function materialNameMatches(material: Material | Material[], re: RegExp): boolean {
+  if (Array.isArray(material)) return material.some((m) => re.test(m.name));
+  return re.test(material.name);
 }
 
 interface ModelRefs {
@@ -239,24 +293,24 @@ interface ModelRefs {
 }
 
 /**
- * Wczytuje model Spitfire'a i podmienia placeholder w `group`. Skaluje model
- * do `targetWingspanM` (z fizyki), wyśrodkowuje, koryguje orientację osi,
- * chowa podwozie i namierza śmigło do animacji. Błąd wczytania NIE wywraca
- * gry — zostaje bryła zastępcza, a `refs` pozostaje pusty.
+ * Wczytuje model danego typu i podmienia placeholder w `group`. Skaluje model do
+ * `targetWingspanM` (z fizyki), wyśrodkowuje, koryguje orientację osi, chowa podwozie i
+ * namierza śmigło do animacji. Błąd wczytania NIE wywraca gry — zostaje bryła zastępcza,
+ * a `refs` pozostaje pusty.
  */
-async function loadSpitfireModel(
+async function loadPlaneModel(
   group: Group,
   placeholder: Group,
   targetWingspanM: number,
   refs: ModelRefs,
+  spec: ModelSpec,
 ): Promise<void> {
   let gltf;
   try {
-    gltf = await new GLTFLoader().loadAsync(MODEL_URL);
+    gltf = await new GLTFLoader().loadAsync(spec.url);
   } catch (err) {
     console.warn(
-      `[plane-mesh] Nie udało się wczytać modelu (${MODEL_URL}) — używam bryły zastępczej. ` +
-        `Wgraj model do assets/models/spitfire/ (patrz README).`,
+      `[plane-mesh] Nie udało się wczytać modelu (${spec.url}) — używam bryły zastępczej.`,
       err,
     );
     return;
@@ -279,9 +333,9 @@ async function loadSpitfireModel(
   // (origin grupy, którym kręci fizyka) leżał w środku samolotu
   model.position.copy(center).multiplyScalar(-scale);
   model.rotation.set(
-    MODEL_FIX_EULER_DEG.x * DEG_TO_RAD,
-    MODEL_FIX_EULER_DEG.y * DEG_TO_RAD,
-    MODEL_FIX_EULER_DEG.z * DEG_TO_RAD,
+    spec.fixEulerDeg.x * DEG_TO_RAD,
+    spec.fixEulerDeg.y * DEG_TO_RAD,
+    spec.fixEulerDeg.z * DEG_TO_RAD,
   );
 
   group.add(model);
@@ -290,10 +344,15 @@ async function loadSpitfireModel(
 
   if (import.meta.env.DEV && DUMP_NODES) dumpNodeTree(model);
 
-  // Podwozie: schowane w locie (na razie ukrycie węzłów; brak animacji chowania).
+  // Podwozie: schowane w locie (ukrycie węzłów po nazwie i/lub po materiale; brak animacji chowania).
   let gearHidden = 0;
   model.traverse((o) => {
-    if (o.name && matchesGear(o.name)) {
+    if (o.name && matchesGear(o.name, spec)) {
+      o.visible = false;
+      gearHidden++;
+      return;
+    }
+    if (spec.gearMaterialRe && o instanceof Mesh && materialNameMatches(o.material, spec.gearMaterialRe)) {
       o.visible = false;
       gearHidden++;
     }
@@ -302,23 +361,26 @@ async function loadSpitfireModel(
   // Śmigło: wszystkie pasujące węzły spięte pod jednym pivotem w piaście.
   const propNodes: Object3D[] = [];
   model.traverse((o) => {
-    if (o.name && matchesProp(o.name) && !propNodes.some((p) => isAncestor(p, o))) propNodes.push(o);
+    if (o.name && matchesProp(o.name, spec) && !propNodes.some((p) => isAncestor(p, o))) propNodes.push(o);
   });
   let hubNode: Object3D | null = null;
-  model.traverse((o) => {
-    if (!hubNode && o.name === PROP_HUB_NODE) hubNode = o;
-  });
+  if (spec.hubNode) {
+    const wanted = spec.hubNode;
+    model.traverse((o) => {
+      if (!hubNode && o.name === wanted) hubNode = o;
+    });
+  }
   if (propNodes.length) {
     const pivot = buildSpinPivot(group, propNodes, hubNode);
     refs.prop = pivot;
     refs.propAxis = propLocalSpinAxis(group, pivot);
-    refs.bladeMats = collectBladeMaterials(pivot);
+    refs.bladeMats = collectBladeMaterials(pivot, spec.bladeNodes);
   }
 
   if (import.meta.env.DEV) {
     console.info(
-      `[plane-mesh] podwozie ukryte: ${gearHidden} węzł(y); ` +
-        `śmigło: ${propNodes.length} węzł(y)${propNodes.length ? '' : ' (wskaż je: Alt+klik)'}`,
+      `[plane-mesh] ${spec.url}: podwozie ukryte ${String(gearHidden)} węzł(y); ` +
+        `śmigło ${String(propNodes.length)} węzł(y)${propNodes.length ? '' : ' (wskaż je: DUMP_NODES)'}`,
     );
   }
 }
@@ -330,19 +392,20 @@ function isAncestor(maybe: Object3D, node: Object3D): boolean {
 }
 
 /**
- * Zwraca natychmiast model z bryłą zastępczą i startuje asynchroniczne
- * wczytanie modelu 3D (podmieni placeholder po udanym pobraniu).
- * `targetWingspanM` = rozpiętość skrzydeł [m] (z fizyki) do auto-skalowania.
+ * Zwraca natychmiast model z bryłą zastępczą i startuje asynchroniczne wczytanie modelu 3D
+ * danego typu (podmieni placeholder po udanym pobraniu). `targetWingspanM` = rozpiętość
+ * skrzydeł [m] (z fizyki, helper `wingspanM`) do auto-skalowania.
  */
-export function createPlaneMesh(targetWingspanM: number): PlaneModel {
+export function createPlaneMesh(type: PlaneType, targetWingspanM: number): PlaneModel {
+  const spec = MODEL_SPECS[type] ?? MODEL_SPECS[DEFAULT_PLANE_TYPE];
   const group = new Group();
   const placeholder = buildPlaceholder();
   group.add(placeholder);
 
   const refs: ModelRefs = { prop: null, propAxis: new Vector3(0, 0, 1), bladeMats: [] };
-  // loadSpitfireModel nigdy nie rzuca (błąd → bryła zastępcza), więc `ready`
-  // domyka się też przy nieudanym pobraniu — ekran ładowania nie zawiśnie.
-  const ready = loadSpitfireModel(group, placeholder, targetWingspanM, refs);
+  // loadPlaneModel nigdy nie rzuca (błąd → bryła zastępcza), więc `ready` domyka się
+  // też przy nieudanym pobraniu — ekran ładowania nie zawiśnie.
+  const ready = loadPlaneModel(group, placeholder, targetWingspanM, refs, spec);
 
   // Bieżące obroty śmigła [obr./s] — dochodzą do celu z bezwładnością (PROP_SPIN_TAU_S),
   // żeby zestrzelony silnik wytracał obroty płynnie, a nie zatrzymywał się skokowo.

@@ -20,10 +20,11 @@ import {
   MS_TO_KMH,
   MouseAimCore,
   PORT,
-  SPITFIRE_MK2,
+  DEFAULT_PLANE_TYPE,
   SPOT_RANGE_M,
   aimDirectionBody,
   airDensityKgM3,
+  allMuzzles,
   applyDispersion,
   createRng,
   createTerrain,
@@ -33,9 +34,12 @@ import {
   getRight,
   getUp,
   nAvailG,
+  planeConfigOf,
+  planeLabelOf,
   primaryGroup,
   surfaceHeightM,
   totalAmmo,
+  wingspanM,
   type EntitySnapshot,
   type GameEvent,
   type InputFrame,
@@ -43,6 +47,7 @@ import {
   type LifePhase,
   type MatchEndedMessage,
   type MatchMode,
+  type PlaneType,
   type RoomJoinedMessage,
   type RoomPlayer,
   type Snapshot,
@@ -94,8 +99,12 @@ import { createWorld } from './world';
 // (LPM cyklicznie zmienia oglądany samolot) i kamera orbitalna (klawisz C). Brak „pustego
 // kadru" po zestrzeleniu. Bez zmian protokołu.
 
-const plane = SPITFIRE_MK2;
-const wingspanM = Math.sqrt(plane.aspectRatio * plane.wingAreaM2);
+// Lokalny samolot gracza (faza 19b): TYP ujawnia się w pierwszym snapshocie — własna encja niesie
+// planeType (protokół v4). Konfiguracja steruje predykcją, HUD-G i amunicją; zmianę typu obsługuje
+// setLocalPlane (odbudowa predyktora + błysku luf). Domyślny Spitfire do pierwszego snapshotu.
+let localPlaneType: PlaneType = DEFAULT_PLANE_TYPE;
+let localPlane = planeConfigOf(localPlaneType);
+let localAmmoMax = totalAmmo(localPlane.armament);
 const INPUT_DT_S = 1 / INPUT_HZ;
 const TOKEN_STORAGE_KEY = 'air-combat:token';
 
@@ -107,7 +116,6 @@ const FRIEND_COLOR = 0x33dd66;
 const FOE_COLOR = 0xff3020;
 const FFA_FACTION_COLORS = [0xff3b30, 0xff8c1a, 0xff4fd8, 0x32d0ff, 0xa56bff, 0xff6ea0];
 const SMOKE_BACK_OFFSET_M = 3; // punkt emisji dymu cofnięty ZA ogon (nie ze środka kadłuba)
-const AMMO_MAX = totalAmmo(plane.armament);
 const AIR_KILL_FLASH_SCALE = 0.4; // mały błysk przy zestrzeleniu w locie (duży wybuch dopiero o ziemię)
 
 function cssColor(hex: number): string {
@@ -266,13 +274,17 @@ let attemptingResume = false;
 let roomView: WaitingView | null = null;
 
 // --- predykcja + interpolacja (odtwarzane przy wejściu do nowego meczu) ---
-let predictor = new Predictor(plane, terrain);
+let predictor = new Predictor(localPlane, terrain);
 let interpolator = new SnapshotInterpolator();
 const interpOut = createInterpolatedState();
 const overlay = new NetDebugOverlay();
 
 // --- meshe encji (jeden PlaneModel na id z serwera) ---
 const meshes = new Map<number, PlaneModel>();
+// typ samolotu per encja z ostatniego snapshotu (faza 19b): dobór mesha, kosmetycznych smugaczy
+// (lufy strzelca) i etykiety HUD przy markerze; `meshTypeById` pilnuje, by mesh pasował do typu.
+const planeTypeById = new Map<number, PlaneType>();
+const meshTypeById = new Map<number, PlaneType>();
 const presentIds = new Set<number>();
 const remoteScratch: EntitySnapshot[] = [];
 let remoteCount = 0;
@@ -281,9 +293,9 @@ let extrapolatingCount = 0;
 // --- walka (faza 11): pociski są autorytatywne na serwerze; klient rysuje WYŁĄCZNIE
 //     kosmetyczne smugacze z eventu MUZZLE (z pozy strzelca), a hit marker / kill feed
 //     z eventów HIT / KILL. Żadnej hit-detekcji po stronie klienta. ---
-// Kosmetyczne smugacze online używają grupy GŁÓWNEJ (Spitfire ma jedną; render
-// wielu typów broni dla Bf 109 → faza 19b, gdy event MUZZLE rozróżni grupy).
-const arm = primaryGroup(plane.armament);
+// Kosmetyczne smugacze online wychodzą ze WSZYSTKICH luf strzelca (faza 19b: Bf 109 ma 2 grupy —
+// nos + skrzydła), z balistyką grupy głównej (event MUZZLE niesie tylko sumę strzałów, nie podział
+// na grupy → dokładny łuk MG FF to backlog). Lufy/balistyka dobierane per typ samolotu strzelca.
 const cosmeticPool = new BulletPool(BULLET_POOL_CAPACITY);
 const tracers = new BulletTracers(scene, BULLET_POOL_CAPACITY);
 const tracerCounter = new Map<number, number>(); // ciągłość kadencji smugaczy per strzelec
@@ -311,7 +323,8 @@ let localAmmoFrac = 1;
 // --- wizualia walki (faza 14, parytet z SP) ---
 const explosions = new Explosions(scene);
 const smoke = new SmokeTrails(scene);
-const muzzleFlash = new MuzzleFlash(scene, arm.muzzles);
+// błysk luf własnego samolotu — WSZYSTKIE lufy lokalnego typu (faza 19b); odbudowywany w setLocalPlane
+let muzzleFlash = new MuzzleFlash(scene, allMuzzles(localPlane.armament));
 const greyoutOverlay = new GreyoutOverlay();
 const roster = new RosterOverlay();
 // pasek kontroli strefy KotH (faza 17, parytet z SP) — fronty z autorytatywnych standings
@@ -336,12 +349,19 @@ const scratchFwd = new Vector3();
 const scratchUp = new Vector3();
 const scratchRight = new Vector3();
 
-function ensureMesh(id: number): PlaneModel {
+function ensureMesh(id: number, type: PlaneType): PlaneModel {
   let m = meshes.get(id);
+  if (m && meshTypeById.get(id) !== type) {
+    // typ encji się zmienił (respawn innym samolotem — rzadkie) → przebuduj mesh na właściwy
+    scene.remove(m.object);
+    meshes.delete(id);
+    m = undefined;
+  }
   if (!m) {
-    m = createPlaneMesh(wingspanM);
+    m = createPlaneMesh(type, wingspanM(planeConfigOf(type)));
     scene.add(m.object);
     meshes.set(id, m);
+    meshTypeById.set(id, type);
   }
   return m;
 }
@@ -349,13 +369,17 @@ function ensureMesh(id: number): PlaneModel {
 function clearMeshes(): void {
   for (const [, m] of meshes) scene.remove(m.object);
   meshes.clear();
+  meshTypeById.clear();
+  planeTypeById.clear();
   presentIds.clear();
 }
 
 /** Świeży stan gry przy wejściu do meczu (nowy mecz / reconnect): zero starych encji. */
 function resetGameState(): void {
   clearMeshes();
-  predictor = new Predictor(plane, terrain);
+  // świeży lokalny samolot: domyślny typ do pierwszego snapshotu (odbuduje predyktor/błysk/amunicję);
+  // własny typ ujawni się w 1. snapshocie i setLocalPlane przestawi go na właściwy (faza 19b)
+  setLocalPlane(DEFAULT_PLANE_TYPE);
   interpolator = new SnapshotInterpolator();
   hasPrevLocal = false;
   chaseCamera.reset();
@@ -405,9 +429,13 @@ function handleSnapshot(snap: Snapshot): void {
   remoteScratch.length = 0;
   for (const e of snap.entities) {
     presentIds.add(e.id);
-    ensureMesh(e.id);
+    planeTypeById.set(e.id, e.planeType); // typ z autorytetu serwera (mesh/HUD/smugacze)
+    ensureMesh(e.id, e.planeType);
     healthFracById.set(e.id, e.healthFrac); // dym uszkodzeń (lokalny i obce) wg HP serwera
     if (e.isLocal) {
+      // własny typ ujawnia się tu (FFA: wybór; drużynowy: wg strony) — przestaw lokalny samolot
+      // PRZED reconcile, by predykcja od pierwszego kroku liczyła właściwą kopertą osiągów.
+      if (e.planeType !== localPlaneType) setLocalPlane(e.planeType);
       predictor.reconcile(e, snap.ackSeq);
       localHealthFrac = e.healthFrac;
       localAmmoFrac = e.ammoFrac;
@@ -420,10 +448,26 @@ function handleSnapshot(snap: Snapshot): void {
     if (presentIds.has(id)) continue;
     scene.remove(m.object);
     meshes.delete(id);
+    meshTypeById.delete(id);
+    planeTypeById.delete(id);
     healthFracById.delete(id);
     lifeById.delete(id);
     smokeAccumById.delete(id);
   }
+}
+
+/**
+ * Przestawia lokalny samolot na nowy typ (faza 19b): świeży predyktor (kolejny reconcile ustawi
+ * autorytet), zaktualizowany zapas amunicji do HUD i błysk luf z luf nowego typu. Wołane z
+ * handleSnapshot, gdy własna encja zmienia typ (start meczu / zmiana wyboru).
+ */
+function setLocalPlane(type: PlaneType): void {
+  localPlaneType = type;
+  localPlane = planeConfigOf(type);
+  localAmmoMax = totalAmmo(localPlane.armament);
+  predictor = new Predictor(localPlane, terrain);
+  muzzleFlash.dispose();
+  muzzleFlash = new MuzzleFlash(scene, allMuzzles(localPlane.armament));
 }
 
 // --- zdarzenia walki (faza 11): MUZZLE → smugacze, HIT → marker, KILL → feed/marker ---
@@ -451,13 +495,17 @@ function handleEvents(events: GameEvent[]): void {
 function spawnCosmeticVolley(ownerId: number, seed: number, shots: number): void {
   const mesh = meshes.get(ownerId);
   if (!mesh) return;
+  // lufy i balistyka wg TYPU strzelca (faza 19b): smugacze z wszystkich luf, łuk grupy głównej
+  const cfg = planeConfigOf(planeTypeById.get(ownerId) ?? DEFAULT_PLANE_TYPE);
+  const arm = primaryGroup(cfg.armament);
+  const muz = allMuzzles(cfg.armament);
   const rng = createRng(seed);
   const dispersionRad = arm.dispersionMrad * MRAD_TO_RAD;
   let counter = tracerCounter.get(ownerId) ?? 0;
   const pos = mesh.object.position;
   const quat = mesh.object.quaternion;
   for (let i = 0; i < shots; i++) {
-    const m = arm.muzzles[i % arm.muzzles.length]!;
+    const m = muz[i % muz.length]!;
     cosmMuzzle.set(m[0], m[1], m[2]);
     aimDirectionBody(cosmMuzzle, arm.convergenceM, arm.convergenceRiseM, cosmDir);
     applyDispersion(cosmDir, dispersionRad, rng);
@@ -517,6 +565,7 @@ const lobby = new LobbyUI({
     net?.leaveRoom();
     enterLobby();
   },
+  onSelectPlane: (plane) => net?.selectPlane(plane), // faza 19b: wybór samolotu w poczekalni
 });
 
 // --- nakładki pętli meczu (faza 13): scoreboard (Tab) + ekran wyników z rewanżem ---
@@ -709,7 +758,7 @@ function createNet(nick: string, token: string | null): NetClient {
   c.onRoomJoined = (msg) => onRoomJoined(msg);
   c.onRoomUpdate = (msg) => {
     if (!roomView) return;
-    roomView = { ...roomView, state: msg.state, players: msg.players, hostId: msg.hostId };
+    roomView = { ...roomView, state: msg.state, mode: msg.mode, players: msg.players, hostId: msg.hostId };
     if (msg.state === 'playing') {
       if (phase !== 'playing') enterPlaying();
     } else if (msg.state === 'waiting') {
@@ -753,6 +802,7 @@ function onRoomJoined(msg: RoomJoinedMessage): void {
   roomView = {
     code: msg.code,
     state: msg.state,
+    mode: msg.mode, // faza 19b: poczekalnia pokazuje wybór samolotu (FFA) / sprzęt wg drużyny
     players: msg.players,
     hostId: msg.hostId,
     youId: msg.youId,
@@ -873,7 +923,7 @@ function updateHud(): void {
     altM: s.position.y,
     throttle01: s.throttle,
     nG: s.loadFactor,
-    nAvailG: nAvailG(qPa, plane),
+    nAvailG: nAvailG(qPa, localPlane),
     gLimitG: gLoad.gLimitG,
     blackoutFactor: localAlive ? gLoad.blackoutFactor : 0,
     stallPhase: stall.phase,
@@ -883,8 +933,8 @@ function updateHud(): void {
     bankRad: Math.atan2(-scratchRight.y, scratchUp.y),
     pitchRad: Math.asin(Math.min(1, Math.max(-1, scratchFwd.y))),
     controlMode: mouseAim.locked ? 'mysz' : 'klawiatura',
-    ammo: Math.round(localAmmoFrac * AMMO_MAX),
-    ammoMax: AMMO_MAX,
+    ammo: Math.round(localAmmoFrac * localAmmoMax),
+    ammoMax: localAmmoMax,
     extraLines: hudExtraLines(),
   });
 }
@@ -1030,6 +1080,7 @@ function updateHudOverlays(): void {
     // drużynowy: czerwony wróg / zielony sojusznik (paleta foe/friend); FFA: unikatowy kolor per id
     if (matchMode === 'team') marker.setFoe(factionById.get(id) !== localFaction);
     else marker.setColorHex(entityColorHex(id, false));
+    marker.setType(planeLabelOf(planeTypeById.get(id) ?? DEFAULT_PLANE_TYPE)); // typ wroga (matchup)
     marker.update(m.object.position, viewPos, camera, w, h);
   }
   for (; mi < markers.length; mi++) markers[mi]!.hide();
