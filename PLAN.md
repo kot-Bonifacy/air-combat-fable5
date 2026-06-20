@@ -219,8 +219,12 @@ Wzorzec C z `C:\AI\vps_home_pl_konfiguracja.md` (Tetris jako referencja):
 5. **Różnice float między przeglądarkami/Node** — akceptowane: serwer jest autorytetem,
    reconciliation koryguje dryf. NIE wymagać bitowego determinizmu.
 6. **WebSocket przez NPM** — bez „Websockets Support ON" połączenie nie wstanie (znany błąd z bazy wiedzy).
-7. **Wydajność WebGL na słabszych laptopach** — budżet: 60 fps na zintegrowanej grafice;
-   mierzyć od fazy 4, nie odkładać na koniec.
+7. **Wydajność WebGL** — **cel sprzętowy: nowoczesne GPU NVIDIA z serii RTX** (decyzja 2026-06-20,
+   użytkownik). Budżet „60 fps na zintegrowanej grafice" PORZUCONY — nie celujemy już w najsłabsze
+   laptopy. Wydajność wciąż mierzymy (licznik fps, brak regresji > 5%), ale względem klasy RTX, co
+   luzuje budżet trójkątów i efektów (np. model Bf 109 ~411k tri × 8 maszyn jest akceptowalny na RTX;
+   na zintegrowanej grafice — nie). Optymalizacje assetów (Draco/WebP, kompresja pobierania) zostają,
+   bo dotyczą czasu ładowania i pasma, nie tylko GPU.
 8. **Bezpieczeństwo**: serwer waliduje każdy input (zakresy, rate limit, rozmiar pakietu);
    nick sanityzowany; brak danych osobowych; limit połączeń per IP.
 

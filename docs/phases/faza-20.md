@@ -30,7 +30,8 @@ chmury wolumetryczne, dynamiczna pogoda.
 
 ## Kryteria ukończenia
 
-- [ ] 60 fps na zintegrowanej grafice — zmierzone PRZED i PO (brak regresji > 5%)
+- [ ] 60 fps na nowoczesnym GPU (NVIDIA RTX) — zmierzone PRZED i PO (brak regresji > 5%); cel
+  sprzętowy zmieniony 2026-06-20 (porzucony budżet zintegrowanej grafiki, patrz PLAN.md ryzyko #7)
 - [ ] Zero zmian w `shared/world/terrain.ts` (git diff pusty dla tego pliku)
 - [ ] Wszystkie testy zielone bez modyfikacji
 - [ ] Chmury: schowanie się w chmurze utrudnia namiar (znacznik HUD przygasa)

@@ -39,7 +39,8 @@ Poza zakresem: muzyka, voice lines, doppler (nice-to-have: backlog).
 - [ ] Przeciwnik strzelający za plecami jest słyszalny kierunkowo
 - [ ] Wszystkie sample wpisane w LICENSES.md
 - [ ] Brak błędów autoplay w konsoli (Chrome/Firefox/Edge)
-- [ ] 60 fps utrzymane przy pełnej walce 8 samolotów z efektami
+- [ ] 60 fps utrzymane przy pełnej walce 8 samolotów z efektami (GPU klasy NVIDIA RTX — cel sprzętowy
+  od 2026-06-20, patrz PLAN.md ryzyko #7)
 - [ ] typecheck + test + lint zielone; commit `faza-21`; memory zapisane
 
 ## Pułapki
