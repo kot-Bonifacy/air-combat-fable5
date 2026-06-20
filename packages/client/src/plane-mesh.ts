@@ -59,6 +59,20 @@ interface ModelSpec {
    * — bbox piasty + oś +Z (Spitfire, sprawdzone). Wymaga niepustego `bladeNodes`.
    */
   propAxisFromGeometry?: boolean;
+  /**
+   * Wymusza metaliczny workflow (jak Spitfire) na materiałach modelu. Fix „płaskiego" matowego
+   * dielektryka: pod IBL (`RoomEnvironment`) + `AmbientLight` bez tone mappingu jasny dielektryk
+   * dostaje wielkie, jednorodne wypełnienie rozproszone, które topi kierunkowe N·L → płasko i
+   * jasno. Metal nie ma składowej diffuse, więc nie zbiera tego wypełnienia i czyta się z odbić +
+   * słońca (tak działa Spitfire — `metal=1`). Materiały pasujące do `keepDielectricRe` (szyba,
+   * opony) ZOSTAJĄ dielektrykami. Czyści też `metalnessMap` — inaczej tekstura metallicRoughness
+   * (kanał B≈0 po konwersji ze spec-gloss) cofnęłaby metalness do 0. Spitfire tego nie ustawia
+   * (już jest metaliczny natywnie). `roughness` (gdy podane) matuje metal do poziomu malowanego
+   * płatowca: ustawia stałą szorstkość i CZYŚCI `roughnessMap` — mapa z konwersji ze spec-gloss
+   * (glossiness=1 → roughness≈0) robiła z metalu lustro/chrom, a czynnika nie da się podbić ponad
+   * mapę (mnożą się). Bez `roughness` szorstkość zostaje z modelu.
+   */
+  forceMetallic?: { keepDielectricRe: RegExp; roughness?: number };
 }
 
 /** Węzły dopasowane do tych wzorców znikają (podwozie schowane w locie) — wspólne dla typów. */
@@ -104,7 +118,12 @@ const MODEL_SPECS: Record<PlaneType, ModelSpec> = {
   // łopat liczona z faktycznej geometrii → śmigło kręci się współosiowo.
   bf109: {
     url: '/models/bf109/bf109-web.glb',
-    fixEulerDeg: { x: 0, y: 0, z: 0 },
+    // Pitch +13°: model ma kadłub zadarty nosem w górę względem +Z (zmierzone z nieskompresowanej
+    // geometrii: linia nos→ogon ~12°, linia środkowa kadłuba ~13°, oś ciągu/tarcza śmigła ~16.5°).
+    // Bez korekty samolot leci w locie poziomym z nosem ~15° w górę. +13° prostuje kadłub do
+    // poziomu (zostaje naturalne lekkie zadarcie od kąta natarcia). Śmigło dalej kręci się
+    // współosiowo: propAxisFromGeometry liczy oś PO tym obrocie (zob. niżej).
+    fixEulerDeg: { x: 13, y: 0, z: 0 },
     gearNodeNames: new Set<string>([
       'Cube032',
       'Cube034',
@@ -123,11 +142,19 @@ const MODEL_SPECS: Record<PlaneType, ModelSpec> = {
     hubNode: 'Cube030',
     bladeNodes: new Set<string>(['Cube036', 'Cube037', 'Cube038']),
     propAxisFromGeometry: true,
+    // Model pochodzi z workflow spec-gloss (specular=[1,1,1]); konwersja na metal-rough zrobiła z
+    // niego matowy dielektryk, który pod naszym IBL traci cieniowanie. Wymuszamy metal jak Spitfire;
+    // szyba (109_Glass) i opony (Tire) zostają dielektrykami. roughness ~0.45 = malowany metal z
+    // wyczuwalnym połyskiem (0.1≈chrom za błyszczący, 0.6 wychodził za płaski — okno jest wąskie).
+    forceMetallic: { keepDielectricRe: /glass|tire|tyre/i, roughness: 0.45 },
   },
 };
 
 /** Dev: ustaw na true, by wypisać drzewo węzłów modelu (np. po podmianie .glb). */
 const DUMP_NODES = false;
+
+/** Dev: ustaw na true, by wypisać materiały + kondycję normalnych po dekompresji (diagnostyka oświetlenia). */
+const DIAG_MATERIALS = false;
 
 // Obroty śmigła [obr./s] — czysto wizualne. Trzymane wysoko (wrażenie mocy);
 // aliasing (wagon-wheel) maskujemy wygaszaniem łopat do półprzezroczystej tarczy.
@@ -216,6 +243,78 @@ function dumpNodeTree(root: Object3D): void {
     lines.push(`${'  '.repeat(depth)}${o.name} [${o.type}]`);
   });
   console.info(`[plane-mesh] węzły modelu:\n${lines.join('\n')}`);
+}
+
+/**
+ * Dev: wypisz materiały modelu (typ + parametry PBR) i kondycję normalnych po dekompresji Draco.
+ * Diagnostyka „płaskiego" oświetlenia: ujawnia metalness=1 (lustro pod IBL), zepsute/zerowe normalne
+ * (stała wartość N·L), emissive (fullbright) i nadmiarowe envMapIntensity.
+ */
+function diagnoseModel(root: Object3D, label: string): void {
+  const matLines: string[] = [];
+  const seen = new Set<Material>();
+  let nCount = 0;
+  let nZero = 0;
+  let nNaN = 0;
+  let lenMin = Infinity;
+  let lenMax = -Infinity;
+  const samples: string[] = [];
+  let hasNormal = false;
+  root.traverse((o) => {
+    if (!(o instanceof Mesh)) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (seen.has(m)) continue;
+      seen.add(m);
+      const p = m as Partial<{
+        color: { getHexString(): string };
+        emissive: { getHexString(): string };
+        metalness: number;
+        roughness: number;
+        ior: number;
+        envMapIntensity: number;
+        emissiveIntensity: number;
+        specularIntensity: number;
+        map: unknown;
+        normalMap: unknown;
+        flatShading: boolean;
+        vertexColors: boolean;
+      }>;
+      matLines.push(
+        `  "${m.name}" [${m.type}] col=${p.color ? '#' + p.color.getHexString() : '—'} ` +
+          `metal=${String(p.metalness)} rough=${String(p.roughness)} ior=${String(p.ior)} ` +
+          `envInt=${String(p.envMapIntensity)} emi=${p.emissive ? '#' + p.emissive.getHexString() : '—'}×${String(p.emissiveIntensity)} ` +
+          `map=${String(!!p.map)} nMap=${String(!!p.normalMap)} specInt=${String(p.specularIntensity)} ` +
+          `flat=${String(p.flatShading)} vCol=${String(p.vertexColors)}`,
+      );
+    }
+    const nAttr = o.geometry.getAttribute('normal');
+    if (!nAttr) return;
+    hasNormal = true;
+    const step = Math.max(1, Math.floor(nAttr.count / 4));
+    for (let i = 0; i < nAttr.count; i++) {
+      const x = nAttr.getX(i);
+      const y = nAttr.getY(i);
+      const z = nAttr.getZ(i);
+      const len = Math.hypot(x, y, z);
+      nCount++;
+      if (Number.isNaN(len)) {
+        nNaN++;
+      } else {
+        if (len < 1e-4) nZero++;
+        if (len < lenMin) lenMin = len;
+        if (len > lenMax) lenMax = len;
+      }
+      if (i % step === 0 && samples.length < 5) {
+        samples.push(`(${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)})`);
+      }
+    }
+  });
+  console.info(`[plane-mesh DIAG] ${label} materiały:\n${matLines.join('\n')}`);
+  console.info(
+    `[plane-mesh DIAG] ${label} normalne: attr=${String(hasNormal)} n=${String(nCount)} ` +
+      `zero=${String(nZero)} NaN=${String(nNaN)} dł=[${lenMin.toFixed(3)}..${lenMax.toFixed(3)}] próbki=${samples.join(' ')}`,
+  );
 }
 
 /**
@@ -436,28 +535,43 @@ async function loadPlaneModel(
   const model = gltf.scene;
   model.updateMatrixWorld(true);
 
-  // Auto-skala + wyśrodkowanie liczone z bbox w jednostkach modelu (jednorazowo).
+  // Auto-skala liczona z bbox w jednostkach modelu (jednorazowo).
   const box = new Box3().setFromObject(model);
   const size = box.getSize(new Vector3());
-  const center = box.getCenter(new Vector3());
   // myśliwiec: rozpiętość > długość, więc większy wymiar poziomy = rozpiętość,
   // niezależnie od tego, którą osią poziomą zorientowany jest model.
   const horizontalSpan = Math.max(size.x, size.z) || 1;
   const scale = targetWingspanM / horizontalSpan;
 
   model.scale.setScalar(scale);
-  // po przeskalowaniu środek przesuwa się o center*scale → cofamy, by pivot
-  // (origin grupy, którym kręci fizyka) leżał w środku samolotu
-  model.position.copy(center).multiplyScalar(-scale);
   model.rotation.set(
     spec.fixEulerDeg.x * DEG_TO_RAD,
     spec.fixEulerDeg.y * DEG_TO_RAD,
     spec.fixEulerDeg.z * DEG_TO_RAD,
   );
+  // Wyśrodkowanie PO skali+obrocie: pivot (origin grupy, którym kręci fizyka i wokół którego
+  // krąży kamera/od którego liczone są smugacze) ma leżeć w środku samolotu. Środek liczony
+  // przed obrotem nie pasuje, gdy fixEuler≠0 — obrót miesza osie i przesuwa bbox (Bf 109 ma
+  // korektę pitch ~13°, patrz ModelSpec). Dla fixEuler=0 (Spitfire) wynik bez zmian.
+  model.updateMatrixWorld(true);
+  model.position.sub(new Box3().setFromObject(model).getCenter(new Vector3()));
 
   group.add(model);
   group.remove(placeholder);
   disposePlaceholder(placeholder);
+
+  // Naprawa oświetlenia: zneutralizuj absurdalny ior wstrzyknięty przez kompresję (patrz helper).
+  const iorFixed = sanitizeMaterialIor(model);
+  // Wymuś metal (jak Spitfire) na płatowcach matowych po konwersji ze spec-gloss (patrz forceMetallic).
+  const metalized = spec.forceMetallic
+    ? applyMetallicTreatment(
+        model,
+        spec.forceMetallic.keepDielectricRe,
+        spec.forceMetallic.roughness,
+      )
+    : 0;
+
+  if (import.meta.env.DEV && DIAG_MATERIALS) diagnoseModel(model, spec.url);
 
   if (import.meta.env.DEV && DUMP_NODES) dumpNodeTree(model);
 
@@ -509,7 +623,8 @@ async function loadPlaneModel(
   if (import.meta.env.DEV) {
     console.info(
       `[plane-mesh] ${spec.url}: podwozie ukryte ${String(gearHidden)} węzł(y); ` +
-        `śmigło ${String(propNodes.length)} węzł(y)${propNodes.length ? '' : ' (wskaż je: DUMP_NODES)'}`,
+        `śmigło ${String(propNodes.length)} węzł(y)${propNodes.length ? '' : ' (wskaż je: DUMP_NODES)'}; ` +
+        `ior naprawione w ${String(iorFixed)} materiał(ach); metal wymuszony w ${String(metalized)} materiał(ach)`,
     );
   }
 }
@@ -518,6 +633,78 @@ async function loadPlaneModel(
 function isAncestor(maybe: Object3D, node: Object3D): boolean {
   for (let p = node.parent; p; p = p.parent) if (p === maybe) return true;
   return false;
+}
+
+/** Powyżej tego ior traktujemy jako artefakt eksportu/kompresji (diament ~2.42, szkło ~1.5). */
+const MAX_PHYSICAL_IOR = 2.5;
+/** Fizyczny ior dielektryka = wartość domyślna three = stan źródłowego glTF Bf 109. */
+const DEFAULT_IOR = 1.5;
+
+/**
+ * Naprawia oświetlenie Bf 109. Krok kompresji (Draco/WebP) wstrzyknął do KAŻDEGO materiału
+ * `KHR_materials_ior` z `ior: 1000` (źródłowy `scene.gltf` tego rozszerzenia NIE ma). ior=1000
+ * daje współczynnik Fresnela F0 = ((ior−1)/(ior+1))² ≈ 0.996 → materiał staje się niemal
+ * idealnym lustrem: pod neutralną mapą otoczenia (`RoomEnvironment`/PMREM) odbija jednorodne tło
+ * i wygląda „tak samo oświetlony" niezależnie od kierunku słońca, bo ginie cieniowanie rozproszone
+ * (N·L). Przywrócenie fizycznego ior=1.5 wskrzesza cieniowanie kierunkowe (jak w Spitfire).
+ * Generyczne: MeshStandardMaterial nie ma pola `ior`, więc Spitfire jest nietknięty.
+ */
+function sanitizeMaterialIor(root: Object3D): number {
+  let fixed = 0;
+  root.traverse((o) => {
+    if (!(o instanceof Mesh)) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      const phys = m as { ior?: number };
+      if (typeof phys.ior === 'number' && phys.ior > MAX_PHYSICAL_IOR) {
+        phys.ior = DEFAULT_IOR;
+        fixed++;
+      }
+    }
+  });
+  return fixed;
+}
+
+/**
+ * Wymusza metaliczny workflow na materiałach (poza `keepDielectricRe`). Patrz `ModelSpec.forceMetallic`
+ * — fix matowego dielektryka tracącego cieniowanie pod IBL bez tone mappingu. Wyczyszczenie
+ * `metalnessMap` zmienia definicje shadera, więc ustawiamy `needsUpdate` (rekompilacja, jednorazowo).
+ */
+function applyMetallicTreatment(
+  root: Object3D,
+  keepDielectricRe: RegExp,
+  roughness: number | undefined,
+): number {
+  let changed = 0;
+  root.traverse((o) => {
+    if (!(o instanceof Mesh)) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (keepDielectricRe.test(m.name)) continue;
+      const phys = m as {
+        metalness?: number;
+        roughness?: number;
+        metalnessMap?: unknown | null;
+        roughnessMap?: unknown | null;
+        needsUpdate?: boolean;
+      };
+      if (typeof phys.metalness !== 'number') continue;
+      phys.metalness = 1;
+      if (phys.metalnessMap) {
+        phys.metalnessMap = null;
+        phys.needsUpdate = true;
+      }
+      if (roughness !== undefined) {
+        phys.roughness = roughness;
+        if (phys.roughnessMap) {
+          phys.roughnessMap = null;
+          phys.needsUpdate = true;
+        }
+      }
+      changed++;
+    }
+  });
+  return changed;
 }
 
 /**
