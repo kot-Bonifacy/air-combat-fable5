@@ -27,11 +27,21 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 | 19a   | **Drugi samolot (shared)**: Bf 109 E-3, uzbrojenie w grupach, balistyka per-pocisk, złote testy `describe.each` | ✅ 424 testy zielone (`bf109-e.json`, asymetria turn↔energy) |
 | 19b   | **Drugi samolot (integracja)**: protokół v4 (bajt typu), per-player plane serwer, rejestr meshy + model 3D Bf 109, wybór w lobby, HUD typ wroga, balans 1v1 | ✅ 440 testów zielone; ⏳ user: playtest balansu + weryfikacja wzrokowa modelu + smoke v4 |
 
-**Protokół: `PROTOCOL_VERSION = 4`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu;
-fazy 15–18 i P1–P5 bez bumpu — addytywne JSON albo usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
+**Protokół: `PROTOCOL_VERSION = 5`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
+w sesji poprawek 2026-06-21 +1 bajt amunicji GRUPY WTÓRNEJ = działko 20 mm Bf 109; fazy 15–18, P1–P5
+i czat poczekalni bez bumpu — addytywne JSON albo usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
+
+**Sesja poprawek 2026-06-21 (poza fazami, 6 zgłoszeń usera — 458 testów zielone):** (1) pole nicku/czatu
+— `KeyboardInput` nie przechwytuje WSADQE, gdy fokus w polu tekstowym (`isEditingText`); (2) ekran ładowania
+online czeka na modele 3D WSZYSTKICH samolotów meczu + postęp „X/Y" (teren generuje się natychmiast, .glb
+sekundy → bryły zastępcze); (3) ping w HUD odświeżany co ~1 s; (4) boty „trudne" zrywają w GÓRĘ-w-bok 0,5 s
+po trafieniu (`hitReactionDelayS` w JSON tylko trudny; pull MUSI mieć dominującą pionę, bo instruktor bramkuje
+ciągnięcie błędem przechylenia); (5) nazwiska botów wg samolotu (PL/Spitfire, DE/Bf 109; `nextName(type)`+`refreshBotName`)
+i wyrównanie listy uczestników (kolumna auto-dopasowana + przycinanie); (6) licznik amunicji 20 mm (protokół v5).
 
 ⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
-→ overlay obserwatora; drużynowy; v4 z wyborem samolotu) + playtest balansu 1v1 Spitfire↔Bf 109 +
+→ overlay obserwatora; drużynowy; v5 z wyborem samolotu + licznik 20 mm + ekran ładowania + zryw botów) +
+playtest poprawek 2026-06-21 (zryw botów „trudnych", nazwiska PL/DE) + playtest balansu 1v1 Spitfire↔Bf 109 +
 weryfikacja wzrokowa modelu Bf 109 (orientacja/śmigło/podwozie — fixEuler best-guess) + zaległe pomiary VPS —
 pełna lista w `docs/parytet-mp-sp.md` („Otwarte sprawy"). Brak SSH z sesji.
 

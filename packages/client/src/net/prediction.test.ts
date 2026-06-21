@@ -48,6 +48,7 @@ function entityOf(s: PlaneState): EntitySnapshot {
     throttle: s.throttle,
     healthFrac: 1,
     ammoFrac: 1,
+    ammoSecondaryFrac: 1,
     planeType: 'spitfire',
   };
 }

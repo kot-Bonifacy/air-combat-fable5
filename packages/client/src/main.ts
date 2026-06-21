@@ -154,6 +154,9 @@ const playerHealth = player.health;
 const combatRng = player.rng;
 const demands = player.demands;
 const AMMO_MAX = totalAmmo(plane.armament);
+// pełny zapas grupy WTÓRNEJ (działko 20 mm Bf 109); Spitfire ma jedną grupę → 0 (brak licznika)
+const secondaryGroup = plane.armament.groups[1];
+const SECONDARY_AMMO_MAX = secondaryGroup ? secondaryGroup.ammoPerGun * secondaryGroup.muzzles.length : 0;
 
 const control = new PilotControl();
 const deflections = createControlDeflections();
@@ -1389,6 +1392,8 @@ renderer.setAnimationLoop((timeMs) => {
     controlMode: control.mode,
     ammo: fireControl.ammoRemaining,
     ammoMax: AMMO_MAX,
+    secondaryAmmo: SECONDARY_AMMO_MAX > 0 ? (fireControl.groups[1]?.ammoRemaining ?? 0) : undefined,
+    secondaryAmmoMax: SECONDARY_AMMO_MAX > 0 ? SECONDARY_AMMO_MAX : undefined,
     extraLines: [
       '',
       ...(gameMode === 'combat' ? combatScoreLines() : []),

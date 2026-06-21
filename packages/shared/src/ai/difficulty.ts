@@ -56,6 +56,8 @@ export interface BotTuning {
   groundClimbRad: number;
   /** Maksymalny kąt zniżania dozwolony wysoko nad terenem [rad] (sufit AGL go zaostrza nisko). */
   maxDiveRad: number;
+  /** Czas trwania zrywu obronnego po trafieniu [s] — wspólny dla poziomów, które reagują na ostrzał. */
+  hitReactionDurationS: number;
 }
 
 /** Degradacja per poziom trudności (SI). */
@@ -72,6 +74,9 @@ export interface BotDifficulty {
   fireRangeM: number;
   /** Stożek otwarcia ognia [rad]: nos musi być w nim względem rozwiązania wyprzedzenia. */
   fireConeRad: number;
+  /** Opóźnienie zrywu obronnego po otrzymaniu trafienia [s]; 0 = poziom nie reaguje na ostrzał
+   *  (tylko „trudny" jink-uje po trafieniu — niższe poziomy lecą prosto). */
+  hitReactionDelayS: number;
 }
 
 export type DifficultyLevel = 'latwy' | 'normalny' | 'trudny';
@@ -107,6 +112,7 @@ const TUNING_RANGES: Record<string, readonly [min: number, max: number]> = {
   groundLookAheadS: [0.5, 15],
   groundClimbDeg: [5, 60],
   maxDiveDeg: [15, 80],
+  hitReactionDurationS: [0.3, 6],
 };
 
 const LEVEL_RANGES: Record<string, readonly [min: number, max: number]> = {
@@ -116,6 +122,7 @@ const LEVEL_RANGES: Record<string, readonly [min: number, max: number]> = {
   throttle: [0.3, 1],
   fireRangeM: [100, 1000],
   fireConeDeg: [0.5, 20],
+  hitReactionDelayS: [0, 3],
 };
 
 function num(obj: Record<string, unknown>, key: string, prefix: string, problems: string[]): number {
@@ -129,6 +136,22 @@ function num(obj: Record<string, unknown>, key: string, prefix: string, problems
     problems.push(`${prefix}${key}: ${String(v)} poza zakresem sanity [${String(range[0])}, ${String(range[1])}]`);
   }
   return v;
+}
+
+/**
+ * Wariant `num` dla pola OPCJONALNEGO: gdy klucza nie ma (undefined), zwraca `fallback`
+ * bez zgłaszania problemu (zgodność wstecz — stare configi/testy bez nowego pola). Gdy pole
+ * jest obecne, waliduje jak `num` (typ + zakres sanity).
+ */
+function optNum(
+  obj: Record<string, unknown>,
+  key: string,
+  prefix: string,
+  problems: string[],
+  fallback: number,
+): number {
+  if (obj[key] === undefined) return fallback;
+  return num(obj, key, prefix, problems);
 }
 
 function asObject(value: unknown, label: string, problems: string[]): Record<string, unknown> {
@@ -184,6 +207,7 @@ export function loadBotConfig(raw: unknown, source = 'difficulty.json'): BotConf
     groundLookAheadS: num(t, 'groundLookAheadS', 'tuning.', problems),
     groundClimbRad: num(t, 'groundClimbDeg', 'tuning.', problems) * DEG_TO_RAD,
     maxDiveRad: num(t, 'maxDiveDeg', 'tuning.', problems) * DEG_TO_RAD,
+    hitReactionDurationS: optNum(t, 'hitReactionDurationS', 'tuning.', problems, 2.2),
   };
 
   const levelsRaw = asObject(root['levels'], 'levels', problems);
@@ -200,6 +224,7 @@ export function loadBotConfig(raw: unknown, source = 'difficulty.json'): BotConf
       throttle: num(l, 'throttle', prefix, problems),
       fireRangeM: num(l, 'fireRangeM', prefix, problems),
       fireConeRad: num(l, 'fireConeDeg', prefix, problems) * DEG_TO_RAD,
+      hitReactionDelayS: optNum(l, 'hitReactionDelayS', prefix, problems, 0),
     };
   }
 

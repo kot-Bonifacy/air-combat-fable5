@@ -96,6 +96,7 @@ export class Lobby {
     const room = new GameRoom(this.uniqueCode(), this.seed, this.onRoomError, this.onRoomInfo);
     // tryb meczu MUSI być ustawiony PRZED addPlayer: enterWorld przydziela frakcję wg trybu (faza 18)
     room.mode = clampMatchMode(mode);
+    room.difficulty = difficulty; // poziom botów pokoju (zmienialny później przez hosta w poczekalni)
     this.rooms.set(room.code, room);
     const playerId = room.addPlayer(nick, token, member);
     this.sessions.set(token, room.code);

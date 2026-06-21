@@ -13,6 +13,7 @@ import {
   type PilotDemands,
   type PlaneConfig,
   type PlaneState,
+  type PlaneType,
   type Terrain,
 } from '@air-combat/shared';
 
@@ -50,24 +51,42 @@ const PATROL_WAYPOINTS: readonly Vector3[] = [
   new Vector3(ZONE_CENTER_X_M, ZONE_LOITER_ALT_M, ZONE_CENTER_Z_M),
 ];
 
-/**
- * Pula nicków botów — historyczni asi myśliwscy II wojny (krótkie nazwiska, by zmieścić
- * prefiks). Przydzielane po kolei; po wyczerpaniu zawijają z numerem (unikalność w HUD).
- */
-const BOT_NAMES: readonly string[] = [
+// Pule nicków botów wg samolotu (decyzja użytkownika 2026-06-21): polsko brzmiące nazwiska na
+// Spitfire'ach (dywizjony RAF z polskimi pilotami), niemiecko brzmiące na Bf 109 — żeby skład
+// pasował do strony konfliktu. Historyczni asi (krótkie nazwiska, by zmieścić prefiks [BOT]).
+// Przydzielane po kolei z osobnym kursorem per pula; po wyczerpaniu zawijają z numerem.
+const BOT_NAMES_PL: readonly string[] = [
   'Skalski',
   'Urbanowicz',
-  'Bader',
-  'Tuck',
-  'Malan',
-  'Lacey',
-  'Gabreski',
-  'Beurling',
-  'Johnson',
-  'Krol',
-  'Duke',
-  'Sakai',
+  'Król',
+  'Horbaczewski',
+  'Gabszewicz',
+  'Żumbach',
+  'Łokuciewski',
+  'Główczyński',
+  'Drobiński',
+  'Ferić',
 ];
+const BOT_NAMES_DE: readonly string[] = [
+  'Marseille',
+  'Galland',
+  'Mölders',
+  'Hartmann',
+  'Rall',
+  'Barkhorn',
+  'Steinhoff',
+  'Priller',
+  'Nowotny',
+  'Lützow',
+];
+
+const BOT_NAMES_PL_SET = new Set(BOT_NAMES_PL);
+const BOT_NAMES_DE_SET = new Set(BOT_NAMES_DE);
+
+/** Pula nicków dla danego typu samolotu: Bf 109 → niemieckie, reszta (Spitfire) → polskie. */
+function namePoolFor(type: PlaneType): readonly string[] {
+  return type === 'bf109' ? BOT_NAMES_DE : BOT_NAMES_PL;
+}
 
 /** Sterowanie bota wyznaczone w ticku myślenia, powtarzane do kolejnej decyzji. */
 export interface BotControl {
@@ -84,7 +103,8 @@ const NO_CONTROL: BotControl = { throttle: BOT_CONFIG.tuning.cruiseThrottle, fir
 
 export class BotManager {
   private readonly runtimes = new Map<number, BotRuntime>();
-  private nameCursor = 0;
+  /** Osobny kursor nadawania per pula (PL/DE), żeby numeracja nadwyżek była ciągła w obu. */
+  private readonly nameCursors = new Map<readonly string[], number>();
 
   get count(): number {
     return this.runtimes.size;
@@ -94,12 +114,28 @@ export class BotManager {
     return this.runtimes.has(id);
   }
 
-  /** Kolejny nick z puli z prefiksem [BOT]; nadwyżkę numeruje (np. „[BOT] Bader 2"). */
-  nextName(): string {
-    const i = this.nameCursor++;
-    const base = BOT_NAMES[i % BOT_NAMES.length];
-    const round = Math.floor(i / BOT_NAMES.length);
+  /** Kolejny nick z puli właściwej dla typu samolotu, z prefiksem [BOT]; nadwyżkę numeruje
+   *  (np. „[BOT] Galland 2"). Bf 109 → pula niemiecka, Spitfire → polska (skład pasuje do strony). */
+  nextName(type: PlaneType): string {
+    const pool = namePoolFor(type);
+    const i = this.nameCursors.get(pool) ?? 0;
+    this.nameCursors.set(pool, i + 1);
+    const base = pool[i % pool.length];
+    const round = Math.floor(i / pool.length);
     return round === 0 ? `[BOT] ${base}` : `[BOT] ${base} ${String(round + 1)}`;
+  }
+
+  /** Czy nick bota należy już do puli właściwej dla typu (nie trzeba go zmieniać). Pozwala
+   *  utrzymać stabilny nick między respawnami i nadać nowy dopiero, gdy zmieni się strona. */
+  nickMatchesType(nick: string, type: PlaneType): boolean {
+    const set = type === 'bf109' ? BOT_NAMES_DE_SET : BOT_NAMES_PL_SET;
+    const base = nick.replace(/^\[BOT\]\s+/, '').replace(/\s+\d+$/, '');
+    return set.has(base);
+  }
+
+  /** Bota trafiono (resolveHits) — przekazuje sygnał do kontrolera AI (zryw na „trudnym"). */
+  notifyHit(id: number): void {
+    this.runtimes.get(id)?.bot.notifyHit();
   }
 
   /** Tworzy kontroler AI dla istniejącej już encji pokoju. */

@@ -17,7 +17,9 @@ import {
   encodeSnapshot,
   eventsByteLength,
   isValidRoomCode,
+  sanitizeChat,
   sanitizeNick,
+  MAX_CHAT_LENGTH,
   MAX_NICK_LENGTH,
   lifePhaseFromCode,
   lifePhaseToCode,
@@ -131,13 +133,15 @@ function makeEntity(
   fire = { ammoRemaining: 2400 },
   ammoMax = 2400,
   planeType: PlaneType = 'spitfire',
+  fireSecondary: { ammoRemaining: number } | null = null,
+  ammoSecondaryMax = 0,
 ): SnapshotEntitySource {
   const state = createPlaneState();
   state.position.set(1234.5, 678.25, -9000.75);
   state.orientation.set(0.1, 0.2, 0.3, 0.9).normalize();
   state.velocity.set(120, -5, 30);
   state.throttle = 0.8;
-  return { id, state: Object.assign(state, over), health, fire, ammoMax, planeType };
+  return { id, state: Object.assign(state, over), health, fire, ammoMax, fireSecondary, ammoSecondaryMax, planeType };
 }
 
 describe('protokół SNAPSHOT round-trip', () => {
@@ -187,6 +191,17 @@ describe('protokół SNAPSHOT round-trip', () => {
     encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, [quarter]);
     const snap = decodeSnapshot(new DataView(buf.buffer));
     expect(snap.entities[0]?.ammoFrac).toBeCloseTo(0.25, 2);
+  });
+
+  it('koduje ułamek amunicji grupy wtórnej — działko 20 mm (protokół v5)', () => {
+    // Bf 109: 120 szt. 20 mm, połowa zużyta → ammoSecondaryFrac ≈ 0.5; Spitfire (brak grupy) → 0
+    const bf = makeEntity(1, {}, { hp: 110, maxHp: 110 }, { ammoRemaining: 2120 }, 2120, 'bf109', { ammoRemaining: 60 }, 120);
+    const spit = makeEntity(0);
+    const buf = new Uint8Array(snapshotByteLength(2));
+    encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, [bf, spit]);
+    const snap = decodeSnapshot(new DataView(buf.buffer));
+    expect(snap.entities[0]?.ammoSecondaryFrac).toBeCloseTo(0.5, 2);
+    expect(snap.entities[1]?.ammoSecondaryFrac).toBe(0); // Spitfire: brak grupy wtórnej
   });
 
   it('zachowuje typ samolotu każdej encji (protokół v4)', () => {
@@ -280,6 +295,12 @@ describe('wiadomości kontrolne (JSON)', () => {
     expect(parseControlMessage(JSON.stringify({ t: 'matchStarted' }))?.t).toBe('matchStarted');
   });
 
+  it('parsuje wiadomości poczekalni: updateRoom, chatSend i chat', () => {
+    expect(parseControlMessage(JSON.stringify({ t: 'updateRoom', mode: 'team', bots: 3 }))?.t).toBe('updateRoom');
+    expect(parseControlMessage(JSON.stringify({ t: 'chatSend', text: 'cześć' }))?.t).toBe('chatSend');
+    expect(parseControlMessage(JSON.stringify({ t: 'chat', id: 1, nick: 'As', text: 'hej' }))?.t).toBe('chat');
+  });
+
   it('zwraca null dla nie-JSON i nieznanego typu', () => {
     expect(parseControlMessage('ping')).toBeNull();
     expect(parseControlMessage(JSON.stringify({ t: 'cokolwiek' }))).toBeNull();
@@ -303,6 +324,30 @@ describe('sanitizeNick', () => {
     expect(sanitizeNick('')).toBe('Pilot');
     expect(sanitizeNick('<<<>>>')).toBe('Pilot');
     expect(sanitizeNick(42)).toBe('Pilot');
+  });
+});
+
+describe('sanitizeChat', () => {
+  it('przepuszcza zwykły tekst, interpunkcję i diakrytyki; zwija białe znaki', () => {
+    expect(sanitizeChat('Cześć! Lecimy? :)')).toBe('Cześć! Lecimy? :)');
+    expect(sanitizeChat('  dużo   spacji  ')).toBe('dużo spacji');
+  });
+
+  it('wycina znaki sterujące i nowe linie (bez wstrzykiwania wielu linii)', () => {
+    expect(sanitizeChat('a\nb\tc')).toBe('abc');
+    expect(sanitizeChat('x y')).toBe('xy'); // ↑ znak między x a y to znak sterujący (usuwany)
+  });
+
+  it('NIE jest źródłem ochrony XSS (znaki HTML zostają — render robi textContent)', () => {
+    // celowo: whitelist nie wycina <>&, bo bezpieczeństwo zapewnia textContent po stronie UI
+    expect(sanitizeChat('<b>hej</b>')).toBe('<b>hej</b>');
+  });
+
+  it('przycina do MAX_CHAT_LENGTH i daje pusty łańcuch dla śmieci', () => {
+    expect(sanitizeChat('x'.repeat(500)).length).toBeLessThanOrEqual(MAX_CHAT_LENGTH);
+    expect(sanitizeChat('   ')).toBe('');
+    expect(sanitizeChat(42)).toBe('');
+    expect(sanitizeChat(null)).toBe('');
   });
 });
 

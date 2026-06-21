@@ -22,11 +22,24 @@ export interface HudData {
   ammo: number;
   /** Pełny zapas amunicji (do wyróżnienia stanu niskiego). */
   ammoMax: number;
+  /** Osobny licznik amunicji grupy wtórnej (np. działko 20 mm Bf 109); pomijany, gdy undefined. */
+  secondaryAmmo?: number;
+  /** Pełny zapas grupy wtórnej (do wyróżnienia stanu niskiego). */
+  secondaryAmmoMax?: number;
+  /** Etykieta wiersza grupy wtórnej (np. „20 mm"). */
+  secondaryLabel?: string;
   extraLines: readonly string[];
 }
 
 /** Próg ostrzeżenia o niskiej amunicji (udział pełnego zapasu). */
 const LOW_AMMO_RATIO = 0.15;
+
+/** Sufiks ostrzeżenia o stanie amunicji (puste / mało) — wspólny dla broni głównej i wtórnej. */
+function ammoWarning(ammo: number, ammoMax: number): string {
+  if (ammo === 0) return '   *** PUSTE ***';
+  if (ammo <= ammoMax * LOW_AMMO_RATIO) return '   ! mało !';
+  return '';
+}
 
 const PITCH_PX_PER_RAD = 120;
 
@@ -61,12 +74,13 @@ export class Hud {
       data.gLimitG < data.nAvailG - 0.1 && data.blackoutFactor > 0.02
         ? `   G-LOC ${data.gLimitG.toFixed(1)} G`
         : '';
-    const ammoWarn =
-      data.ammo === 0
-        ? '   *** PUSTE ***'
-        : data.ammo <= data.ammoMax * LOW_AMMO_RATIO
-          ? '   ! mało !'
-          : '';
+    const ammoWarn = ammoWarning(data.ammo, data.ammoMax);
+    // osobny licznik grupy wtórnej (działko 20 mm Bf 109) — tylko gdy samolot ją ma
+    const secondaryRow =
+      data.secondaryAmmo !== undefined && data.secondaryAmmoMax !== undefined
+        ? hudRow(data.secondaryLabel ?? '20 mm', String(data.secondaryAmmo), `/ ${String(data.secondaryAmmoMax)}`) +
+          ammoWarning(data.secondaryAmmo, data.secondaryAmmoMax)
+        : null;
     this.textEl.textContent = [
       hudRow('IAS', data.iasKmh.toFixed(0), 'km/h'),
       hudRow('TAS', data.tasKmh.toFixed(0), 'km/h'),
@@ -75,6 +89,7 @@ export class Hud {
       hudRow('n', data.nG.toFixed(1), 'G') + gLocText,
       hudRow('ster', data.controlMode),
       hudRow('amun.', String(data.ammo), `/ ${String(data.ammoMax)}`) + ammoWarn,
+      ...(secondaryRow !== null ? [secondaryRow] : []),
       ...data.extraLines,
     ].join('\n');
 

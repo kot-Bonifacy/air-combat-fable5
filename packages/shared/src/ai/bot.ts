@@ -114,6 +114,12 @@ export class Bot {
   private noiseTimerS = 0;
   private jinkTimeS = 0;
   private waypointIndex = 0;
+  // reakcja na trafienie (tylko poziomy z difficulty.hitReactionDelayS > 0, np. „trudny"):
+  // po otrzymaniu ostrzału bot odczekuje delay, po czym wykonuje krótki zryw obronny w którąś
+  // stronę. delayS > 0 = odliczanie do zrywu; breakRemainingS > 0 = trwa zryw (override sterowania).
+  private hitDelayRemainingS = 0;
+  private hitBreakRemainingS = 0;
+  private hitBreakSign: 1 | -1 = 1;
 
   constructor(
     private readonly tuning: BotTuning,
@@ -136,6 +142,20 @@ export class Bot {
     this.noiseTimerS = 0;
     this.jinkTimeS = 0;
     this.waypointIndex = 0;
+    this.hitDelayRemainingS = 0;
+    this.hitBreakRemainingS = 0;
+  }
+
+  /**
+   * Sygnał z serwera, że bota trafiono (resolveHits). Poziomy z `hitReactionDelayS > 0` (tylko
+   * „trudny") po krótkim opóźnieniu wykonają zryw obronny — żeby ostrzeliwany bot nie leciał
+   * dalej prosto. Niższe poziomy mają delay = 0 → metoda jest no-op (lecą prosto, jak dotąd).
+   * Kolejne trafienia w trakcie odliczania/zrywu nie restartują reakcji (jeden zryw na serię).
+   */
+  notifyHit(): void {
+    if (this.difficulty.hitReactionDelayS <= 0) return;
+    if (this.hitDelayRemainingS > 0 || this.hitBreakRemainingS > 0) return;
+    this.hitDelayRemainingS = this.difficulty.hitReactionDelayS;
   }
 
   /**
@@ -151,6 +171,7 @@ export class Bot {
     outDemands: PilotDemands,
   ): BotOutput {
     this.jinkTimeS += dtS;
+    this.updateHitReaction(dtS);
     getForward(self.orientation, scratchSelfFwd);
     getUp(self.orientation, scratchSelfUp);
     getRight(self.orientation, scratchSelfRight);
@@ -226,6 +247,16 @@ export class Bot {
       this.steerPatrol(self, aimDir);
     }
 
+    // (1b) zryw obronny po trafieniu (tylko poziom „trudny"): nadrzędny nad FSM, bo bot ma
+    // zerwać NIEZALEŻNIE od tego, czy wypatrzył napastnika (często jest trafiany w patrolu,
+    // gdzie hasTarget=false). Override ziemi niżej i tak go skoryguje, gdy zryw groziłby
+    // wbiciem się w teren (kryterium użytkownika: zryw, chyba że oznaczałby uderzenie w ziemię).
+    if (this.hitBreakRemainingS > 0) {
+      this.steerHitBreak(aimDir);
+      throttle = this.difficulty.throttle;
+      fire = false;
+    }
+
     // (2) degradacja: limit G (clamp kąta komendy) → opóźnienie reakcji → szum
     this.applyMaxG(aimDir, plane);
     this.applyReactionLag(aimDir, dtS);
@@ -295,6 +326,37 @@ export class Bot {
     aim
       .set(scratchHoriz.x * Math.cos(dive), -Math.sin(dive), scratchHoriz.z * Math.cos(dive))
       .normalize();
+  }
+
+  /**
+   * Odlicza reakcję na trafienie: najpierw opóźnienie (hitReactionDelayS), potem zryw przez
+   * tuning.hitReactionDurationS. Stronę zrywu losujemy raz, na starcie zrywu (zwrot „w którąś
+   * stronę"). Wołane co tick decyzji — czas płynie tempem decyzji (dtS = krok × interwał).
+   */
+  private updateHitReaction(dtS: number): void {
+    if (this.hitBreakRemainingS > 0) {
+      this.hitBreakRemainingS -= dtS;
+    } else if (this.hitDelayRemainingS > 0) {
+      this.hitDelayRemainingS -= dtS;
+      if (this.hitDelayRemainingS <= 0) {
+        this.hitBreakRemainingS = this.tuning.hitReactionDurationS;
+        this.hitBreakSign = this.rng() < 0.5 ? -1 : 1;
+      }
+    }
+  }
+
+  /** Zryw obronny po trafieniu: ostre ciągnięcie w GÓRĘ z lekkim biasem bocznym (wylosowana strona).
+   *  Nie wymaga celu — w odróżnieniu od `steerEvade` zrywa „w którąś stronę". Składowa pionowa
+   *  MUSI dominować nad boczną: instruktor bramkuje ciągnięcie błędem przechylenia (zeruje pull
+   *  powyżej 2× bankThreshold), więc cel mocno z boku = bot tylko by rolował, ledwie ciągnąc. Przy
+   *  dominującej pionie błąd przechylenia jest mały → pełne ciągnięcie OD RAZU, a bias boczny nadaje
+   *  stronę. Zryw wznoszący sam oddala od ziemi (override unikania ziemi niżej i tak go pilnuje). */
+  private steerHitBreak(aim: Vector3): void {
+    const a = this.tuning.evadeBreakRad;
+    aim.copy(scratchSelfFwd).multiplyScalar(Math.cos(a));
+    aim.addScaledVector(scratchSelfUp, Math.sin(a));
+    aim.addScaledVector(scratchSelfRight, this.hitBreakSign * Math.sin(a) * 0.25);
+    aim.normalize();
   }
 
   /** Ogień: nos w stożku wokół PRAWDZIWEGO wyprzedzenia (bez szumu) i w zasięgu. */

@@ -31,8 +31,10 @@ import { planeTypeFromCode, planeTypeToCode, type PlaneType } from '../planes/pl
  * dobiera mesh i etykietę HUD per encja, a lokalna predykcja per typ. Lobby: RoomPlayer niesie
  * wybrany typ, wiadomość `selectPlane` go zmienia (deploy front+back RAZEM — niespójna wersja
  * = błąd handshake).
+ * v5: snapshot encji dokłada bajt amunicji GRUPY WTÓRNEJ (działko 20 mm MG FF w Bf 109) — HUD
+ * pokazuje osobny licznik dla działka. Spitfire (1 grupa) koduje 0 (klient pomija licznik).
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /** Tag pierwszego bajtu ramki binarnej: wejście gracza (klient → serwer). */
 export const MSG_INPUT = 1;
@@ -225,6 +227,9 @@ export interface EntitySnapshot {
   healthFrac: number;
   /** Ułamek amunicji 0..1 (faza 14) — ogień liczy serwer; klient tylko pokazuje w HUD. */
   ammoFrac: number;
+  /** Ułamek amunicji GRUPY WTÓRNEJ 0..1 (protokół v5; działko 20 mm Bf 109). 0 dla samolotów
+   *  z jedną grupą broni (Spitfire) — klient pomija osobny licznik wg konfiguracji typu. */
+  ammoSecondaryFrac: number;
   /** Typ samolotu encji (faza 19b) — klient dobiera mesh i etykietę HUD; lokalnie też predykcję. */
   planeType: PlaneType;
 }
@@ -248,12 +253,17 @@ export interface SnapshotEntitySource {
   fire: { ammoRemaining: number };
   /** Pełny zapas amunicji [pociski] — stały per płatowiec (do ułamka amunicji). */
   ammoMax: number;
+  /** Żywy stan ognia grupy WTÓRNEJ (protokół v5; działko 20 mm Bf 109) — null, gdy samolot ma
+   *  jedną grupę broni (Spitfire). */
+  fireSecondary: { ammoRemaining: number } | null;
+  /** Pełny zapas amunicji grupy wtórnej [pociski]; 0, gdy brak grupy wtórnej. */
+  ammoSecondaryMax: number;
   /** Typ samolotu encji (faza 19b) — kodowany jednym bajtem (snapshot v4). */
   planeType: PlaneType;
 }
 
 export const SNAPSHOT_HEADER_BYTES = 10; // u8 type | u32 tick | u32 ack | u8 count
-export const SNAPSHOT_ENTITY_BYTES = 32; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp | u8 ammo | u8 planeType
+export const SNAPSHOT_ENTITY_BYTES = 33; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp | u8 ammo | u8 ammoSecondary | u8 planeType
 
 /** Rozmiar snapshotu [bajty] dla zadanej liczby encji — do budżetu pasma. */
 export function snapshotByteLength(entityCount: number): number {
@@ -302,7 +312,10 @@ export function encodeSnapshot(
     view.setUint8(o + 29, Math.round(clamp(hpFrac, 0, 1) * 255));
     const ammoFrac = e.ammoMax > 0 ? e.fire.ammoRemaining / e.ammoMax : 0;
     view.setUint8(o + 30, Math.round(clamp(ammoFrac, 0, 1) * 255));
-    view.setUint8(o + 31, planeTypeToCode(e.planeType));
+    const ammoSecFrac =
+      e.fireSecondary && e.ammoSecondaryMax > 0 ? e.fireSecondary.ammoRemaining / e.ammoSecondaryMax : 0;
+    view.setUint8(o + 31, Math.round(clamp(ammoSecFrac, 0, 1) * 255));
+    view.setUint8(o + 32, planeTypeToCode(e.planeType));
     o += SNAPSHOT_ENTITY_BYTES;
   }
   return o;
@@ -346,7 +359,8 @@ export function decodeSnapshot(view: DataView): Snapshot {
     const throttle = view.getUint8(o + 28) / 255;
     const healthFrac = view.getUint8(o + 29) / 255;
     const ammoFrac = view.getUint8(o + 30) / 255;
-    const planeType = planeTypeFromCode(view.getUint8(o + 31));
+    const ammoSecondaryFrac = view.getUint8(o + 31) / 255;
+    const planeType = planeTypeFromCode(view.getUint8(o + 32));
     entities.push({
       id,
       life: lifePhaseFromCode(flags),
@@ -358,6 +372,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
       throttle,
       healthFrac,
       ammoFrac,
+      ammoSecondaryFrac,
       planeType,
     });
     o += SNAPSHOT_ENTITY_BYTES;
@@ -523,6 +538,8 @@ export function decodeEvents(view: DataView): GameEvent[] {
 
 /** Maksymalna długość nicka (znaki po sanityzacji). */
 export const MAX_NICK_LENGTH = 16;
+/** Maksymalna długość pojedynczej wiadomości czatu (znaki po sanityzacji). */
+export const MAX_CHAT_LENGTH = 200;
 /** Maksymalna liczba graczy w jednym pokoju (budżet snapshotu fazy 8). */
 export const MAX_PLAYERS_PER_ROOM = 8;
 /** Długość kodu pokoju (4 litery — dyktowane przez Discord). */
@@ -550,6 +567,23 @@ export function sanitizeNick(raw: unknown): string {
   }
   out = out.replace(/\s+/g, ' ').trim();
   return out.length > 0 ? out.slice(0, MAX_NICK_LENGTH) : NICK_FALLBACK;
+}
+
+/**
+ * Sanityzuje treść czatu z sieci: wycina znaki sterujące, zwija białe znaki i przycina długość.
+ * Bezpieczeństwo XSS NIE polega na whiteliście (czat dopuszcza interpunkcję/emoji) — treść trafia
+ * do DOM WYŁĄCZNIE przez textContent (zob. lobby-ui). Pusty wynik = wiadomość do odrzucenia.
+ */
+export function sanitizeChat(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  let out = '';
+  for (const ch of raw.normalize('NFC')) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) continue; // znaki sterujące (w tym nowe linie)
+    out += ch;
+    if (out.length >= MAX_CHAT_LENGTH) break;
+  }
+  return out.replace(/\s+/g, ' ').trim();
 }
 
 /** Czy `code` to poprawny kod pokoju (wielkie litery z alfabetu, właściwa długość). */
@@ -580,6 +614,8 @@ export interface RoomPlayer {
   nick: string;
   /** Wybrany/efektywny typ samolotu (faza 19b) — FFA: wybór gracza; drużynowy: wg strony. */
   planeType: PlaneType;
+  /** Czy to bot (poczekalnia: tag [BOT] + ustalanie liczby botów po stronie hosta). */
+  isBot: boolean;
 }
 
 // --- klient → serwer ---
@@ -622,6 +658,26 @@ export interface JoinRoomMessage {
 export interface SelectPlaneMessage {
   t: 'selectPlane';
   plane: PlaneType;
+}
+
+/**
+ * Klient → serwer: HOST zmienia ustawienia pokoju w poczekalni (tryb / liczba botów / poziom).
+ * Wspólne ustalanie odbywa się przez czat; zastosowanie ustawień jest po stronie hosta. Pola
+ * opcjonalne — zmieniane tylko te podane. Serwer egzekwuje: tylko host i tylko w stanie 'waiting'
+ * (poza meczem), klampuje wartości (niezm. nr 11). Zmiana liczby/poziomu botów = przebudowa botów.
+ */
+export interface UpdateRoomMessage {
+  t: 'updateRoom';
+  mode?: MatchMode;
+  bots?: number;
+  difficulty?: DifficultyLevel;
+}
+
+/** Klient → serwer: wyślij wiadomość na czat bieżącego pokoju (poczekalnia). Serwer sanityzuje
+ *  (sanitizeChat), opatruje nadawcą i rozsyła do członków pokoju jako ChatMessage. */
+export interface ChatSendMessage {
+  t: 'chatSend';
+  text: string;
 }
 
 /** Klient → serwer: szybka gra — dołącz do publicznego pokoju albo utwórz go. */
@@ -669,17 +725,33 @@ export interface RoomJoinedMessage {
   /** Tryb meczu pokoju (faza 19b) — poczekalnia wie, czy pokazać wybór samolotu (FFA) czy sprzęt
    *  jest wg strony (drużynowy). */
   mode: MatchMode;
+  /** Poziom trudności botów pokoju — poczekalnia odświeża selektor hosta (ustawienia na żywo). */
+  difficulty: DifficultyLevel;
   players: RoomPlayer[];
 }
 
-/** Serwer → klient: zmiana składu/hosta/stanu pokoju (broadcast do członków). */
+/** Serwer → klient: zmiana składu/hosta/stanu/ustawień pokoju (broadcast do członków). */
 export interface RoomUpdateMessage {
   t: 'roomUpdate';
   hostId: number;
   state: RoomState;
   /** Tryb meczu pokoju (faza 19b) — jak w RoomJoinedMessage (wybór samolotu w poczekalni). */
   mode: MatchMode;
+  /** Poziom trudności botów pokoju — poczekalnia odświeża selektor hosta (ustawienia na żywo). */
+  difficulty: DifficultyLevel;
   players: RoomPlayer[];
+}
+
+/**
+ * Serwer → klient: wiadomość czatu pokoju (broadcast). Treść już zsanityzowana po stronie serwera
+ * (sanitizeChat) — klient i tak renderuje WYŁĄCZNIE przez textContent (XSS). `id`=null → komunikat
+ * systemowy (np. zmiana ustawień przez hosta), inaczej id nadawcy (do podświetlenia własnych).
+ */
+export interface ChatMessage {
+  t: 'chat';
+  id: number | null;
+  nick: string;
+  text: string;
 }
 
 /** Serwer → klient: mecz wystartował (poczekalnia → gra; klient włącza render). */
@@ -768,6 +840,8 @@ export type ControlMessage =
   | CreateRoomMessage
   | JoinRoomMessage
   | SelectPlaneMessage
+  | UpdateRoomMessage
+  | ChatSendMessage
   | QuickPlayMessage
   | StartMatchMessage
   | LeaveRoomMessage
@@ -775,6 +849,7 @@ export type ControlMessage =
   | RoomListMessage
   | RoomJoinedMessage
   | RoomUpdateMessage
+  | ChatMessage
   | MatchStartedMessage
   | StandingsMessage
   | MatchEndedMessage
@@ -787,6 +862,8 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'createRoom',
   'joinRoom',
   'selectPlane',
+  'updateRoom',
+  'chatSend',
   'quickPlay',
   'startMatch',
   'leaveRoom',
@@ -794,6 +871,7 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'roomList',
   'roomJoined',
   'roomUpdate',
+  'chat',
   'matchStarted',
   'standings',
   'matchEnded',

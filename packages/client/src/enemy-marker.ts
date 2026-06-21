@@ -21,8 +21,6 @@ export class EnemyMarker {
   private readonly el: HTMLElement;
   private readonly arrow: HTMLElement;
   private readonly label: HTMLElement;
-  /** Etykieta typu samolotu wroga (faza 19b: rozpoznawanie matchupu) — pod dystansem. */
-  private readonly typeEl: HTMLElement;
   private foe = true;
   /** Dowolny kolor (FFA: unikatowy per frakcja); null = paleta foe/friend (drużynowy). */
   private colorCss: string | null = null;
@@ -34,15 +32,9 @@ export class EnemyMarker {
       'text-align:center;z-index:5;';
     this.arrow = document.createElement('div');
     this.label = document.createElement('div');
-    this.typeEl = document.createElement('div');
-    this.el.append(this.arrow, this.label, this.typeEl);
+    this.el.append(this.arrow, this.label);
     parent.append(this.el);
     this.applyPalette();
-  }
-
-  /** Ustawia etykietę typu samolotu (np. „Bf 109") wyświetlaną pod dystansem (faza 19b). */
-  setType(label: string): void {
-    if (this.typeEl.textContent !== label) this.typeEl.textContent = label;
   }
 
   /** Przełącza kolor markera: foe=true wróg (czerwony), false sojusznik (zielony). */
@@ -70,8 +62,6 @@ export class EnemyMarker {
     this.arrow.style.cssText = `font:18px/1 monospace;color:${arrow};text-shadow:0 0 6px rgba(0,0,0,0.7);`;
     this.label.style.cssText =
       `font:bold 12px/1.2 monospace;color:${label};text-shadow:0 0 4px rgba(0,0,0,0.9);`;
-    this.typeEl.style.cssText =
-      `font:10px/1.2 monospace;color:${label};opacity:0.85;text-shadow:0 0 4px rgba(0,0,0,0.9);`;
   }
 
   hide(): void {

@@ -1,12 +1,13 @@
 import {
   DIFFICULTY_LEVELS,
+  MAX_CHAT_LENGTH,
   MAX_NICK_LENGTH,
   MAX_PLAYERS_PER_ROOM,
   PLANE_TYPES,
-  ROOM_CODE_LENGTH,
   ZONE_CAPTURE_SECONDS,
   planeLabelOf,
   sanitizeNick,
+  type ChatMessage,
   type DifficultyLevel,
   type MatchMode,
   type PlaneType,
@@ -46,41 +47,27 @@ const ONLINE_CONTROL_ROWS: readonly (readonly [string, string])[] = [
   ['Panel sieci', 'N'],
 ];
 
-/** Klucz localStorage: czy gracz widział już ekran sterowania online (auto-pokaz tylko 1×). */
-const HELP_SEEN_KEY = 'air-combat:help-seen-online';
-
-/** Czy onboarding był już pokazany (localStorage bywa niedostępny — wtedy „tak", bez zapętlenia). */
-function helpSeenOnline(): boolean {
-  try {
-    return localStorage.getItem(HELP_SEEN_KEY) === '1';
-  } catch {
-    return true;
-  }
-}
-
-function markHelpSeenOnline(): void {
-  try {
-    localStorage.setItem(HELP_SEEN_KEY, '1');
-  } catch {
-    /* brak localStorage — trudno; onboarding i tak dostępny pod przyciskiem */
-  }
-}
-
 // Ekrany lobby (faza 10) jako vanilla DOM nad canvasem (decyzja PLAN.md — Preact dopiero,
-// gdy vanilla zaboli). Dwa widoki: 'entry' (nick + szybka gra / utwórz / dołącz kodem +
-// lista pokoi) i 'waiting' (poczekalnia: kod pokoju, lista graczy, Start dla hosta) na tle
-// grafiki dogfight. Nicki innych graczy trafiają do DOM → ZAWSZE przez textContent / escape
-// (XSS). Moduł nie zna sieci: woła callbacki, a online-main spina go z NetClient.
+// gdy vanilla zaboli). Dwa widoki: 'entry' (JEDEN prosty ekran: nick + auto-wykryta otwarta
+// gra → „Dołącz" albo „Załóż własną grę" + przycisk „Jak grać") i 'waiting' (poczekalnia: kod
+// pokoju, lista graczy, ustawienia hosta — tryb/boty/poziom/samolot — Start dla hosta) na tle
+// grafiki dogfight. Konfiguracja gry żyje WYŁĄCZNIE w poczekalni, żeby wejście było jednym
+// ekranem. Nicki innych graczy trafiają do DOM → ZAWSZE przez textContent / escape (XSS).
+// Moduł nie zna sieci: woła callbacki, a online-main spina go z NetClient (lista pokoi do
+// auto-wykrycia otwartej gry jest odświeżana cyklicznie przez online-main).
 
 export interface LobbyCallbacks {
-  onQuickPlay(): void;
-  onCreateRoom(bots: number, difficulty: DifficultyLevel, mode: MatchMode): void;
+  /** Załóż własną grę — domyślne ustawienia, host konfiguruje resztę w poczekalni. */
+  onCreateRoom(): void;
   onJoinRoom(code: string): void;
-  onRefreshList(): void;
   onStartMatch(): void;
   onLeaveRoom(): void;
   /** Wybór typu samolotu w poczekalni (faza 19b; FFA — w drużynowym sprzęt wg strony). */
   onSelectPlane(plane: PlaneType): void;
+  /** Host zmienia ustawienia pokoju w poczekalni (tryb / liczba botów / poziom trudności). */
+  onUpdateRoom(opts: { mode: MatchMode; bots: number; difficulty: DifficultyLevel }): void;
+  /** Wyślij wiadomość na czat pokoju (poczekalnia). */
+  onSendChat(text: string): void;
 }
 
 export interface WaitingView {
@@ -88,6 +75,10 @@ export interface WaitingView {
   state: RoomState;
   /** Tryb meczu (faza 19b) — FFA pokazuje wybór samolotu; drużynowy: sprzęt wg strony. */
   mode: MatchMode;
+  /** Poziom trudności botów pokoju — selektor hosta w poczekalni. */
+  difficulty: DifficultyLevel;
+  /** Liczba botów w pokoju (z roster) — selektor hosta + podsumowanie dla reszty. */
+  botCount: number;
   players: RoomPlayer[];
   hostId: number;
   youId: number;
@@ -101,11 +92,12 @@ export class LobbyUI {
   private readonly waiting: HTMLDivElement;
   private readonly help: HTMLDivElement;
   private readonly nickInput: HTMLInputElement;
-  private readonly modeSelect: HTMLSelectElement;
-  private readonly botCountSelect: HTMLSelectElement;
-  private readonly difficultySelect: HTMLSelectElement;
-  private readonly codeInput: HTMLInputElement;
-  private readonly roomListEl: HTMLDivElement;
+  // auto-wykryta otwarta gra (jedyna poczekalnia z wolnym miejscem) — ramka + przycisk „Dołącz"
+  private readonly openGameBox: HTMLDivElement;
+  private readonly openGameTitle: HTMLDivElement;
+  private readonly openGameDetail: HTMLDivElement;
+  /** Kod auto-wykrytej otwartej gry (cel przycisku „Dołącz"); null = brak otwartej gry. */
+  private openGameCode: string | null = null;
   private readonly errorEl: HTMLDivElement;
   private readonly waitingCodeEl: HTMLDivElement;
   private readonly waitingPlayersEl: HTMLDivElement;
@@ -115,12 +107,23 @@ export class LobbyUI {
   private readonly planeRow: HTMLDivElement;
   private readonly planeLabel: HTMLLabelElement;
   private readonly planeSelect: HTMLSelectElement;
+  // ustawienia pokoju w poczekalni: host steruje selektorami; reszta widzi podsumowanie tekstowe
+  private readonly settingsRow: HTMLDivElement;
+  private readonly settingsSummary: HTMLDivElement;
+  private readonly waitModeSelect: HTMLSelectElement;
+  private readonly waitBotsSelect: HTMLSelectElement;
+  private readonly waitDiffSelect: HTMLSelectElement;
+  // czat poczekalni: log wiadomości + pole wpisywania (treść renderowana przez textContent — XSS)
+  private readonly chatLogEl: HTMLDivElement;
+  private readonly chatInput: HTMLInputElement;
+  /** Id lokalnego gracza (z WaitingView) — do podświetlenia własnych wiadomości czatu. */
+  private localId: number | null = null;
 
   constructor(private readonly cb: LobbyCallbacks) {
     injectStyles();
     this.root = el('div', 'lobby-root');
 
-    // --- ekran wejściowy ---
+    // --- ekran wejściowy (JEDEN ekran: nick + auto-wykryta otwarta gra / załóż własną grę) ---
     this.entry = el('div', 'lobby-screen lobby-entry');
     const title = el('div', 'lobby-title');
     title.textContent = 'AIR COMBAT — DOGFIGHT';
@@ -138,71 +141,27 @@ export class LobbyUI {
     this.nickInput.addEventListener('change', () => saveNick(this.nickInput.value));
     nickRow.append(nickLabel, this.nickInput);
 
-    const quickBtn = button('Szybka gra', 'lobby-btn lobby-btn-primary', () => {
+    // auto-wykryta otwarta gra: jedyna poczekalnia z wolnym miejscem (setRoomList wybiera ją z
+    // listy pokoi odświeżanej cyklicznie przez online-main). Widoczna TYLKO, gdy taka istnieje;
+    // „Dołącz" wchodzi prosto do niej. Brak otwartej gry → ramka znika, zostaje „Załóż własną grę".
+    this.openGameBox = el('div', 'lobby-open-game');
+    this.openGameTitle = el('div', 'lobby-open-title');
+    this.openGameDetail = el('div', 'lobby-open-detail');
+    const openJoinBtn = button('Dołącz', 'lobby-btn lobby-btn-primary', () => {
+      if (this.openGameCode === null) return;
       this.beforeAction();
-      this.cb.onQuickPlay();
+      this.cb.onJoinRoom(this.openGameCode);
     });
-    // tryb meczu hosta (faza 18): FFA albo drużynowy. P1: oba eliminacyjne jak SP (bez limitu
-    // zestrzeleń i czasu), więc tryb różni się już tylko frakcjami (FFA = każdy osobno).
-    const modeRow = el('div', 'lobby-row lobby-bot-row');
-    const modeLabel = el('label', 'lobby-label');
-    modeLabel.textContent = 'Tryb';
-    this.modeSelect = selectEl(
-      'lobby-select lobby-select-mode',
-      MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-      'ffa',
-    );
-    modeRow.append(modeLabel, this.modeSelect);
+    this.openGameBox.append(this.openGameTitle, this.openGameDetail, openJoinBtn);
 
-    // konfiguracja botów hosta (faza 12): liczba 0..MAX_BOTS + poziom trudności
-    const botRow = el('div', 'lobby-row lobby-bot-row');
-    const botLabel = el('label', 'lobby-label');
-    botLabel.textContent = 'Boty';
-    this.botCountSelect = selectEl(
-      'lobby-select lobby-select-bots',
-      Array.from({ length: MAX_BOTS + 1 }, (_, i) => ({ value: String(i), label: String(i) })),
-      '3',
-    );
-    const diffLabel = el('label', 'lobby-label');
-    diffLabel.textContent = 'poziom';
-    this.difficultySelect = selectEl(
-      'lobby-select',
-      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: DIFFICULTY_LABELS[lvl] })),
-      'normalny',
-    );
-    botRow.append(botLabel, this.botCountSelect, diffLabel, this.difficultySelect);
-
-    // P1 (2026-06-19): brak wiersza „Mecz do N zestrzeleń" — oba tryby są eliminacyjne jak SP
-    // (last-man-standing / ostatnia drużyna + strefa), bez limitu zestrzeleń i czasu.
-
-    const createBtn = button('Utwórz pokój', 'lobby-btn', () => {
+    // „Załóż własną grę": tworzy pokój z domyślnymi ustawieniami — tryb/boty/poziom i samolot
+    // host konfiguruje już w poczekalni (settingsRow), żeby wejście było jednym prostym ekranem.
+    const createBtn = button('Załóż własną grę', 'lobby-btn', () => {
       this.beforeAction();
-      this.cb.onCreateRoom(this.botCount, this.difficulty, this.mode);
+      this.cb.onCreateRoom();
     });
-
-    const joinRow = el('div', 'lobby-row lobby-join-row');
-    this.codeInput = document.createElement('input');
-    this.codeInput.className = 'lobby-input lobby-code-input';
-    this.codeInput.maxLength = ROOM_CODE_LENGTH;
-    this.codeInput.placeholder = 'KOD';
-    this.codeInput.autocapitalize = 'characters';
-    this.codeInput.addEventListener('input', () => {
-      this.codeInput.value = this.codeInput.value.toUpperCase();
-    });
-    const joinBtn = button('Dołącz', 'lobby-btn', () => this.tryJoin());
-    this.codeInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') this.tryJoin();
-    });
-    joinRow.append(this.codeInput, joinBtn);
 
     this.errorEl = el('div', 'lobby-error');
-
-    const listHead = el('div', 'lobby-list-head');
-    const listTitle = el('span', '');
-    listTitle.textContent = 'Otwarte pokoje';
-    const refreshBtn = button('Odśwież', 'lobby-btn lobby-btn-small', () => this.cb.onRefreshList());
-    listHead.append(listTitle, refreshBtn);
-    this.roomListEl = el('div', 'lobby-room-list');
 
     const helpBtn = button('❔ Jak grać — sterowanie i cel', 'lobby-btn lobby-btn-small', () =>
       this.showHelp(),
@@ -212,14 +171,9 @@ export class LobbyUI {
       title,
       sub,
       nickRow,
-      quickBtn,
-      modeRow,
-      botRow,
+      this.openGameBox,
       createBtn,
-      joinRow,
       this.errorEl,
-      listHead,
-      this.roomListEl,
       helpBtn,
       attributionEl(),
     );
@@ -245,6 +199,49 @@ export class LobbyUI {
       this.cb.onSelectPlane(this.planeSelect.value as PlaneType);
     });
     this.planeRow.append(this.planeLabel, this.planeSelect);
+
+    // --- ustawienia pokoju w poczekalni (host steruje, reszta widzi podsumowanie) ---
+    const settingsCaption = el('div', 'lobby-label');
+    settingsCaption.textContent = 'Ustawienia pokoju (ustala host — dogadajcie się na czacie)';
+    this.settingsRow = el('div', 'lobby-row lobby-bot-row lobby-settings-row');
+    this.waitModeSelect = selectEl(
+      'lobby-select lobby-select-mode',
+      MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+      'ffa',
+    );
+    const settingsBotLabel = el('label', 'lobby-label');
+    settingsBotLabel.textContent = 'Boty';
+    this.waitBotsSelect = selectEl(
+      'lobby-select lobby-select-bots',
+      Array.from({ length: MAX_BOTS + 1 }, (_, i) => ({ value: String(i), label: String(i) })),
+      '0',
+    );
+    this.waitDiffSelect = selectEl(
+      'lobby-select',
+      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: DIFFICULTY_LABELS[lvl] })),
+      'normalny',
+    );
+    for (const sel of [this.waitModeSelect, this.waitBotsSelect, this.waitDiffSelect]) {
+      sel.addEventListener('change', () => this.emitSettings());
+    }
+    this.settingsRow.append(this.waitModeSelect, settingsBotLabel, this.waitBotsSelect, this.waitDiffSelect);
+    this.settingsSummary = el('div', 'lobby-sub lobby-settings-summary');
+
+    // --- czat poczekalni ---
+    const chatCaption = el('div', 'lobby-label');
+    chatCaption.textContent = 'Czat';
+    this.chatLogEl = el('div', 'lobby-chat-log');
+    const chatRow = el('div', 'lobby-row lobby-chat-row');
+    this.chatInput = document.createElement('input');
+    this.chatInput.className = 'lobby-input lobby-chat-input';
+    this.chatInput.maxLength = MAX_CHAT_LENGTH;
+    this.chatInput.placeholder = 'Napisz wiadomość…';
+    this.chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.trySendChat();
+    });
+    const chatSendBtn = button('Wyślij', 'lobby-btn lobby-btn-small', () => this.trySendChat());
+    chatRow.append(this.chatInput, chatSendBtn);
+
     this.waitingHintEl = el('div', 'lobby-sub');
     this.startBtn = button('Start meczu', 'lobby-btn lobby-btn-primary', () => this.cb.onStartMatch());
     const leaveBtn = button('Wyjdź', 'lobby-btn lobby-btn-small', () => this.cb.onLeaveRoom());
@@ -255,6 +252,12 @@ export class LobbyUI {
       this.waitingCodeEl,
       this.waitingPlayersEl,
       this.planeRow,
+      settingsCaption,
+      this.settingsRow,
+      this.settingsSummary,
+      chatCaption,
+      this.chatLogEl,
+      chatRow,
       this.waitingHintEl,
       this.startBtn,
       leaveBtn,
@@ -296,45 +299,18 @@ export class LobbyUI {
     return sanitizeNick(this.nickInput.value);
   }
 
-  private get mode(): MatchMode {
-    return this.modeSelect.value === 'team' ? 'team' : 'ffa';
-  }
-
-  private get botCount(): number {
-    return Number(this.botCountSelect.value) || 0;
-  }
-
-  private get difficulty(): DifficultyLevel {
-    return this.difficultySelect.value as DifficultyLevel;
-  }
-
   private beforeAction(): void {
     saveNick(this.nickInput.value);
     this.clearError();
-  }
-
-  private tryJoin(): void {
-    const code = this.codeInput.value.trim().toUpperCase();
-    if (code.length !== ROOM_CODE_LENGTH) {
-      this.setError(`Kod pokoju ma ${String(ROOM_CODE_LENGTH)} znaki.`);
-      return;
-    }
-    this.beforeAction();
-    this.cb.onJoinRoom(code);
   }
 
   showEntry(): void {
     this.root.classList.add('show');
     this.entry.classList.add('show');
     this.waiting.classList.remove('show');
-    // onboarding przy 1. wejściu do lobby (parytet z SP) — potem dostępny pod przyciskiem
-    if (!helpSeenOnline()) {
-      markHelpSeenOnline();
-      this.showHelp();
-    }
   }
 
-  /** Nakładka sterowania/celu (onboarding). Auto przy 1. wizycie + ręcznie z przycisku. */
+  /** Nakładka sterowania/celu — wyłącznie pod przyciskiem „Jak grać" (bez auto-pokazu). */
   showHelp(): void {
     this.help.classList.add('show');
   }
@@ -343,27 +319,34 @@ export class LobbyUI {
     this.help.classList.remove('show');
   }
 
+  /**
+   * Aktualizuje ekran wejściowy z listy pokoi: spośród OTWARTYCH poczekalni z wolnym miejscem
+   * wybiera najbliższą startu (najwięcej graczy) jako „Trwa otwarta gra" z przyciskiem „Dołącz".
+   * Brak takiej poczekalni → ramka znika i zostaje tylko „Załóż własną grę". (Lista odświeżana
+   * cyklicznie przez online-main, więc auto-wykrycie nadąża za zakładaniem/zamykaniem pokoi.)
+   */
   setRoomList(rooms: RoomSummary[]): void {
-    this.roomListEl.replaceChildren();
-    if (rooms.length === 0) {
-      const empty = el('div', 'lobby-room-empty');
-      empty.textContent = 'Brak otwartych pokoi — utwórz własny.';
-      this.roomListEl.append(empty);
+    let best: RoomSummary | null = null;
+    for (const r of rooms) {
+      if (r.state !== 'waiting' || r.playerCount >= r.maxPlayers) continue;
+      if (
+        best === null ||
+        r.playerCount > best.playerCount ||
+        (r.playerCount === best.playerCount && r.code < best.code)
+      ) {
+        best = r;
+      }
+    }
+    if (best === null) {
+      this.openGameCode = null;
+      this.openGameBox.classList.remove('show');
       return;
     }
-    for (const r of rooms) {
-      const row = el('div', 'lobby-room-row');
-      const info = el('span', '');
-      const stateLabel = r.state === 'waiting' ? 'poczekalnia' : r.state === 'playing' ? 'w grze' : 'koniec';
-      const modeLabel = r.mode === 'team' ? 'drużynowy' : 'FFA';
-      info.textContent = `${r.code}  ·  ${modeLabel}  ·  ${String(r.playerCount)}/${String(r.maxPlayers)}  ·  ${stateLabel}`;
-      const joinBtn = button('Dołącz', 'lobby-btn lobby-btn-small', () => {
-        this.beforeAction();
-        this.cb.onJoinRoom(r.code);
-      });
-      row.append(info, joinBtn);
-      this.roomListEl.append(row);
-    }
+    this.openGameCode = best.code;
+    const modeLabel = best.mode === 'team' ? 'Drużynowy' : 'FFA';
+    this.openGameTitle.textContent = `Trwa otwarta gra: ${best.code}`;
+    this.openGameDetail.textContent = `${modeLabel}  ·  ${String(best.playerCount)}/${String(best.maxPlayers)} graczy`;
+    this.openGameBox.classList.add('show');
   }
 
   showWaiting(view: WaitingView): void {
@@ -374,12 +357,13 @@ export class LobbyUI {
   }
 
   updateWaiting(view: WaitingView): void {
+    this.localId = view.youId;
     this.waitingCodeEl.textContent = view.code;
     this.waitingPlayersEl.replaceChildren();
     for (const p of view.players) {
       const row = el('div', 'lobby-player-row');
       const tag = el('span', 'lobby-player-tag');
-      tag.textContent = p.id === view.hostId ? 'HOST' : p.id === view.youId ? 'TY' : '';
+      tag.textContent = p.isBot ? 'BOT' : p.id === view.hostId ? 'HOST' : p.id === view.youId ? 'TY' : '';
       const name = el('span', 'lobby-player-name');
       name.textContent = p.nick; // textContent → bez interpretacji HTML (XSS)
       // typ samolotu przy nicku (faza 19b: widać, kto czym leci)
@@ -399,10 +383,65 @@ export class LobbyUI {
       if (mine && this.planeSelect.value !== mine.planeType) this.planeSelect.value = mine.planeType;
     }
     const isHost = view.youId === view.hostId;
+    // ustawienia pokoju: host edytuje (selektory), reszta widzi podsumowanie tekstowe
+    this.settingsRow.style.display = isHost ? '' : 'none';
+    this.settingsSummary.style.display = isHost ? 'none' : '';
+    if (isHost) {
+      this.waitModeSelect.value = view.mode;
+      this.waitBotsSelect.value = String(view.botCount);
+      this.waitDiffSelect.value = view.difficulty;
+    } else {
+      const modeLabel = view.mode === 'team' ? 'Drużynowy' : 'FFA';
+      this.settingsSummary.textContent =
+        `Tryb: ${modeLabel}  ·  Boty: ${String(view.botCount)} (${DIFFICULTY_LABELS[view.difficulty]})`;
+    }
     this.startBtn.style.display = isHost ? '' : 'none';
     this.waitingHintEl.textContent = isHost
-      ? 'Jesteś hostem — wystartuj, gdy zbierze się ekipa.'
+      ? 'Jesteś hostem — ustaw tryb/boty i wystartuj, gdy zbierze się ekipa.'
       : 'Czekaj, aż host wystartuje mecz…';
+  }
+
+  /** Host wysłał zmianę ustawień (tryb/boty/poziom) — wszystkie naraz, serwer klampuje. */
+  private emitSettings(): void {
+    this.cb.onUpdateRoom({
+      mode: this.waitModeSelect.value === 'team' ? 'team' : 'ffa',
+      bots: Number(this.waitBotsSelect.value) || 0,
+      difficulty: this.waitDiffSelect.value as DifficultyLevel,
+    });
+  }
+
+  private trySendChat(): void {
+    const text = this.chatInput.value.trim();
+    if (text.length === 0) return;
+    this.cb.onSendChat(text);
+    this.chatInput.value = '';
+  }
+
+  /** Dopisuje wiadomość czatu do logu (textContent → XSS-safe). id=null → komunikat systemowy. */
+  appendChat(msg: ChatMessage): void {
+    const line = el('div', 'lobby-chat-line');
+    if (msg.id === null) {
+      line.classList.add('lobby-chat-system');
+      line.textContent = msg.text;
+    } else {
+      const nick = el('span', 'lobby-chat-nick');
+      if (msg.id === this.localId) nick.classList.add('lobby-chat-nick-self');
+      nick.textContent = msg.nick;
+      const body = el('span', 'lobby-chat-text');
+      body.textContent = msg.text;
+      line.append(nick, document.createTextNode(': '), body);
+    }
+    // autoscroll tylko gdy już byliśmy na dole (nie wyrywaj czytającemu historii)
+    const atBottom =
+      this.chatLogEl.scrollHeight - this.chatLogEl.scrollTop - this.chatLogEl.clientHeight < 30;
+    this.chatLogEl.append(line);
+    while (this.chatLogEl.childElementCount > 100) this.chatLogEl.firstElementChild?.remove();
+    if (atBottom) this.chatLogEl.scrollTop = this.chatLogEl.scrollHeight;
+  }
+
+  /** Czyści log czatu — woła online-main przy wejściu do NOWEGO pokoju (przed historią z serwera). */
+  clearChat(): void {
+    this.chatLogEl.replaceChildren();
   }
 
   setError(message: string): void {
@@ -534,7 +573,6 @@ const LOBBY_CSS = `
   border: 1px solid #345; border-radius: 6px; outline: none;
 }
 .lobby-input:focus { border-color: #6aa8da; }
-.lobby-code-input { min-width: 110px; text-transform: uppercase; letter-spacing: 3px; text-align: center; }
 .lobby-bot-row { gap: 8px; }
 .lobby-select {
   font: 15px monospace; padding: 8px 10px; cursor: pointer;
@@ -555,13 +593,15 @@ const LOBBY_CSS = `
 .lobby-btn-small { min-width: auto; padding: 8px 14px; font-size: 13px; }
 .lobby-error { color: #ff8a6a; min-height: 20px; text-align: center; max-width: 460px; }
 .lobby-error.show { margin: 2px 0; }
-.lobby-list-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 320px; margin-top: 10px; color: #9fc4e6; }
-.lobby-room-list { width: 320px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-.lobby-room-row, .lobby-room-empty {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 8px 12px; background: rgba(12,22,34,0.85); border: 1px solid #2a3f54; border-radius: 6px;
+/* ramka auto-wykrytej otwartej gry — widoczna tylko, gdy jest do czego dołączyć (.show) */
+.lobby-open-game {
+  display: none; flex-direction: column; align-items: center; gap: 8px;
+  width: 320px; box-sizing: border-box; padding: 14px 16px; margin: 4px 0;
+  background: rgba(12,22,34,0.85); border: 1px solid #3a6c4a; border-radius: 8px;
 }
-.lobby-room-empty { justify-content: center; color: #7a93ab; }
+.lobby-open-game.show { display: flex; }
+.lobby-open-title { font: 700 17px monospace; letter-spacing: 1px; color: #7fd49a; }
+.lobby-open-detail { font-size: 13px; color: #9fc4e6; }
 .lobby-panel {
   display: flex; flex-direction: column; align-items: center; gap: 12px;
   padding: 28px 36px; border-radius: 12px;
@@ -577,6 +617,22 @@ const LOBBY_CSS = `
 .lobby-player-tag { width: 44px; font-size: 12px; font-weight: 700; color: #ffd24a; }
 .lobby-player-name { color: #eaf3ff; }
 .lobby-player-plane { margin-left: auto; padding-left: 12px; font-size: 12px; color: #9fc4e6; }
+.lobby-settings-row { flex-wrap: wrap; justify-content: center; }
+.lobby-settings-summary { font-size: 13px; color: #cde; }
+.lobby-chat-log {
+  width: 100%; max-width: 380px; height: 140px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  padding: 8px 10px; box-sizing: border-box;
+  background: rgba(4,9,16,0.7); border: 1px solid #2a3f54; border-radius: 6px;
+  font: 13px/1.4 monospace;
+}
+.lobby-chat-line { color: #dce8f4; word-break: break-word; }
+.lobby-chat-nick { color: #9fc4e6; font-weight: 700; }
+.lobby-chat-nick-self { color: #ffd24a; }
+.lobby-chat-text { color: #eaf3ff; }
+.lobby-chat-system { color: #7fae7f; font-style: italic; }
+.lobby-chat-row { width: 100%; max-width: 380px; gap: 8px; }
+.lobby-chat-input { flex: 1; min-width: 0; }
 .lobby-attribution { margin-top: 16px; font: 11px/1.4 monospace; color: #5f7488; max-width: 34em; text-align: center; }
 .lobby-attribution a { color: #6a93b8; }
 .lobby-help {

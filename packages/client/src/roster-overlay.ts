@@ -4,10 +4,20 @@
 // w walce (żywy / spadający wrak / oczekiwanie na respawn), wyszarzenie = wyeliminowany
 // z meczu (wyczerpane życia, brak powrotu).
 
-/** Szerokości kolumn [znaki] — wyrównanie w monospace (white-space: pre). */
-const NAME_PAD = 11;
+// Szerokości kolumn [znaki] — wyrównanie w monospace (white-space: pre). Kolumna nazwy ma
+// szerokość auto-dopasowaną do najdłuższego nicku w składzie (między MIN a MAX), a nicki dłuższe
+// niż MAX są przycinane wielokropkiem — bez tego długie nazwiska botów (np. „[BOT] Horbaczewski")
+// rozjeżdżały liczby zestrzeleń/asyst („niewidoczna tabela" przestawała się zgadzać).
+const NAME_MIN = 11;
+const NAME_MAX = 20;
 const KILLS_PAD = 3;
 const ASSIST_PAD = 5;
+
+/** Dopasowuje nick do stałej szerokości kolumny: przycina wielokropkiem albo dopełnia spacjami. */
+function fitName(name: string, width: number): string {
+  if (name.length > width) return `${name.slice(0, width - 1)}…`;
+  return name.padEnd(width);
+}
 
 export interface RosterRow {
   /** Nazwa pilota (np. „Ty”, „Bot 2”, „Wróg 1”). */
@@ -51,12 +61,18 @@ export class RosterOverlay {
       if (el) this.root.removeChild(el);
     }
 
+    // szerokość kolumny nazwy = najdłuższy nick w składzie (w granicach MIN..MAX) — liczby pod
+    // spodem zaczynają się w tej samej kolumnie dla wszystkich wierszy (wyrównanie monospace)
+    let nameWidth = NAME_MIN;
+    for (const r of rows) nameWidth = Math.max(nameWidth, r.name.length);
+    nameWidth = Math.min(NAME_MAX, nameWidth);
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const el = this.rowEls[i];
       if (!row || !el) continue;
       el.textContent =
-        row.name.padEnd(NAME_PAD) +
+        fitName(row.name, nameWidth) +
         String(row.kills).padStart(KILLS_PAD) +
         String(row.assists).padStart(ASSIST_PAD);
       el.style.color = row.isLost ? '#7d8794' : row.colorCss;

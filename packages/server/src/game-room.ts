@@ -47,6 +47,7 @@ import {
   validatePlaneState,
   wrapToArena,
   ZoneControl,
+  type ChatMessage,
   type ControlMessage,
   type DifficultyLevel,
   type FireControl,
@@ -69,7 +70,7 @@ import {
   type Terrain,
   type ZoneOccupant,
 } from '@air-combat/shared';
-import { BOT_THINK_INTERVAL, BotManager } from './bot-manager';
+import { BOT_THINK_INTERVAL, BotManager, MAX_BOTS_PER_ROOM } from './bot-manager';
 
 // Autorytatywny pokój gry. Faza 8 wprowadziła symulację (niezmiennik nr 5: serwer jest
 // autorytetem), faza 10 dokłada maszynę stanów lobby: waiting (poczekalnia, nikt nie lata)
@@ -99,6 +100,9 @@ const MAX_REWIND_TICKS = Math.round((LAGCOMP_MAX_REWIND_MS / 1000) * PHYSICS_HZ)
 
 /** Sentinel „brak strzelca" w evencie KILL (śmierć od ziemi/kolizji). */
 const NO_KILLER = 0;
+
+/** Limit historii czatu pokoju (poczekalnia) — tyle ostatnich wiadomości dostaje nowy gracz. */
+const CHAT_HISTORY_MAX = 30;
 
 const scratchHitCenter = new Vector3();
 /** Bufor zawinięcia torusa dla kroku bota (caller `wrapToArena` go nie czyta). */
@@ -199,8 +203,14 @@ export class GameRoom {
   /** Tryb meczu (faza 18): 'ffa' (deathmatch + respawn, faza 13) albo 'team' (drużynowy,
    *  eliminacja jak SP). Ustawiany przez lobby przy tworzeniu pokoju; stały przez życie pokoju. */
   mode: MatchMode = 'ffa';
+  /** Poziom trudności botów. Ustawiany przy tworzeniu pokoju (lobby) i zmienialny przez HOSTA w
+   *  poczekalni (applyRoomSettings). Stosowany przy przebudowie rosteru botów (setBots). */
+  difficulty: DifficultyLevel = 'normalny';
   hostId: number | null = null;
   private readonly players = new Map<number, ServerPlayer>();
+  /** Ostatnie wiadomości czatu pokoju (poczekalnia) — wysyłane nowemu graczowi po wejściu, by
+   *  widział kontekst rozmowy. Bufor pierścieniowy o pojemności CHAT_HISTORY_MAX. */
+  private readonly chatHistory: ChatMessage[] = [];
   private nextId = 0;
   private nextSlot = 0;
   /** Licznik ticków fizyki (u32 w protokole) — monotoniczny, znacznik snapshotu. */
@@ -306,7 +316,12 @@ export class GameRoom {
   roomPlayers(): RoomPlayer[] {
     // planeType = typ EFEKTYWNY (FFA: wybór gracza; drużynowy: wg strony) — poczekalnia pokazuje,
     // czym gracz poleci, zanim mecz wystartuje (faza 19b).
-    return [...this.players.values()].map((p) => ({ id: p.id, nick: p.nick, planeType: this.effectiveType(p) }));
+    return [...this.players.values()].map((p) => ({
+      id: p.id,
+      nick: p.nick,
+      planeType: this.effectiveType(p),
+      isBot: p.isBot,
+    }));
   }
 
   /**
@@ -327,11 +342,24 @@ export class GameRoom {
    * `planeType` wymusza samolot (sesje balansowe/testy); bez niego bot losuje typ (faza 19b).
    */
   addBot(difficulty: DifficultyLevel, planeType?: PlaneType): number {
-    const player = this.createPlayer(this.botManager.nextName(), '', null, true, planeType);
+    // nick nadaje refreshBotName() w spawn(), gdy znany jest już efektywny typ samolotu (po
+    // przydziale frakcji w enterWorld) — żeby pasował narodowością do strony (PL/Spitfire, DE/Bf 109).
+    const player = this.createPlayer('', '', null, true, planeType);
     // strumień RNG bota osobny od strumienia rozrzutu ognia (inna stała mieszająca)
     this.botManager.add(player.id, difficulty, (player.id + 1) ^ 0x0b07);
-    this.enterWorld(player); // spawn() zresetuje też kontroler AI (isBot)
+    this.enterWorld(player); // spawn() zresetuje też kontroler AI (isBot) i nada nick wg typu
     return player.id;
+  }
+
+  /** Nadaje/odświeża nick bota wg efektywnego typu samolotu (PL na Spitfire, DE na Bf 109).
+   *  No-op, gdy bieżący nick już pasuje narodowością — nick jest stabilny między respawnami i
+   *  zmienia się tylko, gdy bot zmienia stronę (np. przełączenie trybu FFA↔drużynowy). */
+  private refreshBotName(player: ServerPlayer): void {
+    if (!player.isBot) return;
+    const type = this.effectiveType(player);
+    if (!this.botManager.nickMatchesType(player.nick, type)) {
+      player.nick = this.botManager.nextName(type);
+    }
   }
 
   /** Wariant samolotu bota losowany deterministycznie z id (różnorodność w pokoju + powtarzalność
@@ -471,6 +499,93 @@ export class GameRoom {
     if (!player || player.isBot || player.selectedType === type) return;
     player.selectedType = type;
     this.broadcastRoomUpdate(); // roster pokazuje nowy (efektywny) typ w poczekalni
+  }
+
+  /**
+   * HOST zmienia ustawienia pokoju w poczekalni: tryb meczu / liczba botów / poziom trudności
+   * (decyzja użytkownika 2026-06-21: ustawienia ustala host; reszta przez czat). Tylko w stanie
+   * 'waiting' — w trakcie meczu no-op (caller w connection sprawdza też, czy to host). Pola
+   * opcjonalne (undefined = bez zmian); wartości już zwalidowane/zklampowane w connection.
+   * Zmiana liczby/poziomu botów przebudowuje roster botów (brak pojedynczego removeBot).
+   */
+  applyRoomSettings(opts: { mode?: MatchMode; bots?: number; difficulty?: DifficultyLevel }): void {
+    if (this.state !== 'waiting') return;
+    let changed = false;
+    if (opts.mode !== undefined && opts.mode !== this.mode) {
+      this.mode = opts.mode;
+      // tryb wpływa na efektywny typ (drużynowy → sprzęt wg strony) i frakcje. Frakcje i tak
+      // przydziela assignFactions() przy start(), ale przydzielamy je już teraz, żeby roster
+      // poczekalni pokazywał poprawny podgląd samolotu drużynowego (planeTypeForTeam).
+      this.assignFactions();
+      // strona botów mogła się zmienić → odśwież nicki wg nowego efektywnego typu (bez respawnu)
+      for (const p of this.players.values()) this.refreshBotName(p);
+      changed = true;
+    }
+    let diffChanged = false;
+    if (opts.difficulty !== undefined && opts.difficulty !== this.difficulty) {
+      this.difficulty = opts.difficulty;
+      diffChanged = true;
+    }
+    // przebuduj boty tylko gdy faktycznie zmienia się liczba ALBO poziom (poziom „zapieka się"
+    // w bocie przy dodaniu) — bez tego sama zmiana trybu churn'owałaby id botów bez potrzeby.
+    const wantBots = opts.bots !== undefined ? Math.floor(opts.bots) : this.botCount;
+    if (wantBots !== this.botCount || diffChanged) {
+      this.setBots(wantBots, this.difficulty);
+      changed = true;
+    }
+    if (!changed) return;
+    this.broadcastRoomUpdate();
+    // komunikat systemowy na czacie — wszyscy widzą wynegocjowane ustawienia (wspólne ustalanie)
+    const modeLabel = this.mode === 'team' ? 'Drużynowy' : 'FFA';
+    this.systemChat(`Ustawienia pokoju: ${modeLabel}, boty ${String(this.botCount)} (${this.difficulty}).`);
+  }
+
+  /**
+   * Ustawia liczbę botów w pokoju na `count` (poziom `difficulty`) przez PRZEBUDOWĘ rosteru:
+   * usuwa wszystkie istniejące boty i dodaje od nowa. Liczba jest klampowana do wolnych slotów
+   * (MAX_PLAYERS_PER_ROOM − ludzie) oraz MAX_BOTS_PER_ROOM (niezm. nr 11). Tylko poczekalnia.
+   */
+  private setBots(count: number, difficulty: DifficultyLevel): void {
+    for (const p of [...this.players.values()]) {
+      if (!p.isBot) continue;
+      this.players.delete(p.id);
+      this.botManager.remove(p.id);
+      // bot nigdy nie jest hostem (addBot tego pilnuje), więc reassignHost zbędny
+    }
+    const freeForBots = Math.max(0, MAX_PLAYERS_PER_ROOM - this.players.size);
+    const target = Math.max(0, Math.min(MAX_BOTS_PER_ROOM, freeForBots, Math.floor(count)));
+    for (let i = 0; i < target; i++) this.addBot(difficulty); // addBot odbudowuje też źródła snapshotu
+    this.rebuildSnapshotSources();
+  }
+
+  /**
+   * Rozsyła wiadomość czatu gracza do członków pokoju i dopisuje ją do historii (dla nowych
+   * graczy). `text` musi być już zsanityzowany (sanitizeChat w connection); pusty/nieznany gracz
+   * → no-op. Klient renderuje treść WYŁĄCZNIE przez textContent (XSS) — historia też jest czysta.
+   */
+  broadcastChat(senderId: number, text: string): void {
+    const player = this.players.get(senderId);
+    if (!player || text.length === 0) return;
+    const msg: ChatMessage = { t: 'chat', id: senderId, nick: player.nick, text };
+    this.pushChatHistory(msg);
+    this.broadcastControl(msg);
+  }
+
+  /** Ostatnie wiadomości czatu (kontekst dla nowego gracza) — connection wysyła je po roomJoined. */
+  recentChat(): readonly ChatMessage[] {
+    return this.chatHistory;
+  }
+
+  /** Komunikat systemowy czatu (id=null) — np. zmiana ustawień pokoju przez hosta. */
+  private systemChat(text: string): void {
+    const msg: ChatMessage = { t: 'chat', id: null, nick: '', text };
+    this.pushChatHistory(msg);
+    this.broadcastControl(msg);
+  }
+
+  private pushChatHistory(msg: ChatMessage): void {
+    this.chatHistory.push(msg);
+    if (this.chatHistory.length > CHAT_HISTORY_MAX) this.chatHistory.shift();
   }
 
   /** Czy gracz o tym id istnieje (np. po reconnect/leave). */
@@ -862,6 +977,8 @@ export class GameRoom {
           this.onAirKill(target, b.ownerId);
         } else {
           this.queueEvent({ kind: 'hit', shooterId: b.ownerId, victimId: target.id });
+          // bot trafiony, ale żywy → reakcja AI (zryw obronny na „trudnym"; niższe poziomy ignorują)
+          if (target.isBot) this.botManager.notifyHit(target.id);
         }
         break; // jeden pocisk = najwyżej jedno trafienie
       }
@@ -1011,7 +1128,11 @@ export class GameRoom {
     player.protectionTimerS = SPAWN_PROTECTION_S;
 
     // bot: zeruj filtry kontrolera i celownik na nowy nos (nie myśli starym stanem po respawnie)
-    if (player.isBot) this.botManager.reset(player.id, state);
+    // oraz nadaj nick wg samolotu na to życie (efektywny typ jest już ustalony przez applyPlaneSelection)
+    if (player.isBot) {
+      this.botManager.reset(player.id, state);
+      this.refreshBotName(player);
+    }
   }
 
   /** Indeks slotu startowego najdalej od żywych wrogów (anty-spawn-kill); fallback = stały slot. */
@@ -1210,17 +1331,25 @@ export class GameRoom {
   }
 
   private rebuildSnapshotSources(): void {
-    this.snapshotSources = [...this.players.values()].map((p) => ({
-      id: p.id,
-      state: p.sim.state,
-      health: p.health,
-      // żywe referencje (state/health/fire) — pole `ammoRemaining` mutuje się co tick, więc snapshot
-      // zawsze koduje aktualny stan bez przebudowy źródeł. ammoMax/planeType per gracz (faza 19b);
-      // przy zmianie typu applyPlaneSelection przebudowuje źródła (świeże ref fire/health + ammoMax).
-      fire: p.fire,
-      ammoMax: totalAmmo(p.plane.armament),
-      planeType: p.planeType,
-    }));
+    this.snapshotSources = [...this.players.values()].map((p) => {
+      // grupa wtórna (np. działko 20 mm MG FF w Bf 109) — osobny licznik w HUD (protokół v5).
+      // Spitfire ma jedną grupę → fireSecondary=null, ammoSecondaryMax=0 (klient pomija licznik).
+      const secGroup = p.plane.armament.groups[1];
+      const secFire = p.fire.groups[1];
+      return {
+        id: p.id,
+        state: p.sim.state,
+        health: p.health,
+        // żywe referencje (state/health/fire) — pole `ammoRemaining` mutuje się co tick, więc snapshot
+        // zawsze koduje aktualny stan bez przebudowy źródeł. ammoMax/planeType per gracz (faza 19b);
+        // przy zmianie typu applyPlaneSelection przebudowuje źródła (świeże ref fire/health + ammoMax).
+        fire: p.fire,
+        ammoMax: totalAmmo(p.plane.armament),
+        fireSecondary: secGroup && secFire ? secFire : null,
+        ammoSecondaryMax: secGroup ? secGroup.ammoPerGun * secGroup.muzzles.length : 0,
+        planeType: p.planeType,
+      };
+    });
   }
 
   /** Źródła do zakodowania snapshotu (referencje do żywych stanów — bez kopii). */
@@ -1240,6 +1369,7 @@ export class GameRoom {
       hostId: this.hostId,
       state: this.state,
       mode: this.mode, // faza 19b: poczekalnia wie, czy pokazać wybór samolotu (FFA)
+      difficulty: this.difficulty, // poczekalnia: selektor poziomu botów po stronie hosta
       players: this.roomPlayers(),
     });
   }

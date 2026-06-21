@@ -10,6 +10,7 @@ import {
   clampPlaneType,
   decodeInput,
   parseControlMessage,
+  sanitizeChat,
   sanitizeNick,
   validateInputFrame,
   type ControlMessage,
@@ -220,6 +221,30 @@ export class Connection implements RoomMember {
         this.room.selectPlane(this.playerId, clampPlaneType(msg.plane));
         return;
       }
+      case 'updateRoom': {
+        // host zmienia ustawienia pokoju w poczekalni (tryb/boty/poziom). Tylko host; serwer
+        // klampuje wartości (niezm. nr 11), a GameRoom egzekwuje stan 'waiting'. Pola opcjonalne:
+        // klampujemy tylko te obecne, by „brak pola" nie wymuszał 0 botów / domyślnego poziomu.
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        if (this.room.hostId !== this.playerId) {
+          this.sendControl({ t: 'error', code: 'notHost', message: 'tylko host może zmienić ustawienia pokoju' });
+          return;
+        }
+        this.room.applyRoomSettings({
+          mode: msg.mode !== undefined ? clampMatchMode(msg.mode) : undefined,
+          bots: typeof msg.bots === 'number' ? clampBotCount(msg.bots) : undefined,
+          difficulty: msg.difficulty !== undefined ? validDifficulty(msg.difficulty) : undefined,
+        });
+        return;
+      }
+      case 'chatSend': {
+        // czat poczekalni: sanityzacja serwerowa (sanitizeChat) + rate limit (allowControlByRate
+        // wyżej). Pusta po sanityzacji → cicho pomijamy. Poza pokojem ignorowany.
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        const text = sanitizeChat(msg.text);
+        if (text.length > 0) this.room.broadcastChat(this.playerId, text);
+        return;
+      }
       case 'startMatch': {
         if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
         if (this.room.hostId !== this.playerId) {
@@ -278,9 +303,12 @@ export class Connection implements RoomMember {
       hostId: room.hostId ?? playerId,
       state: room.state,
       mode: room.mode, // faza 19b: klient wie, czy oferować wybór samolotu (FFA)
+      difficulty: room.difficulty, // poczekalnia: selektor poziomu botów (host)
       players: room.roomPlayers(),
     };
     this.sendControl(msg);
+    // kontekst rozmowy dla nowego gracza: ostatnie wiadomości czatu jako zwykłe ChatMessage
+    for (const chat of room.recentChat()) this.sendControl(chat);
   }
 
   // --- ramki binarne (INPUT) ---

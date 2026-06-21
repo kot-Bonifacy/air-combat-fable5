@@ -6,6 +6,15 @@
  */
 const THROTTLE_PER_S = 0.5;
 
+/** Czy fokus jest w polu edycji tekstu (input/textarea/select/contentEditable) — np. nick lub
+ *  czat poczekalni. Wtedy klawisze sterowania lotem mają trafiać do pola, nie do gry. */
+function isEditingText(): boolean {
+  const el = typeof document !== 'undefined' ? document.activeElement : null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el as HTMLElement).isContentEditable;
+}
+
 const CAPTURED_CODES = new Set([
   'ArrowUp',
   'ArrowDown',
@@ -28,7 +37,10 @@ export class KeyboardInput {
 
   constructor(target: Window) {
     target.addEventListener('keydown', (event) => {
-      if (CAPTURED_CODES.has(event.code)) {
+      // gdy fokus jest w polu tekstowym (nick, czat poczekalni) NIE przechwytuj klawiszy
+      // sterowania — inaczej WSAD/QE itp. są zjadane przez preventDefault i nie da się ich
+      // wpisać (gracz traci litery „wsadqe", a przechodzą tylko klawisze spoza CAPTURED_CODES).
+      if (CAPTURED_CODES.has(event.code) && !isEditingText()) {
         event.preventDefault(); // strzałki/spacja scrollują stronę
         this.held.add(event.code);
       }

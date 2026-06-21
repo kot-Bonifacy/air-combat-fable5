@@ -23,6 +23,7 @@ function ent(x: number, vx = V): EntitySnapshot {
     throttle: 0.8,
     healthFrac: 1,
     ammoFrac: 1,
+    ammoSecondaryFrac: 1,
     planeType: 'spitfire',
   };
 }

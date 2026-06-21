@@ -6,6 +6,7 @@ import {
   decodeSnapshot,
   encodeInput,
   parseControlMessage,
+  type ChatMessage,
   type ControlMessage,
   type DifficultyLevel,
   type GameEvent,
@@ -53,6 +54,8 @@ export class NetClient {
   onRoomList: ((msg: RoomListMessage) => void) | undefined;
   onRoomJoined: ((msg: RoomJoinedMessage) => void) | undefined;
   onRoomUpdate: ((msg: RoomUpdateMessage) => void) | undefined;
+  /** Wiadomość czatu pokoju (poczekalnia) — broadcast od serwera; historia przy wejściu. */
+  onChat: ((msg: ChatMessage) => void) | undefined;
   onMatchStarted: (() => void) | undefined;
   /** Tabela wyników (faza 13) — rozsyłana ~STANDINGS_BROADCAST_HZ w trakcie meczu. */
   onStandings: ((msg: StandingsMessage) => void) | undefined;
@@ -149,6 +152,9 @@ export class NetClient {
       case 'roomUpdate':
         this.onRoomUpdate?.(msg);
         break;
+      case 'chat':
+        this.onChat?.(msg);
+        break;
       case 'matchStarted':
         this.onMatchStarted?.();
         break;
@@ -218,6 +224,16 @@ export class NetClient {
   /** Wybór typu samolotu w poczekalni (faza 19b; serwer klampuje i stosuje przy spawnie). */
   selectPlane(plane: PlaneType): void {
     this.sendControl({ t: 'selectPlane', plane });
+  }
+
+  /** Host zmienia ustawienia pokoju w poczekalni (tryb/boty/poziom). Serwer egzekwuje host+waiting. */
+  updateRoom(opts: { mode?: MatchMode; bots?: number; difficulty?: DifficultyLevel }): void {
+    this.sendControl({ t: 'updateRoom', ...opts });
+  }
+
+  /** Wyślij wiadomość na czat pokoju (poczekalnia). Serwer sanityzuje i rozsyła. */
+  sendChat(text: string): void {
+    this.sendControl({ t: 'chatSend', text });
   }
 
   quickPlay(): void {

@@ -35,7 +35,6 @@ import {
   getUp,
   nAvailG,
   planeConfigOf,
-  planeLabelOf,
   primaryGroup,
   surfaceHeightM,
   totalAmmo,
@@ -105,6 +104,8 @@ import { createWorld } from './world';
 let localPlaneType: PlaneType = DEFAULT_PLANE_TYPE;
 let localPlane = planeConfigOf(localPlaneType);
 let localAmmoMax = totalAmmo(localPlane.armament);
+/** Pełny zapas amunicji grupy WTÓRNEJ lokalnego samolotu (działko 20 mm Bf 109); 0 = brak grupy. */
+let localSecondaryMax = secondaryAmmoMaxOf(localPlane);
 const INPUT_DT_S = 1 / INPUT_HZ;
 const TOKEN_STORAGE_KEY = 'air-combat:token';
 
@@ -120,6 +121,12 @@ const AIR_KILL_FLASH_SCALE = 0.4; // mały błysk przy zestrzeleniu w locie (du�
 
 function cssColor(hex: number): string {
   return `#${hex.toString(16).padStart(6, '0')}`;
+}
+
+/** Pełny zapas amunicji grupy WTÓRNEJ samolotu (działko 20 mm Bf 109); 0, gdy ma jedną grupę broni. */
+function secondaryAmmoMaxOf(plane: typeof localPlane): number {
+  const g = plane.armament.groups[1];
+  return g ? g.ammoPerGun * g.muzzles.length : 0;
 }
 
 /**
@@ -319,6 +326,8 @@ const killFeed: KillFeedLine[] = [];
 let localHealthFrac = 1;
 /** Ułamek amunicji własnego samolotu z ostatniego snapshotu (HUD) — ogień liczy serwer (faza 14). */
 let localAmmoFrac = 1;
+/** Ułamek amunicji grupy WTÓRNEJ (działko 20 mm Bf 109) z ostatniego snapshotu (protokół v5). */
+let localAmmoSecondaryFrac = 1;
 
 // --- wizualia walki (faza 14, parytet z SP) ---
 const explosions = new Explosions(scene);
@@ -362,8 +371,39 @@ function ensureMesh(id: number, type: PlaneType): PlaneModel {
     scene.add(m.object);
     meshes.set(id, m);
     meshTypeById.set(id, type);
+    // ekran ładowania czeka na model tej encji; `gen` ucina liczenie, gdy mecz się zmienił,
+    // zanim asynchroniczne wczytanie .glb zdążyło się domknąć (m.ready domyka się też po błędzie)
+    const gen = modelGen;
+    modelsTotal++;
+    updateLoadingStatus();
+    void m.ready.then(() => {
+      if (gen !== modelGen) return;
+      modelsReady++;
+      updateLoadingStatus();
+      maybeHideLoading();
+    });
   }
   return m;
+}
+
+/** Aktualizuje tekst postępu na ekranie ładowania (liczba gotowych modeli / wszystkich). */
+function updateLoadingStatus(): void {
+  const statusEl = document.getElementById('loading-status');
+  if (!statusEl) return;
+  statusEl.textContent =
+    modelsTotal === 0
+      ? 'Wczytywanie świata…'
+      : `Wczytywanie modeli samolotów: ${String(modelsReady)} / ${String(modelsTotal)}`;
+}
+
+/** Chowa ekran ładowania, gdy świat gotowy: jesteśmy w grze, predykcja ruszyła i wczytały się
+ *  modele 3D wszystkich samolotów meczu (inaczej widać bryły zastępcze). Wykonuje się raz. */
+function maybeHideLoading(): void {
+  if (loadingHidden) return;
+  if (phase !== 'playing' || !predictor.ready) return;
+  if (modelsTotal === 0 || modelsReady < modelsTotal) return;
+  document.getElementById('loading')?.classList.add('hidden');
+  loadingHidden = true;
 }
 
 function clearMeshes(): void {
@@ -377,6 +417,10 @@ function clearMeshes(): void {
 /** Świeży stan gry przy wejściu do meczu (nowy mecz / reconnect): zero starych encji. */
 function resetGameState(): void {
   clearMeshes();
+  // nowy mecz/reconnect: wyzeruj postęp ładowania modeli i unieważnij stare `.then` (modelGen)
+  modelGen++;
+  modelsReady = 0;
+  modelsTotal = 0;
   // świeży lokalny samolot: domyślny typ do pierwszego snapshotu (odbuduje predyktor/błysk/amunicję);
   // własny typ ujawni się w 1. snapshocie i setLocalPlane przestawi go na właściwy (faza 19b)
   setLocalPlane(DEFAULT_PLANE_TYPE);
@@ -393,6 +437,7 @@ function resetGameState(): void {
   hitMarkerKill = false;
   localHealthFrac = 1;
   localAmmoFrac = 1;
+  localAmmoSecondaryFrac = 1;
   healthFracById.clear();
   lifeById.clear();
   smokeAccumById.clear();
@@ -439,6 +484,7 @@ function handleSnapshot(snap: Snapshot): void {
       predictor.reconcile(e, snap.ackSeq);
       localHealthFrac = e.healthFrac;
       localAmmoFrac = e.ammoFrac;
+      localAmmoSecondaryFrac = e.ammoSecondaryFrac;
     } else {
       remoteScratch.push(e);
     }
@@ -465,6 +511,7 @@ function setLocalPlane(type: PlaneType): void {
   localPlaneType = type;
   localPlane = planeConfigOf(type);
   localAmmoMax = totalAmmo(localPlane.armament);
+  localSecondaryMax = secondaryAmmoMaxOf(localPlane);
   predictor = new Predictor(localPlane, terrain);
   muzzleFlash.dispose();
   muzzleFlash = new MuzzleFlash(scene, allMuzzles(localPlane.armament));
@@ -555,17 +602,18 @@ function playerName(id: number): string {
 
 // --- lobby UI + sieć ---
 const lobby = new LobbyUI({
-  onQuickPlay: () => withConnection((c) => c.quickPlay()),
-  onCreateRoom: (bots, difficulty, mode) =>
-    withConnection((c) => c.createRoom(bots, difficulty, mode)),
+  // „Załóż własną grę": pokój z domyślnymi ustawieniami — host konfiguruje tryb/boty/poziom/samolot
+  // dopiero w poczekalni (jeden prosty ekran wejściowy)
+  onCreateRoom: () => withConnection((c) => c.createRoom()),
   onJoinRoom: (code) => withConnection((c) => c.joinRoom(code)),
-  onRefreshList: () => withConnection((c) => c.requestRoomList()),
   onStartMatch: () => net?.startMatch(),
   onLeaveRoom: () => {
     net?.leaveRoom();
     enterLobby();
   },
   onSelectPlane: (plane) => net?.selectPlane(plane), // faza 19b: wybór samolotu w poczekalni
+  onUpdateRoom: (opts) => net?.updateRoom(opts), // host: zmiana trybu/botów/poziomu w poczekalni
+  onSendChat: (text) => net?.sendChat(text), // czat poczekalni
 });
 
 // --- nakładki pętli meczu (faza 13): scoreboard (Tab) + ekran wyników z rewanżem ---
@@ -756,9 +804,18 @@ function createNet(nick: string, token: string | null): NetClient {
   };
   c.onRoomList = (msg) => lobby.setRoomList(msg.rooms);
   c.onRoomJoined = (msg) => onRoomJoined(msg);
+  c.onChat = (msg) => lobby.appendChat(msg); // czat poczekalni (historia + broadcast)
   c.onRoomUpdate = (msg) => {
     if (!roomView) return;
-    roomView = { ...roomView, state: msg.state, mode: msg.mode, players: msg.players, hostId: msg.hostId };
+    roomView = {
+      ...roomView,
+      state: msg.state,
+      mode: msg.mode,
+      difficulty: msg.difficulty,
+      botCount: countBots(msg.players),
+      players: msg.players,
+      hostId: msg.hostId,
+    };
     if (msg.state === 'playing') {
       if (phase !== 'playing') enterPlaying();
     } else if (msg.state === 'waiting') {
@@ -803,13 +860,42 @@ function onRoomJoined(msg: RoomJoinedMessage): void {
     code: msg.code,
     state: msg.state,
     mode: msg.mode, // faza 19b: poczekalnia pokazuje wybór samolotu (FFA) / sprzęt wg drużyny
+    difficulty: msg.difficulty,
+    botCount: countBots(msg.players),
     players: msg.players,
     hostId: msg.hostId,
     youId: msg.youId,
   };
   scoreboard.setLocalId(msg.youId);
+  lobby.clearChat(); // świeży pokój — czyść log PRZED historią z serwera (przychodzi tuż po roomJoined)
   if (msg.state === 'playing') enterPlaying();
   else enterWaiting(roomView);
+}
+
+/** Liczba botów w roster (do selektora hosta + podsumowania w poczekalni). */
+function countBots(players: readonly RoomPlayer[]): number {
+  let n = 0;
+  for (const p of players) if (p.isBot) n++;
+  return n;
+}
+
+// Odświeżanie listy pokoi na ekranie wejściowym: serwer nie pushuje listy, więc odpytujemy ją
+// cyklicznie, żeby auto-wykryta otwarta gra (ekran wejściowy) nadążała za zakładaniem/zamykaniem
+// pokoi. Polling żyje TYLKO na ekranie wejściowym (nie w poczekalni / grze).
+const ROOM_POLL_INTERVAL_MS = 3000;
+let roomPollTimer: ReturnType<typeof setInterval> | null = null;
+function startRoomPolling(): void {
+  if (roomPollTimer !== null) return;
+  net?.requestRoomList();
+  roomPollTimer = setInterval(() => {
+    if (phase === 'lobby' && !roomView) net?.requestRoomList();
+    else stopRoomPolling();
+  }, ROOM_POLL_INTERVAL_MS);
+}
+function stopRoomPolling(): void {
+  if (roomPollTimer === null) return;
+  clearInterval(roomPollTimer);
+  roomPollTimer = null;
 }
 
 function enterLobby(): void {
@@ -820,12 +906,14 @@ function enterLobby(): void {
   scoreboard.hide();
   results.hide();
   lobby.showEntry();
+  startRoomPolling(); // auto-wykryta otwarta gra na ekranie wejściowym
   document.getElementById('loading')?.classList.add('hidden');
 }
 
 function enterWaiting(view: WaitingView): void {
   phase = 'lobby';
   matchResultsShown = false;
+  stopRoomPolling(); // jesteśmy już w pokoju — przestań odpytywać listę otwartych gier
   scoreboard.hide();
   results.hide();
   hideCombatOverlays(); // z meczu do poczekalni: zgaś markery/roster/horyzont/alert (render staje)
@@ -837,6 +925,7 @@ function enterPlaying(): void {
   if (phase === 'playing') return;
   phase = 'playing';
   matchResultsShown = false;
+  stopRoomPolling();
   // Parytet z SP (P5.1): spawnCombatant resetuje gaz do 0.8 przy każdym wejściu do gry —
   // bez tego rewanż dziedziczyłby ostatni gaz gracza zamiast startować na połowie mocy.
   keyboard.throttle = 0.8;
@@ -844,7 +933,10 @@ function enterPlaying(): void {
   scoreboard.hide();
   results.hide();
   lobby.hide();
+  // pokaż ekran ładowania na czas pobierania modeli 3D (znika w maybeHideLoading, gdy wszystkie gotowe)
   loadingHidden = false;
+  document.getElementById('loading')?.classList.remove('hidden');
+  updateLoadingStatus();
 }
 
 // --- pętla wejścia (60 Hz, niezależnie od fps renderu) ---
@@ -935,11 +1027,14 @@ function updateHud(): void {
     controlMode: mouseAim.locked ? 'mysz' : 'klawiatura',
     ammo: Math.round(localAmmoFrac * localAmmoMax),
     ammoMax: localAmmoMax,
+    // osobny licznik działka 20 mm — tylko dla samolotów z grupą wtórną (Bf 109); HUD domyśla się „20 mm"
+    secondaryAmmo: localSecondaryMax > 0 ? Math.round(localAmmoSecondaryFrac * localSecondaryMax) : undefined,
+    secondaryAmmoMax: localSecondaryMax > 0 ? localSecondaryMax : undefined,
     extraLines: hudExtraLines(),
   });
 }
 
-/** Wiersze dodatkowe HUD online: pokój, własne zestrzelenia, HP, ping + podpowiedzi sterowania. */
+/** Wiersze dodatkowe HUD online: pokój, własne zestrzelenia, HP, ping + status celowania myszą. */
 function hudExtraLines(): string[] {
   const lines: string[] = ['', hudRow('pokój', roomView?.code ?? '—')];
   if (latestStandings) {
@@ -949,12 +1044,12 @@ function hudExtraLines(): string[] {
     const myKills = latestStandings.rows.find((r) => r.id === localId)?.kills ?? 0;
     lines.push(hudRow('zestrz.', String(myKills)));
   }
+  // klawiszologia żyje w ekranie „Jak grać" (lobby); w HUD tylko status celowania myszą
   lines.push(
     hudRow('HP', (localHealthFrac * 100).toFixed(0), '%'),
-    hudRow('ping', String(net?.rttMs ?? 0), 'ms'),
+    hudRow('ping', String(displayedPingMs), 'ms'),
     '',
     mouseAim.locked ? '[mysz aktywna]' : '[kliknij — celowanie myszą]',
-    'WSAD/strzałki ster • Q/E kierunek • Shift/Ctrl gaz • LPM/Spacja ogień • [Tab] tabela • [N] sieć',
   );
   return lines;
 }
@@ -1080,7 +1175,6 @@ function updateHudOverlays(): void {
     // drużynowy: czerwony wróg / zielony sojusznik (paleta foe/friend); FFA: unikatowy kolor per id
     if (matchMode === 'team') marker.setFoe(factionById.get(id) !== localFaction);
     else marker.setColorHex(entityColorHex(id, false));
-    marker.setType(planeLabelOf(planeTypeById.get(id) ?? DEFAULT_PLANE_TYPE)); // typ wroga (matchup)
     marker.update(m.object.position, viewPos, camera, w, h);
   }
   for (; mi < markers.length; mi++) markers[mi]!.hide();
@@ -1205,7 +1299,18 @@ function rosterRows(): readonly RosterRow[] {
 // --- przełączniki debug: [N] overlay sieci, [P] panel symulatora (tylko dev) ---
 let conditionsPanel: NetConditionsPanel | undefined;
 let panelLoading = false;
+/** Czy fokus jest w polu edycji tekstu (input/textarea/select/contentEditable) — np. czat poczekalni. */
+function isEditingText(): boolean {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el as HTMLElement).isContentEditable;
+}
+
 window.addEventListener('keydown', (event) => {
+  // nie przechwytuj skrótów, gdy gracz pisze w polu tekstowym (np. czat poczekalni) —
+  // inaczej każde „n" przełączałoby panel sieci, „p" panel warunków sieci itd.
+  if (isEditingText()) return;
   if (event.code === 'KeyN') {
     overlay.toggle();
   } else if (event.code === 'KeyP' && import.meta.env.DEV && net) {
@@ -1225,6 +1330,16 @@ window.addEventListener('keydown', (event) => {
 let lastMs = performance.now();
 let inputAccumS = 0;
 let loadingHidden = false;
+// ping w HUD odświeżany rzadko (mniej migotania liczby) — wartość pokazywana, nie surowy net.rttMs
+const PING_REFRESH_S = 1;
+let displayedPingMs = 0;
+let pingRefreshAccumS = PING_REFRESH_S; // pierwsza klatka od razu ustawia świeżą wartość
+// ekran ładowania (decyzja użytkownika 2026-06-21): trzyma się, aż wczytają się modele 3D
+// WSZYSTKICH samolotów meczu (teren generuje się natychmiast; sekundy zajmuje pobranie .glb,
+// stąd „bryły zastępcze"). Liczniki gotowości; `modelGen` ucina zliczanie starych meczów.
+let modelsReady = 0;
+let modelsTotal = 0;
+let modelGen = 0;
 const prevLocalPos = new Vector3();
 let hasPrevLocal = false;
 const TELEPORT_JUMP_M = 1000;
@@ -1306,10 +1421,13 @@ renderer.setAnimationLoop(() => {
       // kamera nigdy pod powierzchnią (wrak/orbita nisko nad ziemią wbijały ją w teren)
       const cameraFloorM = surfaceHeightM(terrain, camera.position.x, camera.position.z) + 3;
       if (camera.position.y < cameraFloorM) camera.position.y = cameraFloorM;
-      if (!loadingHidden) {
-        document.getElementById('loading')?.classList.add('hidden');
-        loadingHidden = true;
-      }
+      maybeHideLoading(); // znika dopiero, gdy wczytają się modele wszystkich samolotów
+    }
+    // ping w HUD odświeżany co ~1 s (decyzja użytkownika 2026-06-21 — był aktualizowany co klatkę)
+    pingRefreshAccumS += frameDtS;
+    if (pingRefreshAccumS >= PING_REFRESH_S) {
+      pingRefreshAccumS = 0;
+      displayedPingMs = net?.rttMs ?? 0;
     }
     updateCombatVisuals(frameDtS);
     updateWorldVisuals(frameDtS);
@@ -1340,14 +1458,15 @@ if (savedToken) {
   attemptingResume = true;
   connectedNick = lobby.nick;
   net = createNet(lobby.nick, savedToken);
-  // gdyby reconnect nie zwrócił pokoju (token wygasł), po chwili pokaż lobby
+  // gdyby reconnect nie zwrócił pokoju (token wygasł), po chwili pokaż lobby (z pollingiem listy)
   setTimeout(() => {
-    if (phase === 'lobby' && !roomView) {
-      lobby.showEntry();
-      net?.requestRoomList();
-    }
+    if (phase === 'lobby' && !roomView) enterLobby();
   }, 1500);
 } else {
+  // brak tokenu: pokaż ekran wejściowy od razu (bez przebłysku pustki), a w tle połącz się, by
+  // pobrać listę pokoi i pokazać auto-wykrytą otwartą grę (onWelcome → enterLobby startuje polling).
+  // Nick z hello jest aktualny; gdy gracz go zmieni przed akcją, withConnection łączy ponownie.
   lobby.showEntry();
+  withConnection((c) => c.requestRoomList());
 }
 document.getElementById('loading')?.classList.add('hidden');

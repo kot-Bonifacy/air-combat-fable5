@@ -21,7 +21,8 @@
     "groundHardFloorM": 140,
     "groundLookAheadS": 7,
     "groundClimbDeg": 25,
-    "maxDiveDeg": 28
+    "maxDiveDeg": 28,
+    "hitReactionDurationS": 2.2
   },
   "levels": {
     "latwy": {
@@ -46,7 +47,8 @@
       "maxG": 8.0,
       "throttle": 1.0,
       "fireRangeM": 550,
-      "fireConeDeg": 4.0
+      "fireConeDeg": 4.0,
+      "hitReactionDelayS": 0.5
     }
   }
 }

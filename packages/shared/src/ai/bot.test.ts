@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { Vector3 } from 'three';
+import { Quaternion, Vector3 } from 'three';
 import { createPlaneState, type PlaneState } from '../physics/state';
-import { SPOT_RANGE_M } from '../constants';
-import { selectNearestTarget } from './bot';
+import { FIXED_DT_S, SPOT_RANGE_M } from '../constants';
+import { createSimPlane, pilotStep } from '../physics/pilot-step';
+import { createPilotDemands } from '../instructor/instructor';
+import { validatePlaneState } from '../physics/nan-guard';
+import { SPITFIRE_MK2 } from '../planes/loader';
+import { getForward } from '../math/frame';
+import { Bot, selectNearestTarget } from './bot';
+import { BOT_CONFIG, type DifficultyLevel } from './difficulty';
 
 // Bramka zasięgu wykrycia (faza 7: oznaczanie wrogów dopiero ≤ SPOT_RANGE_M).
 // selectNearestTarget czyta tylko `position` i `life` — budujemy minimalne stany.
@@ -43,5 +49,51 @@ describe('selectNearestTarget — bramka zasięgu wykrycia', () => {
   it('bez limitu (domyślnie) wybiera nawet cel daleko poza zasięgiem', () => {
     const far = planeAt(0, SPOT_RANGE_M + 3000);
     expect(selectNearestTarget(self, [far])).toBe(far);
+  });
+});
+
+// Reakcja na trafienie (decyzja użytkownika 2026-06-21): bot „trudny" po krótkim opóźnieniu
+// zrywa w którąś stronę, gdy go ostrzeliwują — niższe poziomy lecą prosto. Test mierzy zmianę
+// kursu bota lecącego prosto bez celu (patrol), z dala od ziemi: zryw = duża zmiana, brak = mała.
+function headingDeviationAfterHit(level: DifficultyLevel, withHit: boolean): number {
+  const sim = createSimPlane(0x51b);
+  const dir = new Vector3(0, 0, 1);
+  sim.state.position.set(0, 3000, 0); // wysoko → override unikania ziemi nieaktywny
+  sim.state.velocity.copy(dir).multiplyScalar(150);
+  sim.state.orientation.copy(new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), dir));
+  sim.state.throttle = 0.9;
+  sim.state.iasMs = 150;
+  sim.state.life = 'alive';
+  const bot = new Bot(BOT_CONFIG.tuning, BOT_CONFIG.levels[level], 0x51b);
+  bot.reset(sim.state);
+  const demands = createPilotDemands();
+  const env = { surfaceHeightM: 0 };
+  const initialFwd = getForward(sim.state.orientation, new Vector3());
+
+  if (withHit) bot.notifyHit();
+  const TICKS = Math.round(2.9 / FIXED_DT_S); // opóźnienie (0,5 s) + pełen zryw (2,2 s) + margines
+  const fwd = new Vector3();
+  let maxDeviation = 0; // szczyt uniku (po zrywie patrol prostuje nos → mierzymy maksimum, nie koniec)
+  for (let t = 0; t < TICKS; t++) {
+    const out = bot.update(sim.state, SPITFIRE_MK2, null, env, FIXED_DT_S, demands);
+    sim.state.throttle = out.throttle;
+    pilotStep(sim, SPITFIRE_MK2, demands, FIXED_DT_S);
+    validatePlaneState(sim.state, `hit-react ${level} t${String(t)}`);
+    maxDeviation = Math.max(maxDeviation, initialFwd.angleTo(getForward(sim.state.orientation, fwd)));
+  }
+  return maxDeviation;
+}
+
+describe('Bot.notifyHit — zryw po trafieniu (tylko trudny)', () => {
+  it('trudny zrywa po trafieniu (duża zmiana kursu), a bez trafienia leci prosto', () => {
+    const straight = headingDeviationAfterHit('trudny', false);
+    const broke = headingDeviationAfterHit('trudny', true);
+    expect(straight).toBeLessThan(0.15); // patrol bez trafienia = ~prosto
+    expect(broke).toBeGreaterThan(0.4); // po zrywie kurs wyraźnie zmieniony
+  });
+
+  it('łatwy i normalny IGNORUJĄ trafienie (lecą prosto — hitReactionDelayS = 0)', () => {
+    expect(headingDeviationAfterHit('latwy', true)).toBeLessThan(0.15);
+    expect(headingDeviationAfterHit('normalny', true)).toBeLessThan(0.15);
   });
 });
