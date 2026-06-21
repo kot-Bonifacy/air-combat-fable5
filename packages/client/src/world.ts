@@ -29,8 +29,8 @@ import type { Terrain } from '@air-combat/shared';
 // Faza 20 „złota godzina lekka": ciepłe światło kierunkowe + chłodne wypełnienie,
 // słońce z lens flare (three.js examples), cieplejszy horyzont/mgła.
 
-/** Kolor mgły = kolor horyzontu nieba — zlewają się w jedną linię (ledwie ciepły, złota godzina lekka). */
-export const HORIZON_COLOR = 0xd7d6cd;
+/** Kolor mgły = kolor horyzontu nieba — zlewają się w jedną linię (subtelnie ciepły, złota godzina lekka). */
+export const HORIZON_COLOR = 0xddd8c6;
 const ZENITH_COLOR = 0x4a78b0;
 const FOG_NEAR_M = 2_500;
 const FOG_FAR_M = 12_500;
