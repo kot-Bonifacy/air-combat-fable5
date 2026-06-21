@@ -16,6 +16,7 @@ function validRaw(): Record<string, unknown> {
     fullThrottleHeightM: 5000,
     propEfficiency: 0.8,
     staticThrustN: 13000,
+    fuelEnduranceFullThrottleS: 900,
     nMaxG: 8,
     nMinG: -4,
     rollRateCurve: [

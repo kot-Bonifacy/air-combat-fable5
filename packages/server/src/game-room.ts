@@ -1113,6 +1113,7 @@ export class GameRoom {
     state.angularRates.roll = 0;
     state.angularRates.yaw = 0;
     state.throttle = SPAWN_THROTTLE;
+    state.fuelFrac = 1; // nowe życie = pełny bak
     state.iasMs = SPAWN_SPEED_MS;
     state.loadFactor = 1;
     state.stalled = false;

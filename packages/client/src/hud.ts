@@ -18,6 +18,8 @@ export interface HudData {
   /** Pochylenie nosa nad horyzont [rad]. */
   pitchRad: number;
   controlMode: 'mysz' | 'klawiatura';
+  /** Zapas paliwa 0..1 (pełny bak = 1). Przy 0 silnik zgasł — HUD ostrzega. */
+  fuel01: number;
   /** Pozostała amunicja (suma luf). */
   ammo: number;
   /** Pełny zapas amunicji (do wyróżnienia stanu niskiego). */
@@ -39,6 +41,34 @@ function ammoWarning(ammo: number, ammoMax: number): string {
   if (ammo === 0) return '   *** PUSTE ***';
   if (ammo <= ammoMax * LOW_AMMO_RATIO) return '   ! mało !';
   return '';
+}
+
+/** Próg paliwa, poniżej którego HUD ostrzega o niskim baku (udział pełnego baku). */
+const LOW_FUEL_RATIO = 0.15;
+
+/** Sufiks ostrzeżenia o stanie paliwa (silnik zgasł / mało). */
+function fuelWarning(fuel01: number): string {
+  if (fuel01 <= 0) return '   *** SILNIK STANĄŁ ***';
+  if (fuel01 <= LOW_FUEL_RATIO) return '   ! mało !';
+  return '';
+}
+
+/** Próg, poniżej którego HUD ostrzega, że karta graficzna jest za słaba [fps]. */
+export const LOW_FPS_THRESHOLD = 30;
+/** Pełny cykl naprzemiennego ostrzeżenia o niskim FPS [ms] — celowo wolny (po połowie cyklu
+ *  liczba klatek / komunikat), żeby nie migało zbyt szybko (życzenie usera 2026-06-21). */
+const LOW_FPS_BLINK_MS = 5000;
+
+/**
+ * Wiersz FPS do HUD (extraLines). Powyżej progu pokazuje samą liczbę; poniżej miga
+ * NAPRZEMIENNIE (wolno, ~2,5 s na stan) liczbą klatek i ostrzeżeniem o zbyt słabej karcie
+ * graficznej. fps≤0 (przed pierwszym pomiarem) → bez ostrzeżenia. Sterowane zegarem
+ * (HUD odświeżany co klatkę) — bez timerów.
+ */
+export function fpsHudLine(fps: number): string {
+  const fpsRow = hudRow('fps', String(fps));
+  if (fps <= 0 || fps >= LOW_FPS_THRESHOLD) return fpsRow;
+  return Date.now() % LOW_FPS_BLINK_MS < LOW_FPS_BLINK_MS / 2 ? fpsRow : 'KARTA GRAFICZNA ZA SŁABA';
 }
 
 const PITCH_PX_PER_RAD = 120;
@@ -86,6 +116,7 @@ export class Hud {
       hudRow('TAS', data.tasKmh.toFixed(0), 'km/h'),
       hudRow('alt', data.altM.toFixed(0), 'm'),
       hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%'),
+      hudRow('paliwo', (data.fuel01 * 100).toFixed(0), '%') + fuelWarning(data.fuel01),
       hudRow('n', data.nG.toFixed(1), 'G') + gLocText,
       hudRow('ster', data.controlMode),
       hudRow('amun.', String(data.ammo), `/ ${String(data.ammoMax)}`) + ammoWarn,
@@ -107,6 +138,11 @@ export class Hud {
       this.warningEl.textContent = 'SZARZENIE — ODPUŚĆ G';
       this.warningEl.className = 'buffet';
       this.warningEl.style.opacity = String(0.35 + 0.6 * data.blackoutFactor);
+    } else if (data.fuel01 <= 0) {
+      // pusty bak — silnik zgasł (najniższy priorytet ostrzeżeń, ale stale widoczne)
+      this.warningEl.textContent = 'BRAK PALIWA — SILNIK STANĄŁ';
+      this.warningEl.className = 'stall';
+      this.warningEl.style.opacity = '1';
     } else {
       this.warningEl.textContent = '';
       this.warningEl.style.opacity = '0';

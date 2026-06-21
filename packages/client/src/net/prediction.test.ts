@@ -176,6 +176,27 @@ describe('Predictor — predykcja i reconciliation', () => {
     expect(p.renderPosition.distanceTo(p.sim.state.position)).toBeLessThan(0.05); // zanikł
   });
 
+  it('render interpoluje pozę między tickami (fps > 60 Hz nie schodkuje)', () => {
+    const server = makeServer();
+    const p = new Predictor(SPITFIRE_MK2, terrain);
+    p.reconcile(server.entity(), 0); // pierwszy autorytet → snap (offset = 0)
+    for (let t = 1; t <= 10; t++) p.predict(cmd(), t); // nabierz prędkości
+
+    const before = p.sim.state.position.clone(); // poza SPRZED ostatniego kroku (prev)
+    p.predict(cmd(), 11);
+    const after = p.sim.state.position.clone(); // poza po kroku (bieżący tick)
+    expect(before.distanceTo(after)).toBeGreaterThan(1); // tick faktycznie przesunął samolot
+
+    // offset rekonsyliacji = 0 (zgodna fizyka, pierwszy snap), więc render = czysta interpolacja prev→cur
+    p.updateRender(DT, 0);
+    expect(p.renderPosition.distanceTo(before)).toBeLessThan(1e-6); // alpha=0 → poprzedni tick
+    p.updateRender(DT, 1);
+    expect(p.renderPosition.distanceTo(after)).toBeLessThan(1e-6); // alpha=1 → bieżący tick
+    p.updateRender(DT, 0.5);
+    const mid = before.clone().lerp(after, 0.5);
+    expect(p.renderPosition.distanceTo(mid)).toBeLessThan(1e-6); // alpha=0,5 → w pół drogi (brak schodka)
+  });
+
   // --- faza 16: predykcja spadającego wraku gracza (life 'dying') ---
 
   it('zestrzelenie: reconcile przyjmuje „dying", a predykcja steruje spadającym wrakiem', () => {

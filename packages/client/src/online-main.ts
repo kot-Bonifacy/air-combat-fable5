@@ -58,7 +58,7 @@ import { EnemyMarker } from './enemy-marker';
 import { Explosions } from './explosion';
 import { OrbitCamera } from './orbit-camera';
 import { GreyoutOverlay } from './greyout-overlay';
-import { Hud, hudRow } from './hud';
+import { Hud, hudRow, fpsHudLine } from './hud';
 import { KeyboardInput } from './input';
 import { MouseAim, projectDirToScreen } from './mouse-aim';
 import { MuzzleFlash } from './muzzle-flash';
@@ -1022,6 +1022,8 @@ function updateHud(): void {
     bankRad: Math.atan2(-scratchRight.y, scratchUp.y),
     pitchRad: Math.asin(Math.min(1, Math.max(-1, scratchFwd.y))),
     controlMode: mouseAim.locked ? 'mysz' : 'klawiatura',
+    // ostrzeżenie „pusty bak" tylko w locie — wrak/obserwator nie ma silnika do zgaszenia
+    fuel01: localAlive ? s.fuelFrac : 1,
     ammo: Math.round(localAmmoFrac * localAmmoMax),
     ammoMax: localAmmoMax,
     // osobny licznik działka 20 mm — tylko dla samolotów z grupą wtórną (Bf 109); HUD domyśla się „20 mm"
@@ -1031,7 +1033,7 @@ function updateHud(): void {
   });
 }
 
-/** Wiersze dodatkowe HUD online: pokój, własne zestrzelenia, HP, ping + status celowania myszą. */
+/** Wiersze dodatkowe HUD online: pokój, własne zestrzelenia, HP, ping, FPS. */
 function hudExtraLines(): string[] {
   const lines: string[] = ['', hudRow('pokój', roomView?.code ?? '—')];
   if (latestStandings) {
@@ -1041,12 +1043,11 @@ function hudExtraLines(): string[] {
     const myKills = latestStandings.rows.find((r) => r.id === localId)?.kills ?? 0;
     lines.push(hudRow('zestrz.', String(myKills)));
   }
-  // klawiszologia żyje w ekranie „Jak grać" (lobby); w HUD tylko status celowania myszą
+  // klawiszologia żyje w ekranie „Jak grać" (lobby); status celowania pokazuje już wiersz „ster"
   lines.push(
     hudRow('HP', (localHealthFrac * 100).toFixed(0), '%'),
     hudRow('ping', String(displayedPingMs), 'ms'),
-    '',
-    mouseAim.locked ? '[mysz aktywna]' : '[kliknij — celowanie myszą]',
+    fpsHudLine(fpsValue),
   );
   return lines;
 }
@@ -1343,10 +1344,23 @@ const prevLocalPos = new Vector3();
 let hasPrevLocal = false;
 const TELEPORT_JUMP_M = 1000;
 
+// licznik FPS do HUD (jak w SP main.ts): średnia z okna ~0,5 s, niezależna od fps fizyki
+let fpsFrames = 0;
+let fpsWindowS = 0;
+let fpsValue = 0;
+
 renderer.setAnimationLoop(() => {
   const now = performance.now();
   const frameDtS = Math.min(0.1, (now - lastMs) / 1000);
   lastMs = now;
+
+  fpsFrames++;
+  fpsWindowS += frameDtS;
+  if (fpsWindowS >= 0.5) {
+    fpsValue = Math.round(fpsFrames / fpsWindowS);
+    fpsFrames = 0;
+    fpsWindowS = 0;
+  }
 
   if (phase === 'playing') {
     inputAccumS = Math.min(inputAccumS + frameDtS, 0.25);
@@ -1355,7 +1369,9 @@ renderer.setAnimationLoop(() => {
       inputAccumS -= INPUT_DT_S;
     }
 
-    predictor.updateRender(frameDtS);
+    // alpha = ułamek niewykorzystanego akumulatora inputu → interpolacja pozy lokalnego gracza
+    // między tickami fizyki (bez tego mesh „schodkuje" przy fps > 60 Hz; obce już interpoluje buffer)
+    predictor.updateRender(frameDtS, inputAccumS / INPUT_DT_S);
     interpolator.update(frameDtS);
 
     remoteCount = 0;

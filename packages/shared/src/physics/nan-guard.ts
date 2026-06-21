@@ -9,7 +9,7 @@ export function dumpPlaneState(state: PlaneState): string {
     `velocity=(${v(state.velocity.x)}, ${v(state.velocity.y)}, ${v(state.velocity.z)})`,
     `orientation=(${v(state.orientation.x)}, ${v(state.orientation.y)}, ${v(state.orientation.z)}, ${v(state.orientation.w)})`,
     `angularRates=(pitch ${v(state.angularRates.pitch)}, roll ${v(state.angularRates.roll)}, yaw ${v(state.angularRates.yaw)})`,
-    `throttle=${v(state.throttle)} iasMs=${v(state.iasMs)} loadFactor=${v(state.loadFactor)} stalled=${String(state.stalled)}`,
+    `throttle=${v(state.throttle)} fuelFrac=${v(state.fuelFrac)} iasMs=${v(state.iasMs)} loadFactor=${v(state.loadFactor)} stalled=${String(state.stalled)}`,
     `life=${state.life} lifeTimerS=${v(state.lifeTimerS)}`,
   ].join('\n');
 }
@@ -34,6 +34,7 @@ export function validatePlaneState(state: PlaneState, context = ''): void {
     'angularRates.roll': state.angularRates.roll,
     'angularRates.yaw': state.angularRates.yaw,
     throttle: state.throttle,
+    fuelFrac: state.fuelFrac,
     iasMs: state.iasMs,
     loadFactor: state.loadFactor,
     lifeTimerS: state.lifeTimerS,

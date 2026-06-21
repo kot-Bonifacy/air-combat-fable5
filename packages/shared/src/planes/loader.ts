@@ -21,6 +21,12 @@ export interface PlaneConfig {
   fullThrottleHeightM: number;
   propEfficiency: number;
   staticThrustN: number;
+  /**
+   * Wytrzymałość pełnego baku przy 100% gazu [s] — czas do wyczerpania paliwa lecąc
+   * na pełnym gazie (zużycie jest proporcjonalne do gazu, więc 50% gazu = 2× dłużej).
+   * Po wyczerpaniu silnik gaśnie (T=0). 900 = 15 min na pełnym gazie.
+   */
+  fuelEnduranceFullThrottleS: number;
   /** Limit strukturalny przeciążenia dodatniego [G]. */
   nMaxG: number;
   /** Limit strukturalny przeciążenia ujemnego [G] (liczba ujemna). */
@@ -190,6 +196,7 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   fullThrottleHeightM: [0, 20_000],
   propEfficiency: [0.1, 1],
   staticThrustN: [100, 10_000_000],
+  fuelEnduranceFullThrottleS: [60, 36_000],
   nMaxG: [1, 20],
   nMinG: [-10, 0],
   alignTauS: [0.05, 5],

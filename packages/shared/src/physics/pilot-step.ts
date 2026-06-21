@@ -68,6 +68,15 @@ export function pilotStep(
   dtS: number,
 ): PilotTickResult {
   const { state } = sim;
+
+  // paliwo: spala się proporcjonalnie do gazu (pełny bak przy 100% starcza na
+  // fuelEnduranceFullThrottleS sekund). Po wyczerpaniu silnik gaśnie — thrustForce daje
+  // T=0 przy fuelFrac=0. Liczone przed siłami, by ciąg tego ticku znał już pusty bak.
+  // stepWreck wymusza throttle=0 PRZED pilotStep, więc wrak nie pali paliwa.
+  if (state.fuelFrac > 0) {
+    state.fuelFrac = Math.max(0, state.fuelFrac - (state.throttle * dtS) / plane.fuelEnduranceFullThrottleS);
+  }
+
   const tasMs = state.velocity.length();
   const qPa = dynamicPressurePa(airDensityKgM3(state.position.y), tasMs);
 

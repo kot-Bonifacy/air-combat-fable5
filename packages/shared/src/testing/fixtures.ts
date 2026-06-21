@@ -19,6 +19,7 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
     fullThrottleHeightM: 4000,
     propEfficiency: 0.8,
     staticThrustN: 10_000,
+    fuelEnduranceFullThrottleS: 900,
     nMaxG: 8,
     nMinG: -4,
     rollRateCurve: [

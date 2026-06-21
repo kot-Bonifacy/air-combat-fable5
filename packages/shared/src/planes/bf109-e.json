@@ -11,6 +11,7 @@
   "fullThrottleHeightM": 4500,
   "propEfficiency": 0.8,
   "staticThrustN": 6800,
+  "fuelEnduranceFullThrottleS": 900,
   "nMaxG": 8,
   "nMinG": -4,
   "rollRateCurve": [

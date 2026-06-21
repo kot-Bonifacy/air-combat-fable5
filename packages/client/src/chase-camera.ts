@@ -8,6 +8,14 @@ import { getForward, getUp } from '@air-combat/shared';
 const DISTANCE_M = 16;
 const HEIGHT_M = 4.5;
 const POSITION_TAU_S = 0.22;
+/**
+ * Stała czasowa wygładzania wektora prędkości [s]. Surowa prędkość aktualizuje się
+ * skokowo co tick fizyki 60 Hz — przy fps > 60 ten schodek przebija do punktu lookAt
+ * i objawia się drżeniem kierunku patrzenia (horyzontu). Filtr 1. rzędu (krótszy niż
+ * pozycyjny — wyprzedzenie skrętu zostaje czujne) sprawia, że kamera zależy WYŁĄCZNIE
+ * od gładkich wielkości. Pozycja i orientacja przychodzą już interpolowane.
+ */
+const VELOCITY_TAU_S = 0.1;
 /** Ile przechylenia samolotu przejmuje kamera (0 = sztywny horyzont). */
 const ROLL_FOLLOW = 0.35;
 /** Wyprzedzenie skrętu: punkt patrzenia = pozycja + mix(nos, kierunek lotu). */
@@ -26,6 +34,7 @@ const scratchVHat = new Vector3();
 
 export class ChaseCamera {
   private readonly smoothedPos = new Vector3();
+  private readonly smoothedVel = new Vector3();
   private initialized = false;
 
   constructor(private readonly camera: PerspectiveCamera) {}
@@ -57,10 +66,13 @@ export class ChaseCamera {
 
     if (!this.initialized) {
       this.smoothedPos.copy(scratchTargetPos);
+      this.smoothedVel.copy(velocity);
       this.initialized = true;
     } else {
       const blend = -Math.expm1(-dtS / POSITION_TAU_S);
       this.smoothedPos.lerp(scratchTargetPos, blend);
+      // prędkość wygładzana osobno (krótszy tau) — surowa schodkuje co tick i drży lookAt
+      this.smoothedVel.lerp(velocity, -Math.expm1(-dtS / VELOCITY_TAU_S));
     }
 
     this.camera.position.copy(this.smoothedPos);
@@ -73,9 +85,9 @@ export class ChaseCamera {
     }
 
     // wyprzedzenie skrętu: patrz tam, dokąd samolot LECI, nie tylko gdzie celuje nos
-    const speed = velocity.length();
+    const speed = this.smoothedVel.length();
     if (speed > 1) {
-      scratchVHat.copy(velocity).divideScalar(speed);
+      scratchVHat.copy(this.smoothedVel).divideScalar(speed);
     } else {
       scratchVHat.copy(scratchFwd);
     }

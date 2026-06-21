@@ -47,6 +47,8 @@ export interface ReconcileMetrics {
 }
 
 const IDENTITY_Q = new Quaternion();
+/** Skok pozycji prev→bieżąca większy niż to² = zawinięcie torusa (nie interpoluj przez szew) [m²]. */
+const INTERP_WRAP_SNAP_SQ_M = 300 * 300;
 
 export class Predictor {
   /** Autorytatywny (lokalnie predykowany) stan — fizyka, nie render. */
@@ -63,6 +65,13 @@ export class Predictor {
   // offset wygładzania: render = autorytet + (posError, quatError), oba zanikają do zera
   private readonly posError = new Vector3();
   private readonly quatError = new Quaternion();
+
+  // poza SPRZED ostatniego kroku predykcji — baza interpolacji renderu prev→bieżący tick.
+  // Bez niej mesh przy fps > 60 Hz „schodkuje" co tick 60 Hz (updateRender). Ustawiana w
+  // predict() (przed krokiem) i w reconcile() (= autorytet, by nie interpolować przez korektę).
+  private readonly prevPos = new Vector3();
+  private readonly prevQuat = new Quaternion();
+  private readonly interpQuat = new Quaternion();
 
   // scratch (jedna instancja predyktora, sekwencyjnie)
   private readonly renderedPos = new Vector3();
@@ -107,6 +116,10 @@ export class Predictor {
   predict(command: PilotCommand, sequence: number): void {
     if (!this.hasServer) return;
     const life = this.sim.state.life;
+    if (life !== 'alive' && life !== 'dying') return; // dead/respawning: autorytet serwera, brak predykcji
+    // poza SPRZED kroku = baza interpolacji renderu (updateRender lerpuje prev→bieżący tick)
+    this.prevPos.copy(this.sim.state.position);
+    this.prevQuat.copy(this.sim.state.orientation);
     if (life === 'alive') {
       stepPilotedPlane(
         this.sim,
@@ -118,10 +131,8 @@ export class Predictor {
         FIXED_DT_S,
         'predykcja',
       );
-    } else if (life === 'dying') {
-      stepWreckPiloted(this.sim, this.plane, this.demands, command, this.terrain, FIXED_DT_S, 'predykcja-wrak');
     } else {
-      return; // dead/respawning: stan autorytatywny serwera, brak predykcji
+      stepWreckPiloted(this.sim, this.plane, this.demands, command, this.terrain, FIXED_DT_S, 'predykcja-wrak');
     }
     this.pending.push({ sequence, command: { ...command } });
   }
@@ -178,6 +189,9 @@ export class Predictor {
       this.sim.gLoadMachine.reset();
       this.sim.gLoadEffects.reserve = 1;
       this.sim.gLoadEffects.blackoutFactor = 0;
+      // paliwo nie jest w snapshocie (ukryty stan fizyki) — przy świeżym spawnie (dead/respawning
+      // → alive) mirror serwerowego resetu do pełnego baku; w locie predykcja sama je integruje.
+      if (serverAlive) state.fuelFrac = 1;
     }
 
     // replay inputów nowszych niż ack TĄ SAMĄ ścieżką co predict: żywy → stepPilotedPlane,
@@ -222,16 +236,35 @@ export class Predictor {
       this.quatError.copy(this.renderedQuat).multiply(this.tmpQ.copy(state.orientation).invert());
     }
 
+    // baza interpolacji renderu = przyjęty autorytet (po replayu): prev = bieżąca poza, więc
+    // updateRender nie interpoluje przez skok korekty — ciągłość obrazu trzyma offset wygładzania.
+    this.prevPos.copy(state.position);
+    this.prevQuat.copy(state.orientation);
+
     if (continuesAlive) this.recordCorrection(correctionM); // metryki Fazy 9 = lot żywego samolotu
   }
 
-  /** Aktualizacja renderu (każda klatka): offset zanika wykładniczo do zera. */
-  updateRender(frameDtS: number): void {
+  /**
+   * Aktualizacja renderu (każda klatka): offset rekonsyliacji zanika wykładniczo, a poza
+   * bazowa jest INTERPOLOWANA między poprzednim a bieżącym tickiem fizyki (`alpha` = ułamek
+   * akumulatora inputu, [0,1)). Bez interpolacji mesh przy fps > 60 Hz „schodkuje" co tick
+   * 60 Hz, a wygładzana kamera pościgowa obnaża to jako drżenie samolotu (orbitalna, sztywno
+   * śledząca, nie). `alpha` domyślnie 1 (poza bieżącego ticku) — testy rekonsyliacji wołają tak.
+   */
+  updateRender(frameDtS: number, alpha = 1): void {
     const decay = Math.exp(-frameDtS / RECONCILE_SMOOTH_TAU_S);
     this.posError.multiplyScalar(decay);
     this.quatError.slerp(IDENTITY_Q, 1 - decay);
-    this.renderPosition.copy(this.sim.state.position).add(this.posError);
-    this.renderOrientation.copy(this.quatError).multiply(this.sim.state.orientation);
+    const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+    const state = this.sim.state;
+    // zawinięcie torusa w tym oknie: prev po drugiej stronie areny → snap (bez interpolacji przez szew)
+    if (this.prevPos.distanceToSquared(state.position) > INTERP_WRAP_SNAP_SQ_M) {
+      this.prevPos.copy(state.position);
+      this.prevQuat.copy(state.orientation);
+    }
+    this.renderPosition.lerpVectors(this.prevPos, state.position, a).add(this.posError);
+    this.interpQuat.copy(this.prevQuat).slerp(state.orientation, a);
+    this.renderOrientation.copy(this.quatError).multiply(this.interpQuat);
   }
 
   private recordCorrection(correctionM: number): void {

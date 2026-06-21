@@ -44,6 +44,16 @@ churnował się przy przebudowie botów (zmiana ustawień w poczekalni → `setB
 dwie żywe encje dostawały TEN SAM slot → spawn w identycznym punkcie → zderzenie tuż po wygaśnięciu ochrony 3 s.
 Fix: `start()` przydziela odrębne, równomiernie rozłożone sloty (`assignStartSlots`, round(i·S/n)); BEZ protokołu (v5).
 
+**Sesja poprawek 2026-06-21 cz.2 (3 zgłoszenia, 465 testów zielone, BEZ bumpu protokołu — v5):** (1) usunięty
+napis HUD „[kliknij — celowanie myszą]" (redundantny z wierszem „ster"; tryb celowania nadal w „ster"); (2) FPS
+w HUD także online (`fpsHudLine` w `hud.ts`, wspólny SP+MP); poniżej 30 fps wiersz **miga naprzemiennie** (wolno,
+cykl 5 s) liczbą klatek i „KARTA GRAFICZNA ZA SŁABA"; (3) **paliwo** jako ukryty stan fizyki (`PlaneState.fuelFrac`
+0..1, BEZ snapshotu — jak maszyna stallu/G-LOC): spala się proporcjonalnie do gazu (`fuelEnduranceFullThrottleS=900`
+w JSON obu samolotów = 15 min na 100% gazu), po wyczerpaniu silnik gaśnie (`thrustForce` T=0), każdy samolot
+(gracz+boty), respawn = pełny bak. Liczy `pilotStep` (serwer autorytatywnie, klient predykuje; `reconcile` resetuje
+do 1 przy świeżym spawnie). HUD: wiersz „paliwo %" + „! mało !"/„BRAK PALIWA — SILNIK STANĄŁ". Śmigło nadal kręci
+się wg gazu (nie wg paliwa) — parytet local↔remote (paliwa zdalnych nie ma w snapshocie).
+
 ⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
 → overlay obserwatora; drużynowy; v5 z wyborem samolotu + licznik 20 mm + ekran ładowania + zryw botów) +
 playtest poprawek 2026-06-21 (zryw botów „trudnych", nazwiska PL/DE) + playtest balansu 1v1 Spitfire↔Bf 109 +

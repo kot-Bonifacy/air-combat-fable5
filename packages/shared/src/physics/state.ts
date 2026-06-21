@@ -34,6 +34,14 @@ export interface PlaneState {
   angularRates: AngularRates;
   /** Przepustnica 0..1. */
   throttle: number;
+  /**
+   * Zapas paliwa jako ułamek pełnego baku 0..1. Spala się proporcjonalnie do gazu w
+   * `pilotStep` (pełny bak przy 100% gazu starcza na plane.fuelEnduranceFullThrottleS);
+   * po wyczerpaniu (=0) silnik gaśnie — `thrustForce` daje T=0. Ukryty stan fizyki:
+   * NIE jest w snapshocie (jak maszyna stallu/G-LOC) — serwer liczy autorytatywnie,
+   * klient predykuje lokalnie, reconcile resetuje do 1 tylko przy świeżym spawnie.
+   */
+  fuelFrac: number;
   /** Prędkość wskazywana [m/s] (pochodna, liczona od fazy 2). */
   iasMs: number;
   /** Bieżące przeciążenie [G] (pochodne, liczone od fazy 2). */
@@ -51,6 +59,7 @@ export function createPlaneState(): PlaneState {
     orientation: new Quaternion(),
     angularRates: { pitch: 0, roll: 0, yaw: 0 },
     throttle: 0,
+    fuelFrac: 1,
     iasMs: 0,
     loadFactor: 1,
     stalled: false,
@@ -68,6 +77,7 @@ export function copyPlaneState(src: PlaneState, dst: PlaneState): PlaneState {
   dst.angularRates.roll = src.angularRates.roll;
   dst.angularRates.yaw = src.angularRates.yaw;
   dst.throttle = src.throttle;
+  dst.fuelFrac = src.fuelFrac;
   dst.iasMs = src.iasMs;
   dst.loadFactor = src.loadFactor;
   dst.stalled = src.stalled;

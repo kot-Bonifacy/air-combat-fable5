@@ -77,7 +77,7 @@ import { DownedOverlay } from './downed-overlay';
 import { GreyoutOverlay } from './greyout-overlay';
 import { FlightRecorder } from './flight-recorder';
 import { ForceArrows } from './force-arrows';
-import { Hud, hudRow } from './hud';
+import { Hud, hudRow, fpsHudLine } from './hud';
 import { KeyboardInput } from './input';
 import { MouseAim, projectDirToScreen } from './mouse-aim';
 import { MuzzleFlash } from './muzzle-flash';
@@ -344,6 +344,7 @@ function spawnCombatant(c: Combatant, pos: Vector3, heading: Vector3): void {
   c.state.angularRates.roll = 0;
   c.state.angularRates.yaw = 0;
   c.state.throttle = c.isPlayer ? 0.8 : 0.9;
+  c.state.fuelFrac = 1; // nowe życie = pełny bak
   c.state.iasMs = SPAWN_SPEED_MS;
   c.state.life = 'alive';
   c.state.lifeTimerS = 0;
@@ -1391,6 +1392,8 @@ renderer.setAnimationLoop((timeMs) => {
     bankRad: Math.atan2(-scratchRight.y, scratchUp.y),
     pitchRad: Math.asin(Math.min(1, Math.max(-1, scratchFwd.y))),
     controlMode: control.mode,
+    // ostrzeżenie „pusty bak" tylko w locie — wrak/martwy nie ma już silnika do zgaszenia
+    fuel01: state.life === 'alive' ? state.fuelFrac : 1,
     ammo: fireControl.ammoRemaining,
     ammoMax: AMMO_MAX,
     secondaryAmmo: SECONDARY_AMMO_MAX > 0 ? (fireControl.groups[1]?.ammoRemaining ?? 0) : undefined,
@@ -1399,7 +1402,7 @@ renderer.setAnimationLoop((timeMs) => {
       '',
       ...(gameMode === 'combat' ? combatScoreLines() : []),
       ...(viewC !== player ? [`OBSERWUJESZ: ${viewC.name}`] : []),
-      hudRow('fps', String(fpsValue)),
+      fpsHudLine(fpsValue),
       hudRow('pociski', String(pool.activeCount)),
     ],
   });
