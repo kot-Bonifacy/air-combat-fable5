@@ -1302,6 +1302,8 @@ renderer.setAnimationLoop((timeMs) => {
       if (matchMode === 'ffa') marker.setColorHex(displayColorHex(false, c.faction));
       else marker.setFoe(c.faction !== player.faction);
       marker.update(c.mesh.position, viewMesh.position, camera, w, h);
+      // cel schowany w chmurze → znacznik przygasa (faza 20: taktyczne krycie się)
+      marker.setOpacity(1 - 0.8 * world.cloudCoverAt(c.mesh.position));
     }
     for (; mi < markers.length; mi++) markers[mi]?.hide();
   } else {

@@ -1171,6 +1171,8 @@ function updateHudOverlays(): void {
     if (matchMode === 'team') marker.setFoe(factionById.get(id) !== localFaction);
     else marker.setColorHex(entityColorHex(id, false));
     marker.update(m.object.position, viewPos, camera, w, h);
+    // cel schowany w chmurze → znacznik przygasa (faza 20: taktyczne krycie się)
+    marker.setOpacity(1 - 0.8 * world.cloudCoverAt(m.object.position));
   }
   for (; mi < markers.length; mi++) markers[mi]!.hide();
 

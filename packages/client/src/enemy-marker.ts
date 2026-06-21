@@ -68,6 +68,11 @@ export class EnemyMarker {
     this.el.style.display = 'none';
   }
 
+  /** Przygasza znacznik (faza 20): cel schowany w chmurze → 1=pełny, ~0.2=ledwo widoczny. */
+  setOpacity(alpha: number): void {
+    this.el.style.opacity = alpha >= 1 ? '' : alpha.toFixed(2);
+  }
+
   /** Pozycjonuje znacznik dla pozycji świata przeciwnika; `selfPos` do dystansu. */
   update(
     enemyPos: Vector3,
