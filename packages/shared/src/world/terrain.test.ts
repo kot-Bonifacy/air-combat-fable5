@@ -67,7 +67,7 @@ describe('teren — heightmapa proceduralna (faza 4)', () => {
     }
   });
 
-  it('sylwetka wyspy: szczyt 1000–1400 m (śnieg), centrum to góra, brzeg to morze', () => {
+  it('sylwetka: zwarta góra (brzeg ~3 km) + plaża na −Z + zatoka na +Z (asymetria)', () => {
     let peak = -Infinity;
     let landNodes = 0;
     for (let iz = 0; iz < TERRAIN_GRID_N; iz++) {
@@ -80,13 +80,28 @@ describe('teren — heightmapa proceduralna (faza 4)', () => {
     expect(peak).toBeGreaterThan(1000);
     expect(peak).toBeLessThan(1400);
     expect(terrain.heightAt(0, 0)).toBeGreaterThan(600);
-    // ekwiwalentna średnica lądu ~5–6 km (decyzja użytkownika z briefu fazy 4)
+    // zwarta wyspa (brzeg bazowy ~3 km) — ekwiwalentna średnica ~6 km
     const landAreaM2 = landNodes * TERRAIN_GRID_SPACING_M ** 2;
     const equivalentDiameterM = 2 * Math.sqrt(landAreaM2 / Math.PI);
-    expect(equivalentDiameterM).toBeGreaterThan(4800);
-    expect(equivalentDiameterM).toBeLessThan(6500);
-    expect(terrain.heightAt(3500, 0)).toBeLessThan(0);
-    expect(terrain.heightAt(0, -3500)).toBeLessThan(0);
+    expect(equivalentDiameterM).toBeGreaterThan(5200);
+    expect(equivalentDiameterM).toBeLessThan(7000);
+
+    // brzeg boczny (±X) ~3 km: ląd w 2.7 km, morze w 3.3 km
+    expect(terrain.heightAt(2700, 0)).toBeGreaterThan(0);
+    expect(terrain.heightAt(3300, 0)).toBeLessThan(0);
+
+    // PLAŻA (−Z, „dół"): niski ląd wysunięty daleko poza bazowy brzeg (sam piasek, nie góra)
+    expect(terrain.heightAt(0, -3400)).toBeGreaterThan(0);
+    expect(terrain.heightAt(0, -3400)).toBeLessThan(60);
+    expect(terrain.heightAt(0, -3700)).toBeGreaterThan(0);
+
+    // ZATOKA (+Z, „góra"): woda wcięta w ląd — na promieniu, gdzie z boku jest ląd, tu jest morze
+    expect(terrain.heightAt(0, 2600)).toBeLessThan(0);
+    expect(terrain.heightAt(2600, 0)).toBeGreaterThan(0);
+
+    // dopiero poza wyspą wraca dno oceanu
+    expect(terrain.heightAt(0, -4500)).toBeLessThan(0);
+    expect(terrain.heightAt(4500, 0)).toBeLessThan(0);
   });
 
   it('heightAt nigdy nie zwraca NaN (próbkowanie krawędzi i dalekich punktów)', () => {

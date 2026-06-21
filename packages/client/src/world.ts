@@ -53,12 +53,14 @@ const AMBIENT_COLOR = 0xc4d2e4;
 const AMBIENT_INTENSITY = 0.4;
 
 // --- Teren w 2 poziomach gęstości (faza 20): pełna siatka w boksie wokół wyspy
-// (zawiera CAŁY ląd nad wodą — wizualnie identyczny z fazą 4), rzadsza (JEDEN
-// przeskok, nie LOD) w dalekim podwodnym pierścieniu. Granica leży pod
-// nieprzezroczystym oceanem i we mgle → ew. pęknięcia siatki niewidoczne.
-// terrainHeight() w `shared` NIE jest ruszany (niezmiennik fazy). ---
-/** Pół-bok pełnej rozdzielczości [m] — linia brzegowa ~2.7 km, margines do ~3.6 km. */
-const TERRAIN_INNER_HALF_M = 3_600;
+// (zawiera CAŁY ląd nad wodą), rzadsza (JEDEN przeskok, nie LOD) w dalekim
+// podwodnym pierścieniu. Granica leży pod nieprzezroczystym oceanem i we mgle →
+// ew. pęknięcia siatki niewidoczne. heightAt() w `shared` ma asymetrię (2026-06-21):
+// szeroka plaża na −Z sięga ~3.8 km → box pełnej siatki obejmuje też ją. ---
+/** Pół-bok pełnej rozdzielczości [m] — obejmuje CAŁY ląd nad wodą: górę (brzeg ~3 km),
+ *  plażę wysuniętą na −Z (~3.8 km) i zatokę. Styk z rzadką siatką (~4.32 km) leży już
+ *  pod nieprzezroczystą wodą → ew. pęknięcie niewidoczne. */
+const TERRAIN_INNER_HALF_M = 4_300;
 /** Co który węzeł w dalekim pierścieniu (jeden przeskok gęstości). */
 const TERRAIN_OUTER_STRIDE = 5;
 
@@ -244,8 +246,9 @@ function createTerrainMaterial(): ShaderMaterial {
         // śnieg: wysoko i na łagodniejszych powierzchniach (na klifie zostaje skała)
         float snowW = smoothstep(620.0, 880.0, h) * smoothstep(0.42, 0.70, flatness);
         col = mix(col, snow, snowW);
-        // plaża przy wodzie
-        col = mix(col, sand, smoothstep(11.0, 1.0, h));
+        // plaża / niski ląd przy wodzie: pas piasku (lokalna plaża na −Z na ~+10 m;
+        // piasek dominuje do ~15 m, gaśnie ku trawie do ~28 m)
+        col = mix(col, sand, smoothstep(28.0, 2.0, h));
 
         // wielkoskalowa, NIEokresowa wariacja jasności (period ~600 m + ~220 m) —
         // łamie resztę widocznej „kraty" powtórzeń tekstury oglądanej z lotu

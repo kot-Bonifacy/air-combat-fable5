@@ -92,3 +92,36 @@ Po playteście usera, poza timeboxem fazy (czysto kosmetyczne; `shared/world/ter
    Sam polygonOffset (próby 2→6) NIE wystarczył — precyzja głębi przy `far 30 km`. Zweryfikowane wzrokowo (brzeg czysty).
 4. **Drzewa — próbowano i odrzucono**: instancing low-poly (iglak + liściaste kępy) na zielonym pasie;
    user ocenił, że źle wygląda → USUNIĘTE. Nie wracać do tego podejścia bez nowego pomysłu (realne modele/impostory).
+
+## Doszlif terenu — kształt wyspy: plaża + zatoka (2026-06-21, 466 testów zielone)
+
+Pierwszy doszlif, który **RUSZA `shared/world/terrain.ts`** (wcześniejsze były czysto kosmetyczne/klienckie). Bo zmiana
+profilu = zmiana też kolizji botów (serwer woła `heightAt()`). Złoty test `terrain.test.ts` zaktualizowany pod nową
+sylwetkę; `lifecycle.test.ts` (zbocze w (500,500) > 100) nadal trzyma.
+
+Geneza (3 iteracje wg feedbacku usera):
+1. „Plaża za mała" → najpierw szeroki niski **szelf pierścieniowy** dookoła (brzeg ~4,2 km). User: za rozległe.
+2. → przebudowa na **asymetrię** (modulacja kątem `dirZ = z/r`): brzeg bazowy **~3 km**, szeroka **PLAŻA tylko na −Z**
+   (dół mapy / strona nalotu), **ZATOKA na +Z** (góra mapy). Decyzja usera: plaża i zatoka po przeciwnych stronach.
+3. → ze zrzutu: plaża zielona + „archipelag wysepek" za nią. Fix poniżej.
+
+Model (`rawHeightM`): baza = pojedyncza maska wyspy (jak faza 4, `ISLAND_RADIUS_M=4300` → brzeg ~3 km), liczona jako
+„elewacja nad dnem" `e`. Na to:
+- **plaża (−Z)**: niskie piaszczyste plateau dorzucane przez `max(e, beachE)` (podnosi tylko morze/płyciznę, nigdy góry);
+  `BEACH_LIFT_M=70` (≈ +10 m, w pasie piasku), `BEACH_NOISE_AMP_M=5`, szum **wygasany PRZED linią wody** (`BEACH_NOISE_FADE_R`)
+  → gładki brzeg; krótka rampa `BEACH_FLAT_R=3700`→`BEACH_OUTER_R=3900`. Brzeg plaży ~3,7 km, łagodnie zwęża do bazy na bokach.
+- **zatoka (+Z)**: ścięcie elewacji narastające do „gardła" (`BAY_REACH_R=2200`→`BAY_MOUTH_R=2900`, `BAY_CUT_M=440`)
+  → woda wcina się w ląd do ~2,4 km; sektor węższy niż plaża.
+
+🐞 **Bug → „archipelag"** (był na zrzucie): rampa plateau `1 − smoothstep01(u)` **bez `clamp01`**. Dla `r > BEACH_OUTER_R`
+(a ląd liczony do `ISLAND_RADIUS`=4300) `u>1`, więc wielomian `u²(3−2u)` schodził poniżej zera i `plateau` „odradzało"
+ląd za plażą → łańcuszek łach/wysepek. Fix: `clamp01` na argumencie. (Reszta `smoothstep01` w pliku już była clampowana.)
+
+Klient: `world.ts` `TERRAIN_INNER_HALF_M` 3600→**4300** (pełna siatka obejmuje wysuniętą plażę; styk z rzadką siatką
+pod wodą), pas piasku w shaderze `smoothstep(11,1)`→**`smoothstep(28,2)`** (plateau +10 m czyta się jako piasek, nie trawa).
+
+Zmierzone (seed 1940): szczyt 1145 m, średnica lądu ~6 km, plaża −Z piaszczysta ~+9–10 m do ~3,7 km **bez wysepek**
+(`islands=0` we wszystkich azymutach sektora), zatoka +Z do ~2,4 km, boki ~3 km.
+
+⏳ user: weryfikacja wzrokowa (plaża piaszczysta? czysta woda za nią? orientacja góra/dół = ±Z OK?) + ew. dostrojenie
+stałych `BEACH_*`/`BAY_*` (wszystko parametryczne; orientacja = znak `dirZ`).

@@ -20,12 +20,43 @@ export const TERRAIN_REGION_HALF_M = ((TERRAIN_GRID_N - 1) * TERRAIN_GRID_SPACIN
 /** Dno oceanu [m] — wszędzie poza wyspą i poza regionem heightmapy. */
 export const SEABED_M = -60;
 
-/** Promień maski wyspy [m] — tu ląd zszedł już do dna; linia brzegowa ~r=2.7 km. */
-const ISLAND_RADIUS_M = 4000;
+// Sylwetka wyspy = stroma GÓRA w centrum (brzeg bazowy ~3 km) + DWA lokalne,
+// kierunkowe detale łamiące symetrię (modulacja kątem dirZ = z/r):
+//  • PLAŻA po stronie −Z („dół" mapy, strona nalotu): niski piaszczysty szelf
+//    wysunięty poza bazowy brzeg → szeroki pas piasku tylko z tej strony;
+//  • ZATOKA po stronie +Z („góra" mapy): elewacja ścinana pod poziom morza →
+//    woda wcina się w ląd.
+// Reszta brzegu pozostaje wąska/stroma (jak w fazie 4). decyzja użytkownika 2026-06-21.
+/** Promień maski wyspy [m] — brzeg bazowy ~3 km (poza sektorami plaży/zatoki). */
+const ISLAND_RADIUS_M = 4300;
 /** Wysokość rdzenia góry w centrum [m] (noise dodaje/odejmuje swoje). */
 const CORE_PEAK_M = 1010;
 /** Amplituda FBM [m] — rzeźba zboczy i nieregularność wybrzeża. */
 const NOISE_AMP_M = 400;
+
+// --- Plaża (sektor −Z): niski piaszczysty szelf-plateau wysunięty poza bazowy brzeg ---
+/** Sektor plaży wg −dirZ: 0 przy LO, pełna siła przy HI (≈ w stożku ~±50° od −Z). */
+const BEACH_DIR_LO = 0.5;
+const BEACH_DIR_HI = 0.92;
+/** Plateau plaży trzyma stałą wysokość do BEACH_FLAT_R, potem KRÓTKI, czysty zjazd do dna przy BEACH_OUTER_R [m]. */
+const BEACH_FLAT_R = 3700;
+const BEACH_OUTER_R = 3900;
+/** Podniesienie plateau plaży nad dno [m] → ~(SEABED_M + LIFT) = +10 m n.p.m. (nisko, w pasie piasku). */
+const BEACH_LIFT_M = 70;
+/** Amplituda delikatnych wydm na plaży [m] — mała, by plaża była gładka i piaszczysta. */
+const BEACH_NOISE_AMP_M = 5;
+/** Szum plaży gaśnie na tym odcinku PRZED BEACH_FLAT_R [m] → linia wody bez szumu = brak wysepek. */
+const BEACH_NOISE_FADE_R = 500;
+
+// --- Zatoka (sektor +Z): woda wcięta w ląd (ścięcie elewacji pod poziom morza) ---
+/** Sektor zatoki wg dirZ: węższy niż plaża (cypel wody, ~±35° od +Z). */
+const BAY_DIR_LO = 0.62;
+const BAY_DIR_HI = 0.95;
+/** Zatoka ścina elewację od BAY_REACH_R (głębokość wnętrza) narastająco do gardła BAY_MOUTH_R [m]. */
+const BAY_REACH_R = 2200;
+const BAY_MOUTH_R = 2900;
+/** Maks. ścięcie elewacji w gardle zatoki [m] — z naddatkiem, by zejść pod wodę. */
+const BAY_CUT_M = 440;
 /** Częstotliwość bazowa FBM [1/m] — największe formy terenu ~1.8 km. */
 const BASE_FREQ_PER_M = 1 / 1800;
 const FBM_OCTAVES = 5;
@@ -59,12 +90,54 @@ function fbm(noise2D: NoiseFunction2D, xM: number, zM: number): number {
   return sum / FBM_AMP_SUM;
 }
 
+/** Hermite smoothstep dla u∈[0,1] (zerowa pochodna na końcach → brak „stopnia"). */
+function smoothstep01(u: number): number {
+  return u * u * (3 - 2 * u);
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
 function rawHeightM(noise2D: NoiseFunction2D, xM: number, zM: number): number {
-  const t = 1 - Math.hypot(xM, zM) / ISLAND_RADIUS_M;
-  if (t <= 0) return SEABED_M;
-  const mask = t >= 1 ? 1 : t * t * (3 - 2 * t);
-  // noise też ×mask: na brzegu wygasa do zera → region kończy się dokładnie dnem
-  return SEABED_M + mask * ((CORE_PEAK_M - SEABED_M) * mask + NOISE_AMP_M * fbm(noise2D, xM, zM));
+  const r = Math.hypot(xM, zM);
+  if (r >= ISLAND_RADIUS_M) return SEABED_M;
+  const dirZ = r > 1e-3 ? zM / r : 0; // cos kąta od osi +Z: +1 = „góra", −1 = „dół" mapy
+  const f = fbm(noise2D, xM, zM);
+
+  // baza: pojedyncza maska wyspy (jak faza 4), brzeg ~3 km, „elewacja nad dnem" e
+  const t = 1 - r / ISLAND_RADIUS_M;
+  const baseMask = t <= 0 ? 0 : smoothstep01(t);
+  let e = (CORE_PEAK_M - SEABED_M) * baseMask * baseMask + NOISE_AMP_M * f * baseMask;
+
+  // plaża (−Z): niski szelf dorzucany przez max → podnosi tylko morze/płyciznę poza
+  // bazowym brzegiem, nigdy góry. Daje szeroki pas piasku TYLKO z tej strony.
+  const beachW = smoothstep01(clamp01((-dirZ - BEACH_DIR_LO) / (BEACH_DIR_HI - BEACH_DIR_LO)));
+  if (beachW > 0) {
+    // plateau: pełna wysokość do BEACH_FLAT_R, krótki zjazd do zera przy BEACH_OUTER_R.
+    // clamp01 KONIECZNY: bez niego smoothstep01 dla r>BEACH_OUTER_R (u>1) oscyluje w minus
+    // i „odradza" ląd za plażą → łańcuszek wysepek (bug ze zrzutu 2026-06-21).
+    const plateau =
+      r <= BEACH_FLAT_R
+        ? 1
+        : 1 - smoothstep01(clamp01((r - BEACH_FLAT_R) / (BEACH_OUTER_R - BEACH_FLAT_R)));
+    // szum (wydmy) tylko w GŁĘBI plaży — gaśnie zanim plateau zacznie schodzić do wody,
+    // więc na samej linii brzegu szumu nie ma → brzeg jest gładki, bez odrywających się wysepek
+    const noiseFade =
+      1 - smoothstep01(clamp01((r - (BEACH_FLAT_R - BEACH_NOISE_FADE_R)) / BEACH_NOISE_FADE_R));
+    const beachE = beachW * (plateau * BEACH_LIFT_M + noiseFade * BEACH_NOISE_AMP_M * f);
+    if (beachE > e) e = beachE;
+  }
+
+  // zatoka (+Z): ścięcie elewacji narastające ku gardłu → woda wcina się w ląd
+  const bayW = smoothstep01(clamp01((dirZ - BAY_DIR_LO) / (BAY_DIR_HI - BAY_DIR_LO)));
+  if (bayW > 0) {
+    const band = smoothstep01(clamp01((r - BAY_REACH_R) / (BAY_MOUTH_R - BAY_REACH_R)));
+    e -= bayW * band * BAY_CUT_M;
+  }
+
+  // dno zatoki/zagłębień przycięte do poziomu dna oceanu (i tak pod nieprzezroczystą wodą)
+  return e <= 0 ? SEABED_M : SEABED_M + e;
 }
 
 export function createTerrain(seed: number = TERRAIN_SEED): Terrain {
