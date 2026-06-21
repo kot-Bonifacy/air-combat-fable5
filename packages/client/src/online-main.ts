@@ -1,6 +1,4 @@
 import {
-  AmbientLight,
-  DirectionalLight,
   PerspectiveCamera,
   PMREMGenerator,
   Quaternion,
@@ -202,10 +200,7 @@ let spectatedValid = false;
 const terrain = createTerrain();
 const world = createWorld(scene, terrain);
 
-scene.add(new AmbientLight(0xffffff, 0.4));
-const sun = new DirectionalLight(0xffffff, 1.2);
-sun.position.set(30, 50, 20);
-scene.add(sun);
+// Światła (ambient + słońce kierunkowe) tworzy createWorld — wspólny SUN_DIR (faza 20).
 const pmrem = new PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 

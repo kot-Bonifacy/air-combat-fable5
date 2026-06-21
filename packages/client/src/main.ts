@@ -1,6 +1,4 @@
 import {
-  AmbientLight,
-  DirectionalLight,
   PerspectiveCamera,
   PMREMGenerator,
   Scene,
@@ -962,10 +960,8 @@ const smoke = new SmokeTrails(scene);
 const tracers = new BulletTracers(scene, BULLET_POOL_CAPACITY);
 const muzzleFlash = new MuzzleFlash(scene, allMuzzles(plane.armament));
 
-scene.add(new AmbientLight(0xffffff, 0.4));
-const sun = new DirectionalLight(0xffffff, 1.2);
-sun.position.set(30, 50, 20);
-scene.add(sun);
+// Światła (ambient + słońce kierunkowe) tworzy createWorld — jeden kierunek SUN_DIR
+// wspólny dla cieniowania, glow nieba i lens flare (faza 20, złota godzina).
 
 // IBL: bez environment mapy materiały PBR metalu (model Spitfire'a) renderują
 // się prawie czarne. RoomEnvironment to tani, neutralny refleks otoczenia.
