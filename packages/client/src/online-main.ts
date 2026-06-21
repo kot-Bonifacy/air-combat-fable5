@@ -159,7 +159,9 @@ const connEl = requireEl('conn-overlay');
 
 let renderer: WebGLRenderer;
 try {
-  renderer = new WebGLRenderer({ antialias: true });
+  // logarithmicDepthBuffer: jak w SP (main.ts) — precyzja głębi kasuje z-fighting
+  // brzegu z oceanem; własne shadery świata piszą spójną głębię przez logdepthbuf
+  renderer = new WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 } catch (err) {
   showWebglError();
   throw err instanceof Error ? err : new Error('inicjalizacja WebGL nie powiodła się');

@@ -271,7 +271,10 @@ function showWebglError(): void {
 
 let renderer: WebGLRenderer;
 try {
-  renderer = new WebGLRenderer({ antialias: true });
+  // logarithmicDepthBuffer: precyzja głębi w skali symulatora (near 0.5 / far 30 km)
+  // — kasuje z-fighting brzegu wyspy z oceanem (własne shadery terenu/wody/nieba
+  // mają wpięte chunki logdepthbuf, by pisać spójną głębię)
+  renderer = new WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 } catch (err) {
   // brak WebGL2 (stary sprzęt / wyłączona akceleracja) → komunikat zamiast pustej strony
   showWebglError();

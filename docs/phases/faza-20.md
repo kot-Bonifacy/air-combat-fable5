@@ -75,3 +75,20 @@ realny sprite chmur (CC0) jako swap, strojenie palety/fal po playteście — pat
 - weryfikacja wzrokowa: złota godzina (czy planety/samoloty PBR czytelne pod ciepłym światłem —
   ambient zostawiony na 0.4, by nie rozstroić tuningu Spitfire/Bf 109), lens flare, fale wody,
   przygaszanie znacznika w chmurze, brak widocznych pęknięć terenu przy brzegu.
+
+## Doszlif wizualny (2026-06-21, po zamknięciu fazy — 460 testów zielone)
+
+Po playteście usera, poza timeboxem fazy (czysto kosmetyczne; `shared/world/terrain.ts` dalej NIETKNIĘTY):
+
+1. **Tekstury terenu v3 (2K)**: trawa `leafy_grass`→`rocky_terrain_02` (zielona łąka górska), piasek
+   →`aerial_beach_01` (plaża z góry, ocieplana w shaderze); skała `rock_face_03` i śnieg `snow_02`
+   podbite 1K→2K. Wszystkie 2048². Wpisy w `assets/LICENSES.md` (Polyhaven CC0).
+2. **Anti-tiling 3-warstwowy** (koniec „kraty" na zboczach): większy okres kafla (45–50 m zam. 18–40 m),
+   druga oddalona+przesunięta skala tekstury (×0.37, offset świata), proceduralny value-noise jasności
+   (period ~600/220 m, bez próbek tekstur). Zielony przefarb trawy 0.62→0.22 (nowa tekstura już zielona).
+3. **Koniec migotania brzegu (z-fighting woda↔ląd)**: `logarithmicDepthBuffer: true` w obu rendererach
+   (`main.ts`, `online-main.ts`) + chunki `logdepthbuf_*` wpięte w 3 własne `ShaderMaterial`
+   (teren/niebo/woda — własne shadery nie dostają ich automatycznie). polygonOffset wody z powrotem 1/1.
+   Sam polygonOffset (próby 2→6) NIE wystarczył — precyzja głębi przy `far 30 km`. Zweryfikowane wzrokowo (brzeg czysty).
+4. **Drzewa — próbowano i odrzucono**: instancing low-poly (iglak + liściaste kępy) na zielonym pasie;
+   user ocenił, że źle wygląda → USUNIĘTE. Nie wracać do tego podejścia bez nowego pomysłu (realne modele/impostory).

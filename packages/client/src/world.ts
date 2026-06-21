@@ -71,7 +71,7 @@ function range(lo: number, hi: number, step = 1): number[] {
 /**
  * Mesh terenu z regularnej podsiatki: węzły o indeksach `ixs`×`izs`, komórka
  * emitowana gdy `includeCell(gx,gz)`. Bez UV — barwa z triplanarnych tekstur
- * (materiał współdzielony); powtarzalność łamana 2-skalowo w shaderze.
+ * (materiał współdzielony); powtarzalność łamana w shaderze (2 skale + makro-szum).
  */
 function buildTerrainChunk(
   terrain: Terrain,
@@ -113,10 +113,12 @@ function buildTerrainChunk(
   return new Mesh(geometry, material);
 }
 
-// --- Materiał terenu (faza 20, tekstury): triplanarne mieszanie 4 tekstur
-// (trawa/skała/śnieg/piasek, Polyhaven CC0) wg wysokości i nachylenia. Bez UV
-// (siatka ich nie ma) — projekcja po 3 osiach świata, więc strome stoki się nie
-// rozmazują. Oświetlenie ambient+słońce jak dawny Lambert; mgła + sRGB na wyjściu. ---
+// --- Materiał terenu (faza 20, tekstury; doszlif 2026-06-21): triplanarne
+// mieszanie 4 tekstur 2K (trawa/skała/śnieg/piasek, Polyhaven CC0) wg wysokości
+// i nachylenia. Bez UV (siatka ich nie ma) — projekcja po 3 osiach świata, więc
+// strome stoki się nie rozmazują. Anti-tiling 3-warstwowy (większy okres kafla +
+// druga oddalona skala + proceduralny makro-szum jasności) usuwa widoczną „kratę"
+// powtórzeń. Oświetlenie ambient+słońce jak dawny Lambert; mgła + sRGB na wyjściu. ---
 const TERRAIN_TEX = [
   { url: '/textures/terrain/grass.jpg', fallback: 0x5e7a3e },
   { url: '/textures/terrain/rock.jpg', fallback: 0x77705f },
@@ -163,6 +165,8 @@ function createTerrainMaterial(): ShaderMaterial {
       fogFar: { value: FOG_FAR_M },
     },
     vertexShader: /* glsl */ `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
       varying vec3 vWorldPos;
       varying vec3 vNormal;
       varying float vFogDepth;
@@ -173,9 +177,12 @@ function createTerrainMaterial(): ShaderMaterial {
         vec4 mv = viewMatrix * wp;
         vFogDepth = -mv.z;
         gl_Position = projectionMatrix * mv;
+        #include <logdepthbuf_vertex>
       }
     `,
     fragmentShader: /* glsl */ `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
       uniform sampler2D uGrass, uRock, uSnow, uSand;
       uniform vec3 ambientColor, sunColor, sunDir, fogColor;
       uniform float fogNear, fogFar;
@@ -188,26 +195,46 @@ function createTerrainMaterial(): ShaderMaterial {
              + texture2D(t, p.xz * s).rgb * bw.y
              + texture2D(t, p.xy * s).rgb * bw.z;
       }
-      // dwie skale (okres 3.7× — niewspółmierne) łamią widoczną „kratę" powtórzeń
+      // anti-tiling 1: ta sama tekstura w drugiej, mocno ODDALONEJ i przesuniętej
+      // skali (okres ~2.7× większy i niewspółmierny) — regularna „krata" się rozmywa
       vec3 tri2(sampler2D t, vec3 p, vec3 bw, float s) {
-        return mix(tri(t, p, bw, s), tri(t, p, bw, s * 3.7), 0.35);
+        vec3 a = tri(t, p, bw, s);
+        vec3 b = tri(t, p + vec3(41.7, 0.0, 23.3), bw, s * 0.37);
+        return mix(a, b, 0.45);
+      }
+      // anti-tiling 2: tani proceduralny value-noise (bez tekstur) do wielkoskalowej,
+      // NIEokresowej wariacji jasności — rozbija resztę powtarzalnego wzoru widzianego z lotu
+      float hash21(vec2 p) {
+        p = fract(p * vec2(127.1, 311.7));
+        p += dot(p, p + 34.23);
+        return fract(p.x * p.y);
+      }
+      float vnoise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        float a = hash21(i), b = hash21(i + vec2(1.0, 0.0));
+        float c = hash21(i + vec2(0.0, 1.0)), d = hash21(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
       }
 
       void main() {
+        #include <logdepthbuf_fragment>
         vec3 n = normalize(vNormal);
         vec3 bw = abs(n);
         bw /= (bw.x + bw.y + bw.z + 1e-4);
         float h = vWorldPos.y;
         float flatness = clamp(n.y, 0.0, 1.0);
 
-        vec3 grass = tri2(uGrass, vWorldPos, bw, 1.0 / 22.0);
-        // trawa realistyczna jest oliwkowo-sucha → farbujemy ku zieleni (luma × target),
-        // zachowując detal źdźbeł; user chciał wyraźnej zieleni
+        // większe okresy kafli (45–50 m zamiast 18–40) → mniej powtórzeń na zbocze
+        vec3 grass = tri2(uGrass, vWorldPos, bw, 1.0 / 45.0);
+        // realna zielona łąka górska (rocky_terrain_02) → tylko delikatne dostrojenie
+        // ku jednolitej zieleni (luma × target); zostawiamy naturalny detal tekstury
         float gluma = dot(grass, vec3(0.299, 0.587, 0.114));
-        grass = mix(grass, gluma * vec3(0.30, 0.46, 0.16), 0.62);
-        vec3 rock  = tri2(uRock,  vWorldPos, bw, 1.0 / 40.0);
-        vec3 snow  = tri2(uSnow,  vWorldPos, bw, 1.0 / 30.0);
-        vec3 sand  = tri2(uSand,  vWorldPos, bw, 1.0 / 18.0);
+        grass = mix(grass, gluma * vec3(0.30, 0.46, 0.16), 0.22);
+        vec3 rock  = tri2(uRock,  vWorldPos, bw, 1.0 / 50.0);
+        vec3 snow  = tri2(uSnow,  vWorldPos, bw, 1.0 / 40.0);
+        vec3 sand  = tri2(uSand,  vWorldPos, bw, 1.0 / 22.0);
+        sand *= vec3(1.12, 1.02, 0.82); // plaża z góry jest szarawa → ocieplamy ku piaskowi
 
         vec3 col = grass;
         // skała: wysoko ALBO na stromiznach (klify nawet nisko)
@@ -219,6 +246,11 @@ function createTerrainMaterial(): ShaderMaterial {
         col = mix(col, snow, snowW);
         // plaża przy wodzie
         col = mix(col, sand, smoothstep(11.0, 1.0, h));
+
+        // wielkoskalowa, NIEokresowa wariacja jasności (period ~600 m + ~220 m) —
+        // łamie resztę widocznej „kraty" powtórzeń tekstury oglądanej z lotu
+        float macro = vnoise(vWorldPos.xz / 600.0) * 0.6 + vnoise(vWorldPos.xz / 220.0) * 0.4;
+        col *= mix(0.84, 1.16, macro);
 
         float diff = max(dot(n, sunDir), 0.0);
         col *= ambientColor + sunColor * diff;
@@ -284,19 +316,25 @@ function createSkyDome(): Mesh {
       sunDir: { value: SUN_DIR },
     },
     vertexShader: /* glsl */ `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
       varying vec3 vDir;
       void main() {
         vDir = position;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        #include <logdepthbuf_vertex>
       }
     `,
     fragmentShader: /* glsl */ `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
       uniform vec3 zenithColor;
       uniform vec3 horizonColor;
       uniform vec3 sunColor;
       uniform vec3 sunDir;
       varying vec3 vDir;
       void main() {
+        #include <logdepthbuf_fragment>
         vec3 dir = normalize(vDir);
         float up = clamp(dir.y, 0.0, 1.0);
         vec3 col = mix(horizonColor, zenithColor, pow(up, 0.55));
@@ -352,7 +390,9 @@ function createOceanWater(): Water {
 
   const material = new ShaderMaterial({
     fog: false, // mgłę liczymy sami (spójnie z scene.fog), bez chunków three
-    polygonOffset: true, // jak dawny ocean: brzeg leży tuż pod wodą → przeciw z-fightingowi
+    // logarytmiczny bufor głębi (renderer) usuwa właściwy z-fighting brzegu na dystansie;
+    // lekki polygonOffset zostaje jako asekuracja na samym styku ląd↔woda (woda nieco w głąb)
+    polygonOffset: true,
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,
     uniforms: {
@@ -371,6 +411,8 @@ function createOceanWater(): Water {
       fogFar: { value: FOG_FAR_M },
     },
     vertexShader: /* glsl */ `
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
       uniform vec3 uCameraPos;
       varying vec3 vWorldPos;
       varying float vFogDepth;
@@ -380,9 +422,12 @@ function createOceanWater(): Water {
         vec4 mv = viewMatrix * wp;
         vFogDepth = -mv.z;
         gl_Position = projectionMatrix * mv;
+        #include <logdepthbuf_vertex>
       }
     `,
     fragmentShader: /* glsl */ `
+      #include <common>
+      #include <logdepthbuf_pars_fragment>
       uniform sampler2D uNormalMap;
       uniform vec3 uCameraPos;
       uniform float uTime, uTile, uStrength;
@@ -400,6 +445,7 @@ function createOceanWater(): Water {
       }
 
       void main() {
+        #include <logdepthbuf_fragment>
         vec2 baseUv = vWorldPos.xz / uTile;
         vec3 n1 = texture2D(uNormalMap, baseUv + uTime * vec2(0.018, 0.011)).rgb * 2.0 - 1.0;
         vec3 n2 = texture2D(uNormalMap, baseUv * 1.7 + uTime * vec2(-0.013, 0.020)).rgb * 2.0 - 1.0;

@@ -26,7 +26,7 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 | P1–P5 | **Domknięcie parytetu**: FFA eliminacja, CC-BY, onboarding, buffet, sprzątanie | ✅ zacommitowane (404 testy zielone) |
 | 19a   | **Drugi samolot (shared)**: Bf 109 E-3, uzbrojenie w grupach, balistyka per-pocisk, złote testy `describe.each` | ✅ 424 testy zielone (`bf109-e.json`, asymetria turn↔energy) |
 | 19b   | **Drugi samolot (integracja)**: protokół v4 (bajt typu), per-player plane serwer, rejestr meshy + model 3D Bf 109, wybór w lobby, HUD typ wroga, balans 1v1 | ✅ 440 testów zielone; ⏳ user: playtest balansu + weryfikacja wzrokowa modelu + smoke v4 |
-| 20    | **Teren v2 (timebox)**: złota godzina+lens flare, chmury billboardowe (krycie się), woda v2 (waternormals+odbicie nieba, bez planar), teren 2-poziomowy | ✅ 460 testów zielone; podpunkt 5 → backlog; ⏳ user: pomiar fps RTX + weryfikacja wzrokowa (patrz `docs/phases/faza-20.md`) |
+| 20    | **Teren v2 (timebox)**: złota godzina+lens flare, chmury billboardowe (krycie się), woda v2 (waternormals+odbicie nieba, bez planar), teren 2-poziomowy | ✅ 460 testów zielone; podpunkt 5 → backlog; **doszlif 2026-06-21**: tekstury v3 2K + anti-tiling (koniec „kraty"), fix migotania brzegu (`logarithmicDepthBuffer`), drzewa próbowane→odrzucone; ⏳ user: pomiar fps RTX + weryfikacja wzrokowa (patrz `docs/phases/faza-20.md`) |
 
 **Protokół: `PROTOCOL_VERSION = 5`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
 w sesji poprawek 2026-06-21 +1 bajt amunicji GRUPY WTÓRNEJ = działko 20 mm Bf 109; fazy 15–18, P1–P5
