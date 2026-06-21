@@ -105,6 +105,11 @@ Kokpit 1st person · gamepad/HOTAS · konta i statystyki · replay system · TDM
 cele naziemne / eskorta bombowca · pogoda i wiatr · większa mapa ze streamingiem ·
 więcej samolotów (Hurricane, Bf 110) · tryb treningowy z samouczkiem
 
+**Z Fazy 20 (świadomie odłożone na koniec timeboxu, projekt zdrowy):**
+podpunkt 5 — druga mała wyspa / skały przybrzeżne z prymitywów (dekoracja, bez kolizji);
+realny sprite chmur (foto CC0) zamiast proceduralnego puffa — łatwy swap tekstury w `world.ts`;
+ewentualne strojenie palety/siły fal po playteście wzrokowym usera.
+
 ---
 
 ## Parytet multiplayera (Fazy 14–18) — domknięcie różnic MP ↔ SP

@@ -30,13 +30,14 @@ chmury wolumetryczne, dynamiczna pogoda.
 
 ## Kryteria ukończenia
 
-- [ ] 60 fps na nowoczesnym GPU (NVIDIA RTX) — zmierzone PRZED i PO (brak regresji > 5%); cel
+- [⏳] 60 fps na nowoczesnym GPU (NVIDIA RTX) — zmierzone PRZED i PO (brak regresji > 5%); cel
   sprzętowy zmieniony 2026-06-20 (porzucony budżet zintegrowanej grafiki, patrz PLAN.md ryzyko #7)
-- [ ] Zero zmian w `shared/world/terrain.ts` (git diff pusty dla tego pliku)
-- [ ] Wszystkie testy zielone bez modyfikacji
-- [ ] Chmury: schowanie się w chmurze utrudnia namiar (znacznik HUD przygasa)
-- [ ] Każdy podpunkt zakresu = osobny commit; sesja zakończona o czasie niezależnie od postępu
-- [ ] typecheck + test + lint zielone; memory zapisane (w tym: co poszło do backlogu)
+  — **pomiar po stronie usera** (brak GPU/przeglądarki w sesji); patrz „Otwarte" niżej
+- [x] Zero zmian w `shared/world/terrain.ts` (git diff pusty dla tego pliku)
+- [x] Wszystkie testy zielone bez modyfikacji (460/460)
+- [x] Chmury: schowanie się w chmurze utrudnia namiar (znacznik HUD przygasa) — `cloudCoverAt` + `setOpacity`
+- [x] Każdy podpunkt zakresu = osobny commit; sesja zakończona o czasie niezależnie od postępu
+- [x] typecheck + test + lint zielone; memory zapisane (w tym: co poszło do backlogu)
 
 ## Pułapki
 
@@ -44,6 +45,33 @@ chmury wolumetryczne, dynamiczna pogoda.
   ręcznie po dystansie albo `depthWrite: false` i akceptacja niedoskonałości
 - „Jeszcze tylko dodam shadery wody" — NIE. Timebox. Backlog.
 
-## Wynik (uzupełnić po zakończeniu)
+## Wynik (2026-06-21)
 
-—
+Zrealizowane podpunkty 1–4 z zakresu, **każdy osobnym commitem** (projekt zdrowy w każdym punkcie):
+
+1. **Złota godzina lekka** (`eb92464`) — ocieplona paleta wyspy + deterministyczny szum jasności
+   per-węzeł; ciepły horyzont/mgła (`FOG_FAR` 15→12.5 km), głębszy zenit; jedno źródło `SUN_DIR`
+   dla światła kierunkowego, glow nieba i **lens flare** (addon three.js + `lensflare0/3.png`, MIT).
+   Światła scentralizowane w `createWorld` (usunięte z `main.ts`/`online-main.ts`).
+2. **Chmury billboardowe** (`7ee53cd`) — 130 sprite'ów (proceduralny puff w canvasie) na 2 warstwach
+   (~720 m / ~1500 m), dryf wiatru z zawijaniem, `depthWrite:false`. `World.cloudCoverAt(point)` +
+   `EnemyMarker.setOpacity()` → znacznik HUD przygasa, gdy cel kryje się w chmurze (oba tryby).
+3. **Woda v2** (`5d94ecb`) — własny `ShaderMaterial`: `waternormals.jpg` (MIT) scrollowana w 2 warstwach,
+   odbicie **analitycznego** nieba (ten sam gradient+glow co kopuła), fresnel, błysk słońca, mgła
+   liniowa spójna z `scene.fog`. **BEZ planar reflection** (zakaz fazy; addon `Water` celowo pominięty).
+4. **Teren w 2 poziomach gęstości** (`e5fe92b`) — `buildTerrainChunk` (podsiatka + predykat komórek):
+   pełna rozdzielczość w boksie ±3.6 km (cały ląd nad wodą — wizualnie identyczny z fazą 4), rzadki
+   pierścień co 5. węzeł na zewnątrz (JEDEN przeskok). Granica pod nieprzezroczystym oceanem i we
+   mgle → pęknięcia niewidoczne. ~125k → ~48k trójkątów. `shared/world/terrain.ts` NIETKNIĘTY.
+
+**Assety**: `waternormals.jpg`, `lensflare0/3.png` (three.js examples, MIT) — wpisy w `assets/LICENSES.md`
+w tych samych commitach (niezmiennik #8). Chmury **proceduralne** (canvas) — bez assetu, bez ryzyka.
+
+**Do backlogu** (świadomie, koniec timeboxu): podpunkt 5 (druga wyspa / skały przybrzeżne),
+realny sprite chmur (CC0) jako swap, strojenie palety/fal po playteście — patrz PLAN.md.
+
+**⏳ Otwarte po stronie usera** (brak GPU/przeglądarki w sesji):
+- pomiar 60 fps na RTX PRZED/PO (brak regresji > 5%) — kryterium wydajności fazy;
+- weryfikacja wzrokowa: złota godzina (czy planety/samoloty PBR czytelne pod ciepłym światłem —
+  ambient zostawiony na 0.4, by nie rozstroić tuningu Spitfire/Bf 109), lens flare, fale wody,
+  przygaszanie znacznika w chmurze, brak widocznych pęknięć terenu przy brzegu.
