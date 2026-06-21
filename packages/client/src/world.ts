@@ -29,9 +29,9 @@ import type { Terrain } from '@air-combat/shared';
 // Faza 20 „złota godzina lekka": ciepłe światło kierunkowe + chłodne wypełnienie,
 // słońce z lens flare (three.js examples), cieplejszy horyzont/mgła.
 
-/** Kolor mgły = kolor horyzontu nieba — zlewają się w jedną linię (ciepły, złota godzina). */
-export const HORIZON_COLOR = 0xe6d2b0;
-const ZENITH_COLOR = 0x315f9e;
+/** Kolor mgły = kolor horyzontu nieba — zlewają się w jedną linię (ledwie ciepły, złota godzina lekka). */
+export const HORIZON_COLOR = 0xd7d6cd;
+const ZENITH_COLOR = 0x4a78b0;
 const FOG_NEAR_M = 2_500;
 const FOG_FAR_M = 12_500;
 const OCEAN_SIZE_M = 44_000;
@@ -224,9 +224,9 @@ function createSkyDome(): Mesh {
         vec3 dir = normalize(vDir);
         float up = clamp(dir.y, 0.0, 1.0);
         vec3 col = mix(horizonColor, zenithColor, pow(up, 0.55));
-        // atmosferyczny poblask wokół słońca: ostry rdzeń + szeroka ciepła aureola
+        // atmosferyczny poblask wokół słońca: ostry rdzeń + wąska ciepła aureola (stonowana)
         float s = max(dot(dir, sunDir), 0.0);
-        col += sunColor * (pow(s, 200.0) * 0.8 + pow(s, 8.0) * 0.35 + pow(s, 2.0) * 0.10);
+        col += sunColor * (pow(s, 260.0) * 0.6 + pow(s, 16.0) * 0.16 + pow(s, 4.0) * 0.04);
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -319,7 +319,7 @@ function createOceanWater(): Water {
         float up = clamp(dir.y, 0.0, 1.0);
         vec3 c = mix(horizonColor, zenithColor, pow(up, 0.55));
         float s = max(dot(dir, sunDir), 0.0);
-        c += sunColor * (pow(s, 200.0) * 0.8 + pow(s, 8.0) * 0.35 + pow(s, 2.0) * 0.10);
+        c += sunColor * (pow(s, 260.0) * 0.6 + pow(s, 16.0) * 0.16 + pow(s, 4.0) * 0.04);
         return c;
       }
 
