@@ -12,6 +12,10 @@ w którym trafia do repo (niezmiennik nr 8 z CLAUDE.md).
 | `textures/waternormals.jpg` | Mapa normalnych wody / projekt three.js | https://github.com/mrdoob/three.js/blob/master/examples/textures/waternormals.jpg | MIT (three.js) | bez zmian; własny shader wody (faza 20, scroll normalnej + odbicie nieba, BEZ planar reflection) |
 | `textures/lensflare0.png` | Tarcza lens flare / projekt three.js | https://github.com/mrdoob/three.js/blob/master/examples/textures/lensflare/lensflare0.png | MIT (three.js) | bez zmian; efekt słońca (faza 20, addon `Lensflare`) |
 | `textures/lensflare3.png` | Duchy lens flare / projekt three.js | https://github.com/mrdoob/three.js/blob/master/examples/textures/lensflare/lensflare3.png | MIT (three.js) | bez zmian; efekt słońca (faza 20, addon `Lensflare`) |
+| `textures/terrain/grass.jpg` | Leafy Grass / Polyhaven | https://polyhaven.com/a/leafy_grass | CC0 (atrybucja niewymagana) | bez zmian; tekstura terenu (faza 20, triplanar — trawa) |
+| `textures/terrain/rock.jpg` | Rock Face 03 / Polyhaven | https://polyhaven.com/a/rock_face_03 | CC0 (atrybucja niewymagana) | bez zmian; tekstura terenu (faza 20, triplanar — skała/klify) |
+| `textures/terrain/snow.jpg` | Snow 02 / Polyhaven | https://polyhaven.com/a/snow_02 | CC0 (atrybucja niewymagana) | bez zmian; tekstura terenu (faza 20, triplanar — śnieg) |
+| `textures/terrain/sand.jpg` | Coast Sand 05 / Polyhaven | https://polyhaven.com/a/coast_sand_05 | CC0 (atrybucja niewymagana) | bez zmian; tekstura terenu (faza 20, triplanar — plaża) |
 
 ## Pełne uznania autorstwa (formuła wymagana przez autora)
 

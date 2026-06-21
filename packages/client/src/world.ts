@@ -5,10 +5,10 @@ import {
   BufferGeometry,
   CanvasTexture,
   Color,
+  DataTexture,
   DirectionalLight,
   Fog,
   Mesh,
-  MeshLambertMaterial,
   PlaneGeometry,
   RepeatWrapping,
   Scene,
@@ -17,6 +17,7 @@ import {
   Sprite,
   SpriteMaterial,
   SRGBColorSpace,
+  Texture,
   TextureLoader,
   Vector3,
 } from 'three';
@@ -51,37 +52,8 @@ const SUN_LIGHT_INTENSITY = 1.25;
 const AMBIENT_COLOR = 0xc4d2e4;
 const AMBIENT_INTENSITY = 0.4;
 
-// Pasma wysokości wyspy: plaża → trawa → skała → śnieg, z miękkim przejściem.
-const SAND_COLOR = new Color(0xd0bd80);
-const GRASS_COLOR = new Color(0x4f7a3e);
-const ROCK_COLOR = new Color(0x726c61);
-const SNOW_COLOR = new Color(0xf1f4f6);
-/** Górne granice pasm [m]. */
-const SAND_TOP_M = 6;
-const GRASS_TOP_M = 340;
-const ROCK_TOP_M = 820;
-/** Połowa szerokości strefy mieszania kolorów wokół granicy pasma [m]. */
-const BAND_BLEND_M = 25;
-/** Kolor dna pod wodą (widoczne płycizny przy plaży). */
-const SEABED_COLOR = new Color(0x2c5066);
-
-/** Domieszaj kolor wyższego pasma, gdy hM przekracza granicę edgeM (±BAND_BLEND_M). */
-function mixAbove(out: Color, next: Color, hM: number, edgeM: number): void {
-  if (hM <= edgeM - BAND_BLEND_M) return;
-  out.lerp(next, Math.min(1, (hM - (edgeM - BAND_BLEND_M)) / (2 * BAND_BLEND_M)));
-}
-
-function colorForHeight(hM: number, out: Color): Color {
-  if (hM <= 0) return out.copy(SEABED_COLOR);
-  out.copy(SAND_COLOR);
-  mixAbove(out, GRASS_COLOR, hM, SAND_TOP_M);
-  mixAbove(out, ROCK_COLOR, hM, GRASS_TOP_M);
-  mixAbove(out, SNOW_COLOR, hM, ROCK_TOP_M);
-  return out;
-}
-
-/** Amplituda szumu jasności per-węzeł — rozbija płaskie pasma na żywszy teren. */
-const COLOR_NOISE_AMP = 0.06;
+/** Amplituda szumu jasności per-węzeł — rozbija powtarzalność tekstury (tint na żywszy teren). */
+const COLOR_NOISE_AMP = 0.08;
 /**
  * Deterministyczny szum w [-1, 1] z indeksów węzła (hash całkowitoliczbowy) —
  * ten sam świat po obu stronach sieci, bez zależności od kolejności renderu.
@@ -111,34 +83,30 @@ function range(lo: number, hi: number, step = 1): number[] {
 
 /**
  * Mesh terenu z regularnej podsiatki: węzły o indeksach `ixs`×`izs`, komórka
- * emitowana gdy `includeCell(gx,gz)`. Kolory + szum jak pełna siatka (ten sam ląd).
+ * emitowana gdy `includeCell(gx,gz)`. Bez UV — barwa z triplanarnych tekstur
+ * (materiał współdzielony); per-węzeł `tint` (szum) rozbija powtarzalność.
  */
 function buildTerrainChunk(
   terrain: Terrain,
   ixs: number[],
   izs: number[],
   includeCell: (gx: number, gz: number) => boolean,
+  material: ShaderMaterial,
 ): Mesh {
   const nx = ixs.length;
   const nz = izs.length;
   const positions = new Float32Array(nx * nz * 3);
-  const colors = new Float32Array(nx * nz * 3);
-  const scratchColor = new Color();
+  const tints = new Float32Array(nx * nz);
   for (let gz = 0; gz < nz; gz++) {
     const iz = izs[gz]!;
     for (let gx = 0; gx < nx; gx++) {
       const ix = ixs[gx]!;
-      const i3 = (gz * nx + gx) * 3;
-      const hM = terrain.nodeHeightM(ix, iz);
+      const i = gz * nx + gx;
+      const i3 = i * 3;
       positions[i3] = terrain.nodeCoordM(ix);
-      positions[i3 + 1] = hM;
+      positions[i3 + 1] = terrain.nodeHeightM(ix, iz);
       positions[i3 + 2] = terrain.nodeCoordM(iz);
-      colorForHeight(hM, scratchColor);
-      // szum jasności tylko na lądzie (dno pod wodą zostaje gładkie)
-      if (hM > 0) scratchColor.multiplyScalar(1 + nodeColorNoise(ix, iz) * COLOR_NOISE_AMP);
-      colors[i3] = scratchColor.r;
-      colors[i3 + 1] = scratchColor.g;
-      colors[i3 + 2] = scratchColor.b;
+      tints[i] = 1 + nodeColorNoise(ix, iz) * COLOR_NOISE_AMP;
     }
   }
 
@@ -156,14 +124,130 @@ function buildTerrainChunk(
 
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new BufferAttribute(colors, 3));
+  geometry.setAttribute('tint', new BufferAttribute(tints, 1));
   geometry.setIndex(indices); // three dobiera Uint16/Uint32 wg liczby węzłów
-  // flatShading liczy normalne ścian w shaderze (WebGL2) — bez computeVertexNormals
-  const material = new MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  geometry.computeVertexNormals(); // gładkie cieniowanie (naturalniej niż flat low-poly)
   return new Mesh(geometry, material);
 }
 
+// --- Materiał terenu (faza 20, tekstury): triplanarne mieszanie 4 tekstur
+// (trawa/skała/śnieg/piasek, Polyhaven CC0) wg wysokości i nachylenia. Bez UV
+// (siatka ich nie ma) — projekcja po 3 osiach świata, więc strome stoki się nie
+// rozmazują. Oświetlenie ambient+słońce jak dawny Lambert; mgła + sRGB na wyjściu. ---
+const TERRAIN_TEX = [
+  { url: '/textures/terrain/grass.jpg', fallback: 0x5e7a3e },
+  { url: '/textures/terrain/rock.jpg', fallback: 0x77705f },
+  { url: '/textures/terrain/snow.jpg', fallback: 0xeef2f4 },
+  { url: '/textures/terrain/sand.jpg', fallback: 0xcdbb86 },
+] as const;
+
+/** Placeholder 1×1 (kolor średni warstwy) — teren ma sensowny kolor zanim doczyta się JPG. */
+function colorDataTexture(hex: number): DataTexture {
+  const data = new Uint8Array([(hex >> 16) & 255, (hex >> 8) & 255, hex & 255, 255]);
+  const t = new DataTexture(data, 1, 1);
+  t.colorSpace = SRGBColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+function createTerrainMaterial(): ShaderMaterial {
+  const loader = new TextureLoader();
+  const holders = TERRAIN_TEX.map((t) => {
+    const holder: { value: Texture } = { value: colorDataTexture(t.fallback) };
+    loader.load(t.url, (tex) => {
+      tex.wrapS = RepeatWrapping;
+      tex.wrapT = RepeatWrapping;
+      tex.colorSpace = SRGBColorSpace;
+      tex.anisotropy = 8; // ostrość tekstury na stokach widzianych skośnie (three clampuje do maks.)
+      holder.value = tex;
+    });
+    return holder;
+  });
+  const ambient = new Color(AMBIENT_COLOR).multiplyScalar(AMBIENT_INTENSITY);
+  const sun = new Color(SUN_LIGHT_COLOR).multiplyScalar(SUN_LIGHT_INTENSITY);
+
+  return new ShaderMaterial({
+    uniforms: {
+      uGrass: holders[0]!,
+      uRock: holders[1]!,
+      uSnow: holders[2]!,
+      uSand: holders[3]!,
+      ambientColor: { value: ambient },
+      sunColor: { value: sun },
+      sunDir: { value: SUN_DIR },
+      fogColor: { value: new Color(HORIZON_COLOR) },
+      fogNear: { value: FOG_NEAR_M },
+      fogFar: { value: FOG_FAR_M },
+    },
+    vertexShader: /* glsl */ `
+      attribute float tint;
+      varying vec3 vWorldPos;
+      varying vec3 vNormal;
+      varying float vTint;
+      varying float vFogDepth;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        vNormal = normalize(mat3(modelMatrix) * normal);
+        vTint = tint;
+        vec4 mv = viewMatrix * wp;
+        vFogDepth = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D uGrass, uRock, uSnow, uSand;
+      uniform vec3 ambientColor, sunColor, sunDir, fogColor;
+      uniform float fogNear, fogFar;
+      varying vec3 vWorldPos;
+      varying vec3 vNormal;
+      varying float vTint;
+      varying float vFogDepth;
+
+      vec3 tri(sampler2D t, vec3 p, vec3 bw, float s) {
+        return texture2D(t, p.zy * s).rgb * bw.x
+             + texture2D(t, p.xz * s).rgb * bw.y
+             + texture2D(t, p.xy * s).rgb * bw.z;
+      }
+
+      void main() {
+        vec3 n = normalize(vNormal);
+        vec3 bw = abs(n);
+        bw /= (bw.x + bw.y + bw.z + 1e-4);
+        float h = vWorldPos.y;
+        float flatness = clamp(n.y, 0.0, 1.0);
+
+        vec3 grass = tri(uGrass, vWorldPos, bw, 1.0 / 24.0);
+        vec3 rock  = tri(uRock,  vWorldPos, bw, 1.0 / 42.0);
+        vec3 snow  = tri(uSnow,  vWorldPos, bw, 1.0 / 30.0);
+        vec3 sand  = tri(uSand,  vWorldPos, bw, 1.0 / 20.0);
+
+        vec3 col = grass;
+        // skała: wysoko ALBO na stromiznach (klify nawet nisko)
+        float rockByHeight = smoothstep(280.0, 540.0, h);
+        float rockBySlope = 1.0 - smoothstep(0.58, 0.82, flatness);
+        col = mix(col, rock, clamp(max(rockByHeight, rockBySlope), 0.0, 1.0));
+        // śnieg: wysoko i na łagodniejszych powierzchniach (na klifie zostaje skała)
+        float snowW = smoothstep(620.0, 880.0, h) * smoothstep(0.42, 0.70, flatness);
+        col = mix(col, snow, snowW);
+        // plaża przy wodzie
+        col = mix(col, sand, smoothstep(11.0, 1.0, h));
+
+        col *= vTint;
+        float diff = max(dot(n, sunDir), 0.0);
+        col *= ambientColor + sunColor * diff;
+        float f = clamp((vFogDepth - fogNear) / (fogFar - fogNear), 0.0, 1.0);
+        col = clamp(mix(col, fogColor, f), 0.0, 1.0);
+        // sRGB na wyjściu (jak dawny MeshLambert; reszta świata bez tone mappingu)
+        col = mix(col * 12.92, 1.055 * pow(col, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, col));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  });
+}
+
 function createTerrainMeshes(terrain: Terrain): Mesh[] {
+  const material = createTerrainMaterial(); // współdzielony przez oba poziomy gęstości
   const last = terrain.gridN - 1;
   const mid = last / 2;
   const stride = TERRAIN_OUTER_STRIDE;
@@ -179,20 +263,26 @@ function createTerrainMeshes(terrain: Terrain): Mesh[] {
     innerHi >= last
   ) {
     const all = range(0, last);
-    return [buildTerrainChunk(terrain, all, all, () => true)];
+    return [buildTerrainChunk(terrain, all, all, () => true, material)];
   }
 
   const innerIdx = range(innerLo, innerHi);
-  const inner = buildTerrainChunk(terrain, innerIdx, innerIdx, () => true);
+  const inner = buildTerrainChunk(terrain, innerIdx, innerIdx, () => true, material);
 
   // rzadka siatka co `stride` na całym regionie; komórki TYLKO poza boksem pełnym
   // (wnętrze pokrywa `inner` — żadnego podwójnego rysowania ani z-fightingu na lądzie)
   const coarseIdx = range(0, last, stride);
-  const coarse = buildTerrainChunk(terrain, coarseIdx, coarseIdx, (gx, gz) => {
-    const insideX = coarseIdx[gx]! >= innerLo && coarseIdx[gx + 1]! <= innerHi;
-    const insideZ = coarseIdx[gz]! >= innerLo && coarseIdx[gz + 1]! <= innerHi;
-    return !(insideX && insideZ);
-  });
+  const coarse = buildTerrainChunk(
+    terrain,
+    coarseIdx,
+    coarseIdx,
+    (gx, gz) => {
+      const insideX = coarseIdx[gx]! >= innerLo && coarseIdx[gx + 1]! <= innerHi;
+      const insideZ = coarseIdx[gz]! >= innerLo && coarseIdx[gz + 1]! <= innerHi;
+      return !(insideX && insideZ);
+    },
+    material,
+  );
   return [inner, coarse];
 }
 
