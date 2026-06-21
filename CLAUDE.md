@@ -31,13 +31,17 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 w sesji poprawek 2026-06-21 +1 bajt amunicji GRUPY WTÓRNEJ = działko 20 mm Bf 109; fazy 15–18, P1–P5
 i czat poczekalni bez bumpu — addytywne JSON albo usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
 
-**Sesja poprawek 2026-06-21 (poza fazami, 6 zgłoszeń usera — 458 testów zielone):** (1) pole nicku/czatu
+**Sesja poprawek 2026-06-21 (poza fazami, 7 zgłoszeń usera — 460 testów zielone):** (1) pole nicku/czatu
 — `KeyboardInput` nie przechwytuje WSADQE, gdy fokus w polu tekstowym (`isEditingText`); (2) ekran ładowania
 online czeka na modele 3D WSZYSTKICH samolotów meczu + postęp „X/Y" (teren generuje się natychmiast, .glb
 sekundy → bryły zastępcze); (3) ping w HUD odświeżany co ~1 s; (4) boty „trudne" zrywają w GÓRĘ-w-bok 0,5 s
 po trafieniu (`hitReactionDelayS` w JSON tylko trudny; pull MUSI mieć dominującą pionę, bo instruktor bramkuje
 ciągnięcie błędem przechylenia); (5) nazwiska botów wg samolotu (PL/Spitfire, DE/Bf 109; `nextName(type)`+`refreshBotName`)
-i wyrównanie listy uczestników (kolumna auto-dopasowana + przycinanie); (6) licznik amunicji 20 mm (protokół v5).
+i wyrównanie listy uczestników (kolumna auto-dopasowana + przycinanie); (6) licznik amunicji 20 mm (protokół v5);
+(7) kolizje na starcie meczu (zwł. FFA): sticky `player.slot` (`nextSlot++ % SPAWN_RING_SLOTS`, nigdy nie zerowany)
+churnował się przy przebudowie botów (zmiana ustawień w poczekalni → `setBots` kasuje+tworzy) i po zawinięciu modulo
+dwie żywe encje dostawały TEN SAM slot → spawn w identycznym punkcie → zderzenie tuż po wygaśnięciu ochrony 3 s.
+Fix: `start()` przydziela odrębne, równomiernie rozłożone sloty (`assignStartSlots`, round(i·S/n)); BEZ protokołu (v5).
 
 ⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
 → overlay obserwatora; drużynowy; v5 z wyborem samolotu + licznik 20 mm + ekran ładowania + zryw botów) +

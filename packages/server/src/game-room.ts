@@ -189,7 +189,9 @@ interface ServerPlayer {
   lastAckServerTick: number;
   readonly spawnPos: Vector3;
   readonly spawnDir: Vector3;
-  readonly slot: number;
+  /** Slot pierścienia startowego. Wstępnie nextSlot++ % SPAWN_RING_SLOTS, ale start() przydziela go
+   *  na nowo (assignStartSlots) dla kolizyjnie-bezpiecznego, równomiernego rozrzutu uczestników. */
+  slot: number;
   /** Pozycja na POCZĄTKU bieżącego ticku — początek zamiatanego odcinka kolizji (faza 15);
    *  po zawinięciu torusa korygowana do obrazu najbliższego pozycji końcowej. */
   readonly prevPos: Vector3;
@@ -627,6 +629,10 @@ export class GameRoom {
     this.winningFaction = null;
     // przydział drużyn na nowy mecz (faza 18): zbalansowane frakcje przed rozliczaniem życia
     this.assignFactions();
+    // świeży, kolizyjnie-bezpieczny rozrzut slotów: sticky player.slot churnuje się (nextSlot++
+    // przy przebudowie botów w poczekalni) i dwie encje mogły dostać ten sam slot → spawn w tym
+    // samym punkcie → zderzenie po wygaśnięciu ochrony. Przydzielamy odrębne sloty na każdy start.
+    this.assignStartSlots();
     for (const player of this.players.values()) {
       player.kills = 0;
       player.assists = 0;
@@ -1132,6 +1138,24 @@ export class GameRoom {
     if (player.isBot) {
       this.botManager.reset(player.id, state);
       this.refreshBotName(player);
+    }
+  }
+
+  /**
+   * Przydziela każdej encji ODRĘBNY slot startowy, równomiernie rozłożony po pierścieniu, tuż przed
+   * masowym spawnem na start meczu. Konieczne, bo sticky `player.slot` (nextSlot++ % SPAWN_RING_SLOTS)
+   * churnuje się przy przebudowie botów (zmiana ustawień w poczekalni) i dwie encje mogły wylądować
+   * na tym samym slocie → spawn w identycznym punkcie → zderzenie po wygaśnięciu ochrony. Liczba
+   * uczestników ≤ MAX_PLAYERS_PER_ROOM = SPAWN_RING_SLOTS, więc round(i·S/n) jest różnowartościowe
+   * (krok S/n ≥ 1 ⇒ ściśle rosnące, wartości w [0, S−1]) — także maksymalny rozrzut przy małym n
+   * (1v1: przeciwne sloty pierścienia zamiast sąsiednich). */
+  private assignStartSlots(): void {
+    const n = this.players.size;
+    if (n === 0) return;
+    let i = 0;
+    for (const player of this.players.values()) {
+      player.slot = Math.round((i * SPAWN_RING_SLOTS) / n) % SPAWN_RING_SLOTS;
+      i++;
     }
   }
 

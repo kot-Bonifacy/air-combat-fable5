@@ -156,6 +156,43 @@ describe('serwer — kolizje samolot↔samolot (faza 15)', () => {
   });
 });
 
+describe('serwer — rozrzut spawnów na starcie meczu (anty-zderzenie)', () => {
+  // Sticky player.slot jest przydzielany jako nextSlot++ % SPAWN_RING_SLOTS, a nextSlot nigdy się
+  // nie zeruje i churnuje przy przebudowie botów (zmiana ustawień w poczekalni: setBots kasuje i
+  // tworzy boty od nowa). Po zawinięciu modulo dwie żywe encje dostawały TEN SAM slot → spawn w
+  // identycznym punkcie → zderzenie tuż po wygaśnięciu ochrony. start() musi rozrzucić wszystkich
+  // po RÓŻNYCH slotach.
+  it('po przebudowie botów (churn slotów) wszyscy startują w różnych, oddzielonych punktach', () => {
+    const room = new GameRoom('ABCD');
+    add(room, eventMember(), 'host'); // slot 0
+    room.applyRoomSettings({ bots: 5 }); // sloty 1..5, nextSlot → 6
+    room.applyRoomSettings({ bots: 5, difficulty: 'trudny' }); // rebuild → churn (sloty 6,7,0,1,2)
+    room.start();
+
+    const positions = room.snapshotEntities().map((e) => e.state.position.clone());
+    expect(positions.length).toBe(6); // host + 5 botów
+    for (let i = 0; i < positions.length; i++) {
+      for (let j = i + 1; j < positions.length; j++) {
+        // sfery kolizji to kilka metrów; każda para musi być wyraźnie rozdzielona
+        expect(positions[i]!.distanceTo(positions[j]!)).toBeGreaterThan(1000);
+      }
+    }
+  });
+
+  it('start nie powoduje zderzeń w pierwszych sekundach (FFA z botami po zmianie ustawień)', () => {
+    const room = new GameRoom('ABCD');
+    add(room, eventMember(), 'host');
+    room.applyRoomSettings({ bots: 5 });
+    room.applyRoomSettings({ bots: 5, difficulty: 'trudny' });
+    room.start();
+    // 5 s realnej symulacji (ochrona 3 s + 2 s lotu ku centrum) — nikt nie ginie w zderzeniu startowym
+    for (let i = 0; i < Math.round(5 / FIXED_DT_S); i++) room.step(FIXED_DT_S);
+    for (const e of room.snapshotEntities()) {
+      expect(e.state.life).toBe('alive');
+    }
+  });
+});
+
 describe('serwer — model spadającego wraku (faza 15)', () => {
   it('zestrzelenie w powietrzu → ofiara to spadający wrak (dying), nie od razu martwa; event KILL cause air', () => {
     const room = new GameRoom('ABCD');
