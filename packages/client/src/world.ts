@@ -10,6 +10,7 @@ import {
   Mesh,
   MeshLambertMaterial,
   PlaneGeometry,
+  RepeatWrapping,
   Scene,
   ShaderMaterial,
   SphereGeometry,
@@ -197,6 +198,109 @@ function createSunFlare(): Lensflare {
   return flare;
 }
 
+// --- Woda v2 (faza 20): mapa normalnych (three.js examples) scrollowana w 2 warstwach,
+// odbicie ANALITYCZNEGO nieba (ten sam gradient + glow co kopuła) — BEZ planar
+// reflection (zakaz fazy). Fresnel + błysk słońca + mgła liniowa spójna ze sceną. ---
+/** Rozmiar kafla mapy normalnych [m] — mniejszy = drobniejsze fale. */
+const WATER_TILE_M = 220;
+/** Siła zaburzenia normalnej (spokojne fale „złotej godziny"). */
+const WATER_NORMAL_STRENGTH = 0.22;
+
+interface Water {
+  mesh: Mesh;
+  /** Animacja: czas [s] do przewijania normalnej + pozycja kamery do odbicia. */
+  update(elapsedS: number, cameraPos: Vector3): void;
+}
+
+function createOceanWater(): Water {
+  const normalMap = new TextureLoader().load('/textures/waternormals.jpg');
+  normalMap.wrapS = RepeatWrapping;
+  normalMap.wrapT = RepeatWrapping;
+
+  // uniformy animowane trzymane w lokalnych stałych (uniknięcie indeksowania
+  // material.uniforms — strict noUncheckedIndexedAccess daje tam `| undefined`)
+  const uTime = { value: 0 };
+  const uCameraPos = { value: new Vector3() };
+
+  const material = new ShaderMaterial({
+    fog: false, // mgłę liczymy sami (spójnie z scene.fog), bez chunków three
+    polygonOffset: true, // jak dawny ocean: brzeg leży tuż pod wodą → przeciw z-fightingowi
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+    uniforms: {
+      uNormalMap: { value: normalMap },
+      uCameraPos,
+      uTime,
+      uTile: { value: WATER_TILE_M },
+      uStrength: { value: WATER_NORMAL_STRENGTH },
+      zenithColor: { value: new Color(ZENITH_COLOR) },
+      horizonColor: { value: new Color(HORIZON_COLOR) },
+      sunColor: { value: SUN_GLOW_COLOR },
+      sunDir: { value: SUN_DIR },
+      waterColor: { value: new Color(OCEAN_COLOR) },
+      fogColor: { value: new Color(HORIZON_COLOR) },
+      fogNear: { value: FOG_NEAR_M },
+      fogFar: { value: FOG_FAR_M },
+    },
+    vertexShader: /* glsl */ `
+      uniform vec3 uCameraPos;
+      varying vec3 vWorldPos;
+      varying float vFogDepth;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        vec4 mv = viewMatrix * wp;
+        vFogDepth = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D uNormalMap;
+      uniform vec3 uCameraPos;
+      uniform float uTime, uTile, uStrength;
+      uniform vec3 zenithColor, horizonColor, sunColor, sunDir, waterColor, fogColor;
+      uniform float fogNear, fogFar;
+      varying vec3 vWorldPos;
+      varying float vFogDepth;
+
+      vec3 skyAt(vec3 dir) {
+        float up = clamp(dir.y, 0.0, 1.0);
+        vec3 c = mix(horizonColor, zenithColor, pow(up, 0.55));
+        float s = max(dot(dir, sunDir), 0.0);
+        c += sunColor * (pow(s, 200.0) * 0.8 + pow(s, 8.0) * 0.35 + pow(s, 2.0) * 0.10);
+        return c;
+      }
+
+      void main() {
+        vec2 baseUv = vWorldPos.xz / uTile;
+        vec3 n1 = texture2D(uNormalMap, baseUv + uTime * vec2(0.018, 0.011)).rgb * 2.0 - 1.0;
+        vec3 n2 = texture2D(uNormalMap, baseUv * 1.7 + uTime * vec2(-0.013, 0.020)).rgb * 2.0 - 1.0;
+        vec2 tilt = (n1.xy + n2.xy) * uStrength;
+        vec3 N = normalize(vec3(tilt.x, 1.0, tilt.y));
+        vec3 V = normalize(uCameraPos - vWorldPos);
+        vec3 R = reflect(-V, N);
+        R.y = abs(R.y); // woda odbija TYLKO niebo (nigdy „pod siebie")
+        vec3 reflColor = skyAt(R);
+        float fres = 0.02 + 0.98 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+        vec3 col = mix(waterColor, reflColor, fres);
+        col += sunColor * pow(max(dot(R, sunDir), 0.0), 120.0) * 1.2; // błysk słońca
+        float f = clamp((vFogDepth - fogNear) / (fogFar - fogNear), 0.0, 1.0);
+        gl_FragColor = vec4(mix(col, fogColor, f), 1.0);
+      }
+    `,
+  });
+
+  const mesh = new Mesh(new PlaneGeometry(OCEAN_SIZE_M, OCEAN_SIZE_M), material);
+  mesh.rotation.x = -Math.PI / 2;
+  return {
+    mesh,
+    update: (elapsedS, cameraPos) => {
+      uTime.value = elapsedS;
+      uCameraPos.value.copy(cameraPos);
+    },
+  };
+}
+
 // --- Chmury billboardowe (faza 20): 2 warstwy wysokości, powolny dryf wiatru.
 // Taktyczne: schowanie się w chmurze utrudnia namiar (znacznik HUD przygasa) —
 // `cloudCoverAt` mówi, jak głęboko punkt tkwi w chmurze. Czysto kosmetyczne i
@@ -343,19 +447,8 @@ export function createWorld(scene: Scene, terrain: Terrain): World {
 
   scene.add(createIslandMesh(terrain));
 
-  const ocean = new Mesh(
-    new PlaneGeometry(OCEAN_SIZE_M, OCEAN_SIZE_M),
-    // polygonOffset: przy brzegu teren leży tuż pod wodą i depth buffer migotał
-    // (z-fighting) — ocean odsunięty w głębi przegrywa tam spójnie z terenem
-    new MeshLambertMaterial({
-      color: OCEAN_COLOR,
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1,
-    }),
-  );
-  ocean.rotation.x = -Math.PI / 2;
-  scene.add(ocean);
+  const water = createOceanWater();
+  scene.add(water.mesh);
 
   const sky = createSkyDome();
   scene.add(sky);
@@ -366,16 +459,19 @@ export function createWorld(scene: Scene, terrain: Terrain): World {
   const clouds = createCloudField(scene);
 
   let lastT = performance.now();
+  let elapsedS = 0;
   return {
     update: (cameraPosition) => {
       const now = performance.now();
       // cap dt: po uśpieniu karty / przełączeniu zakładki delta byłaby ogromna
       const dtS = Math.min(0.1, (now - lastT) / 1000);
       lastT = now;
+      elapsedS += dtS;
       // niebo i słońce „w nieskończoności" — podążają za kamerą, gracz nie dolatuje do krawędzi
       sky.position.copy(cameraPosition);
       sunFlare.position.copy(cameraPosition).addScaledVector(SUN_DIR, SUN_DISTANCE_M);
       clouds.update(dtS);
+      water.update(elapsedS, cameraPosition);
     },
     cloudCoverAt: (point) => clouds.coverAt(point),
   };
