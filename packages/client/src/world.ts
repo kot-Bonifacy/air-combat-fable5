@@ -93,55 +93,107 @@ function nodeColorNoise(ix: number, iz: number): number {
   return (h & 0xffff) / 0x7fff - 1;
 }
 
-function createIslandMesh(terrain: Terrain): Mesh {
-  const n = terrain.gridN;
-  const positions = new Float32Array(n * n * 3);
-  const colors = new Float32Array(n * n * 3);
+// --- Teren w 2 poziomach gęstości (faza 20): pełna siatka w boksie wokół wyspy
+// (zawiera CAŁY ląd nad wodą — wizualnie identyczny z fazą 4), rzadsza (JEDEN
+// przeskok, nie LOD) w dalekim podwodnym pierścieniu. Granica leży pod
+// nieprzezroczystym oceanem i we mgle → ew. pęknięcia siatki niewidoczne.
+// terrainHeight() w `shared` NIE jest ruszany (niezmiennik fazy). ---
+/** Pół-bok pełnej rozdzielczości [m] — linia brzegowa ~2.7 km, margines do ~3.6 km. */
+const TERRAIN_INNER_HALF_M = 3_600;
+/** Co który węzeł w dalekim pierścieniu (jeden przeskok gęstości). */
+const TERRAIN_OUTER_STRIDE = 5;
+
+function range(lo: number, hi: number, step = 1): number[] {
+  const out: number[] = [];
+  for (let i = lo; i <= hi; i += step) out.push(i);
+  return out;
+}
+
+/**
+ * Mesh terenu z regularnej podsiatki: węzły o indeksach `ixs`×`izs`, komórka
+ * emitowana gdy `includeCell(gx,gz)`. Kolory + szum jak pełna siatka (ten sam ląd).
+ */
+function buildTerrainChunk(
+  terrain: Terrain,
+  ixs: number[],
+  izs: number[],
+  includeCell: (gx: number, gz: number) => boolean,
+): Mesh {
+  const nx = ixs.length;
+  const nz = izs.length;
+  const positions = new Float32Array(nx * nz * 3);
+  const colors = new Float32Array(nx * nz * 3);
   const scratchColor = new Color();
-  for (let iz = 0; iz < n; iz++) {
-    for (let ix = 0; ix < n; ix++) {
-      const i3 = (iz * n + ix) * 3;
+  for (let gz = 0; gz < nz; gz++) {
+    const iz = izs[gz]!;
+    for (let gx = 0; gx < nx; gx++) {
+      const ix = ixs[gx]!;
+      const i3 = (gz * nx + gx) * 3;
       const hM = terrain.nodeHeightM(ix, iz);
       positions[i3] = terrain.nodeCoordM(ix);
       positions[i3 + 1] = hM;
       positions[i3 + 2] = terrain.nodeCoordM(iz);
       colorForHeight(hM, scratchColor);
       // szum jasności tylko na lądzie (dno pod wodą zostaje gładkie)
-      if (hM > 0) {
-        const j = 1 + nodeColorNoise(ix, iz) * COLOR_NOISE_AMP;
-        scratchColor.multiplyScalar(j);
-      }
+      if (hM > 0) scratchColor.multiplyScalar(1 + nodeColorNoise(ix, iz) * COLOR_NOISE_AMP);
       colors[i3] = scratchColor.r;
       colors[i3 + 1] = scratchColor.g;
       colors[i3 + 2] = scratchColor.b;
     }
   }
 
-  const cells = n - 1;
-  const indices = new Uint32Array(cells * cells * 6);
-  let w = 0;
-  for (let iz = 0; iz < cells; iz++) {
-    for (let ix = 0; ix < cells; ix++) {
-      const a = iz * n + ix;
+  const indices: number[] = [];
+  for (let gz = 0; gz < nz - 1; gz++) {
+    for (let gx = 0; gx < nx - 1; gx++) {
+      if (!includeCell(gx, gz)) continue;
+      const a = gz * nx + gx;
       const b = a + 1;
-      const c = a + n;
+      const c = a + nx;
       const d = c + 1;
-      indices[w++] = a;
-      indices[w++] = c;
-      indices[w++] = b;
-      indices[w++] = b;
-      indices[w++] = c;
-      indices[w++] = d;
+      indices.push(a, c, b, b, c, d);
     }
   }
 
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(positions, 3));
   geometry.setAttribute('color', new BufferAttribute(colors, 3));
-  geometry.setIndex(new BufferAttribute(indices, 1));
+  geometry.setIndex(indices); // three dobiera Uint16/Uint32 wg liczby węzłów
   // flatShading liczy normalne ścian w shaderze (WebGL2) — bez computeVertexNormals
   const material = new MeshLambertMaterial({ vertexColors: true, flatShading: true });
   return new Mesh(geometry, material);
+}
+
+function createTerrainMeshes(terrain: Terrain): Mesh[] {
+  const last = terrain.gridN - 1;
+  const mid = last / 2;
+  const stride = TERRAIN_OUTER_STRIDE;
+  const halfNodes = Math.round(TERRAIN_INNER_HALF_M / terrain.gridSpacingM / stride) * stride;
+  const innerLo = mid - halfNodes;
+  const innerHi = mid + halfNodes;
+  // siatka nietypowa (np. inny TERRAIN_GRID_N) → bezpieczny fallback: jeden pełny mesh
+  if (
+    !Number.isInteger(mid) ||
+    last % stride !== 0 ||
+    innerLo % stride !== 0 ||
+    innerLo <= 0 ||
+    innerHi >= last
+  ) {
+    const all = range(0, last);
+    return [buildTerrainChunk(terrain, all, all, () => true)];
+  }
+
+  const innerIdx = range(innerLo, innerHi);
+  const inner = buildTerrainChunk(terrain, innerIdx, innerIdx, () => true);
+
+  // rzadka siatka co `stride` na całym regionie; komórki TYLKO poza boksem pełnym
+  // (wnętrze pokrywa `inner` — żadnego podwójnego rysowania ani z-fightingu na lądzie)
+  const coarseIdx = range(0, last, stride);
+  const coarse = buildTerrainChunk(terrain, coarseIdx, coarseIdx, (gx, gz) => {
+    const insideX = coarseIdx[gx]! >= innerLo && coarseIdx[gx + 1]! <= innerHi;
+    const insideZ = coarseIdx[gz]! >= innerLo && coarseIdx[gz + 1]! <= innerHi;
+    return !(insideX && insideZ);
+  });
+  return [inner, coarse];
 }
 
 function createSkyDome(): Mesh {
@@ -445,7 +497,7 @@ export function createWorld(scene: Scene, terrain: Terrain): World {
   sunLight.position.copy(SUN_DIR).multiplyScalar(10_000);
   scene.add(sunLight);
 
-  scene.add(createIslandMesh(terrain));
+  for (const m of createTerrainMeshes(terrain)) scene.add(m);
 
   const water = createOceanWater();
   scene.add(water.mesh);
