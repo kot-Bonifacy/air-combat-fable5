@@ -15,7 +15,7 @@ w którym trafia do repo (niezmiennik nr 8 z CLAUDE.md).
 | `textures/terrain/grass.jpg` | Leafy Grass / Polyhaven | https://polyhaven.com/a/leafy_grass | CC0 (atrybucja niewymagana) | bez zmian; tekstura terenu (faza 20, triplanar — trawa) |
 | `textures/terrain/rock.jpg` | Rock Face 03 / Polyhaven | https://polyhaven.com/a/rock_face_03 | CC0 (atrybucja niewymagana) | bez zmian; tekstura terenu (faza 20, triplanar — skała/klify) |
 | `textures/terrain/snow.jpg` | Snow 02 / Polyhaven | https://polyhaven.com/a/snow_02 | CC0 (atrybucja niewymagana) | bez zmian; tekstura terenu (faza 20, triplanar — śnieg) |
-| `textures/terrain/sand.jpg` | Coast Sand 05 / Polyhaven | https://polyhaven.com/a/coast_sand_05 | CC0 (atrybucja niewymagana) | bez zmian; tekstura terenu (faza 20, triplanar — plaża) |
+| `textures/terrain/sand.jpg` | Sand 01 / Polyhaven | https://polyhaven.com/a/sand_01 | CC0 (atrybucja niewymagana) | bez zmian; tekstura terenu (faza 20, triplanar — plaża, jaśniejszy piasek) |
 
 ## Pełne uznania autorstwa (formuła wymagana przez autora)
 

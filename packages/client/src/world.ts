@@ -52,19 +52,6 @@ const SUN_LIGHT_INTENSITY = 1.25;
 const AMBIENT_COLOR = 0xc4d2e4;
 const AMBIENT_INTENSITY = 0.4;
 
-/** Amplituda szumu jasności per-węzeł — rozbija powtarzalność tekstury (tint na żywszy teren). */
-const COLOR_NOISE_AMP = 0.08;
-/**
- * Deterministyczny szum w [-1, 1] z indeksów węzła (hash całkowitoliczbowy) —
- * ten sam świat po obu stronach sieci, bez zależności od kolejności renderu.
- */
-function nodeColorNoise(ix: number, iz: number): number {
-  let h = (ix * 374761393 + iz * 668265263) | 0;
-  h = (h ^ (h >>> 13)) * 1274126177;
-  h ^= h >>> 16;
-  return (h & 0xffff) / 0x7fff - 1;
-}
-
 // --- Teren w 2 poziomach gęstości (faza 20): pełna siatka w boksie wokół wyspy
 // (zawiera CAŁY ląd nad wodą — wizualnie identyczny z fazą 4), rzadsza (JEDEN
 // przeskok, nie LOD) w dalekim podwodnym pierścieniu. Granica leży pod
@@ -84,7 +71,7 @@ function range(lo: number, hi: number, step = 1): number[] {
 /**
  * Mesh terenu z regularnej podsiatki: węzły o indeksach `ixs`×`izs`, komórka
  * emitowana gdy `includeCell(gx,gz)`. Bez UV — barwa z triplanarnych tekstur
- * (materiał współdzielony); per-węzeł `tint` (szum) rozbija powtarzalność.
+ * (materiał współdzielony); powtarzalność łamana 2-skalowo w shaderze.
  */
 function buildTerrainChunk(
   terrain: Terrain,
@@ -96,17 +83,14 @@ function buildTerrainChunk(
   const nx = ixs.length;
   const nz = izs.length;
   const positions = new Float32Array(nx * nz * 3);
-  const tints = new Float32Array(nx * nz);
   for (let gz = 0; gz < nz; gz++) {
     const iz = izs[gz]!;
     for (let gx = 0; gx < nx; gx++) {
       const ix = ixs[gx]!;
-      const i = gz * nx + gx;
-      const i3 = i * 3;
+      const i3 = (gz * nx + gx) * 3;
       positions[i3] = terrain.nodeCoordM(ix);
       positions[i3 + 1] = terrain.nodeHeightM(ix, iz);
       positions[i3 + 2] = terrain.nodeCoordM(iz);
-      tints[i] = 1 + nodeColorNoise(ix, iz) * COLOR_NOISE_AMP;
     }
   }
 
@@ -124,7 +108,6 @@ function buildTerrainChunk(
 
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new BufferAttribute(positions, 3));
-  geometry.setAttribute('tint', new BufferAttribute(tints, 1));
   geometry.setIndex(indices); // three dobiera Uint16/Uint32 wg liczby węzłów
   geometry.computeVertexNormals(); // gładkie cieniowanie (naturalniej niż flat low-poly)
   return new Mesh(geometry, material);
@@ -180,16 +163,13 @@ function createTerrainMaterial(): ShaderMaterial {
       fogFar: { value: FOG_FAR_M },
     },
     vertexShader: /* glsl */ `
-      attribute float tint;
       varying vec3 vWorldPos;
       varying vec3 vNormal;
-      varying float vTint;
       varying float vFogDepth;
       void main() {
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vWorldPos = wp.xyz;
         vNormal = normalize(mat3(modelMatrix) * normal);
-        vTint = tint;
         vec4 mv = viewMatrix * wp;
         vFogDepth = -mv.z;
         gl_Position = projectionMatrix * mv;
@@ -201,13 +181,16 @@ function createTerrainMaterial(): ShaderMaterial {
       uniform float fogNear, fogFar;
       varying vec3 vWorldPos;
       varying vec3 vNormal;
-      varying float vTint;
       varying float vFogDepth;
 
       vec3 tri(sampler2D t, vec3 p, vec3 bw, float s) {
         return texture2D(t, p.zy * s).rgb * bw.x
              + texture2D(t, p.xz * s).rgb * bw.y
              + texture2D(t, p.xy * s).rgb * bw.z;
+      }
+      // dwie skale (okres 3.7× — niewspółmierne) łamią widoczną „kratę" powtórzeń
+      vec3 tri2(sampler2D t, vec3 p, vec3 bw, float s) {
+        return mix(tri(t, p, bw, s), tri(t, p, bw, s * 3.7), 0.35);
       }
 
       void main() {
@@ -217,15 +200,19 @@ function createTerrainMaterial(): ShaderMaterial {
         float h = vWorldPos.y;
         float flatness = clamp(n.y, 0.0, 1.0);
 
-        vec3 grass = tri(uGrass, vWorldPos, bw, 1.0 / 24.0);
-        vec3 rock  = tri(uRock,  vWorldPos, bw, 1.0 / 42.0);
-        vec3 snow  = tri(uSnow,  vWorldPos, bw, 1.0 / 30.0);
-        vec3 sand  = tri(uSand,  vWorldPos, bw, 1.0 / 20.0);
+        vec3 grass = tri2(uGrass, vWorldPos, bw, 1.0 / 22.0);
+        // trawa realistyczna jest oliwkowo-sucha → farbujemy ku zieleni (luma × target),
+        // zachowując detal źdźbeł; user chciał wyraźnej zieleni
+        float gluma = dot(grass, vec3(0.299, 0.587, 0.114));
+        grass = mix(grass, gluma * vec3(0.30, 0.46, 0.16), 0.62);
+        vec3 rock  = tri2(uRock,  vWorldPos, bw, 1.0 / 40.0);
+        vec3 snow  = tri2(uSnow,  vWorldPos, bw, 1.0 / 30.0);
+        vec3 sand  = tri2(uSand,  vWorldPos, bw, 1.0 / 18.0);
 
         vec3 col = grass;
         // skała: wysoko ALBO na stromiznach (klify nawet nisko)
-        float rockByHeight = smoothstep(280.0, 540.0, h);
-        float rockBySlope = 1.0 - smoothstep(0.58, 0.82, flatness);
+        float rockByHeight = smoothstep(300.0, 560.0, h);
+        float rockBySlope = 1.0 - smoothstep(0.55, 0.80, flatness);
         col = mix(col, rock, clamp(max(rockByHeight, rockBySlope), 0.0, 1.0));
         // śnieg: wysoko i na łagodniejszych powierzchniach (na klifie zostaje skała)
         float snowW = smoothstep(620.0, 880.0, h) * smoothstep(0.42, 0.70, flatness);
@@ -233,7 +220,6 @@ function createTerrainMaterial(): ShaderMaterial {
         // plaża przy wodzie
         col = mix(col, sand, smoothstep(11.0, 1.0, h));
 
-        col *= vTint;
         float diff = max(dot(n, sunDir), 0.0);
         col *= ambientColor + sunColor * diff;
         float f = clamp((vFogDepth - fogNear) / (fogFar - fogNear), 0.0, 1.0);
