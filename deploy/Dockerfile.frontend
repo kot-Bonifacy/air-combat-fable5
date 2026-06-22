@@ -1,4 +1,6 @@
-# Faza 7 — statyczne demo single-player (frontend bez backendu).
+# Frontend gry MULTIPLAYER (statyczny SPA `index.html` → `online-main.ts`). Backend WS
+# to osobny kontener — nginx proxuje do niego `/ws` (patrz nginx.conf, docker-compose.yml).
+# Tryb SP usunięty 2026-06-22 (był tylko etapem rozwoju) — MP jest serwowany pod rootem `/`.
 # Build context = KORZEŃ repo (patrz docker-compose.yml: `context: ..`), bo monorepo
 # npm workspaces wymaga manifestów z korzenia + pakietu `shared` obok `client`.
 

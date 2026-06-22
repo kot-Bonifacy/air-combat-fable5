@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Air Combat — Bitwa o Anglię</title>
+    <title>Air Combat</title>
     <style>
       html,
       body {
@@ -23,27 +23,14 @@
         transform: translateY(-50%);
         font: 400 18px/1.4 monospace;
         color: #eaf3ff;
-        background: transparent;
-        padding: 0;
         white-space: pre;
         pointer-events: none;
-        /* tło przezroczyste → miękki cień (zamiast twardego obrysu), by tekst był
-           czytelny nad jasnym niebem bez „arcade'owego" konturu */
+        /* spójnie z offline: miękki cień zamiast twardego obrysu */
         text-shadow:
           0 1px 2px rgba(0, 0, 0, 0.9),
           0 0 6px rgba(0, 0, 0, 0.75);
       }
-      #net-status {
-        position: fixed;
-        top: 8px;
-        right: 8px;
-        font: 13px/1.4 monospace;
-        color: #9f9;
-        background: rgba(0, 0, 0, 0.55);
-        padding: 4px 8px;
-        border-radius: 4px;
-        pointer-events: none;
-      }
+      /* celownik myszy + znacznik nosa (parytet z SP, faza 14) */
       #reticle {
         position: fixed;
         width: 26px;
@@ -76,6 +63,7 @@
         font: 14px/14px monospace;
         text-align: center;
       }
+      /* alert granicy areny / rozbicia (faza 14) */
       #arena-alert {
         position: fixed;
         top: 28%;
@@ -91,44 +79,11 @@
         color: #fc5;
         text-shadow: 0 0 8px rgba(255, 200, 80, 0.7);
       }
-      #arena-alert.outside {
-        color: #f63;
-        text-shadow: 0 0 10px rgba(255, 100, 50, 0.8);
-      }
       #arena-alert.crash {
         color: #f44;
         text-shadow: 0 0 12px rgba(255, 60, 60, 0.8);
       }
-      #hit-marker {
-        position: fixed;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
-        font: 28px/1 monospace;
-        color: rgba(255, 255, 255, 0.95);
-        text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
-        pointer-events: none;
-        opacity: 0;
-      }
-      #hit-marker.kill {
-        color: #ff5a3c;
-        font-size: 40px;
-        text-shadow: 0 0 10px rgba(255, 90, 60, 0.9);
-      }
-      #kill-feed {
-        position: fixed;
-        top: 78px;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 3px;
-        font: bold 15px/1.3 monospace;
-        color: #ffd24a;
-        text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
-        pointer-events: none;
-      }
+      /* ostrzeżenie przeciągnięcia / buffetu / szarzenia (faza 14, sterowane przez Hud) */
       #stall-warning {
         position: fixed;
         top: 18%;
@@ -147,6 +102,7 @@
         color: #fa3;
         text-shadow: 0 0 8px rgba(255, 170, 50, 0.7);
       }
+      /* sztuczny horyzont (faza 14) */
       #horizon {
         position: fixed;
         right: 24px;
@@ -157,6 +113,7 @@
         overflow: hidden;
         border: 2px solid rgba(200, 220, 240, 0.5);
         pointer-events: none;
+        display: none;
       }
       #horizon-disc {
         position: absolute;
@@ -181,9 +138,75 @@
         height: 0;
         border-top: 2px solid rgba(255, 240, 120, 0.95);
       }
-      /* Ekran ładowania: inline w HTML, więc widoczny ZANIM sparsuje się bundle
-         (zamiast czarnej strony przy starcie i pobieraniu 14 MB modelu). main.ts
-         chowa go po wczytaniu modelu gracza albo po krótkim timeoutcie. */
+      /* znacznik trafienia w środku ekranu (faza 11) */
+      #hit-marker {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        font: 28px/1 monospace;
+        color: rgba(255, 255, 255, 0.95);
+        text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+        pointer-events: none;
+        opacity: 0;
+      }
+      #hit-marker.kill {
+        color: #ff5a3c;
+        font-size: 40px;
+        text-shadow: 0 0 10px rgba(255, 90, 60, 0.9);
+      }
+      /* kill feed: kto kogo zestrzelił (faza 11) */
+      #kill-feed {
+        position: fixed;
+        top: 78px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        font: bold 15px/1.3 monospace;
+        color: #ffd24a;
+        text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+        pointer-events: none;
+      }
+      /* nakładka stanu połączenia: łączenie / błąd / rozłączono */
+      #conn-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 48;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        text-align: center;
+        padding: 24px;
+        box-sizing: border-box;
+        background: rgba(7, 13, 21, 0.82);
+        color: #cde;
+        font: 16px/1.5 monospace;
+      }
+      #conn-overlay.show {
+        display: flex;
+      }
+      #conn-overlay .head {
+        font: 700 24px monospace;
+        color: #ff6a4a;
+      }
+      #conn-overlay .msg {
+        max-width: 540px;
+        color: #cdd;
+      }
+      #conn-overlay button {
+        font: 600 15px/1 monospace;
+        padding: 10px 20px;
+        cursor: pointer;
+        color: #cde;
+        background: rgba(40, 60, 80, 0.9);
+        border: 1px solid #4a6c8c;
+        border-radius: 6px;
+      }
       #loading {
         position: fixed;
         inset: 0;
@@ -221,7 +244,6 @@
           transform: rotate(360deg);
         }
       }
-      /* Komunikat utraty/braku kontekstu WebGL — zamiast białej/zamrożonej strony. */
       #webgl-error {
         position: fixed;
         inset: 0;
@@ -260,18 +282,18 @@
   <body>
     <div id="app"></div>
     <div id="hud"></div>
-    <div id="net-status">łączenie…</div>
     <div id="reticle"></div>
     <div id="nose-marker">+</div>
-    <div id="hit-marker">✕</div>
-    <div id="kill-feed"></div>
     <div id="stall-warning"></div>
     <div id="arena-alert"></div>
     <div id="horizon"><div id="horizon-disc"></div></div>
+    <div id="hit-marker">✕</div>
+    <div id="kill-feed"></div>
+    <div id="conn-overlay"></div>
     <div id="loading">
       <div class="title">AIR COMBAT</div>
       <div class="spinner"></div>
-      <div>Wczytywanie…</div>
+      <div id="loading-status">Łączenie z serwerem…</div>
     </div>
     <div id="webgl-error">
       <div class="head">Grafika 3D niedostępna</div>
@@ -281,6 +303,6 @@
       </div>
       <button onclick="location.reload()">Odśwież</button>
     </div>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/online-main.ts"></script>
   </body>
 </html>

@@ -69,6 +69,17 @@ trzyma mesh widoczny+dym); MP: `burningWreckIds` w `online-main.ts` (efekt przy 
 `onKill` już NIE robi wybuchu dla `'ground'` — robi go `handleSurfaceImpact`). Dotyczy bezpośrednich rozbić i
 spadających wraków, gracza i botów.
 
+**Usunięcie trybu SP 2026-06-22 (decyzja usera — SP był tylko etapem rozwoju):** jedyną wersją gry jest
+teraz **multiplayer**. Strona MP (`online.html` → `online-main.ts`) przejęła miejsce `index.html` (przez
+`git mv`, z zachowaniem historii) i jest serwowana pod rootem `/` — także na `dogfight.tatanga.eu` (było:
+demo SP pod `/`). Usunięte pliki klienta: `index.html` (stary SP), `main.ts`, `menu.ts`, `standings-overlay.ts`,
+`net-status.ts` oraz narzędzia DEV wpięte tylko w SP: `force-arrows.ts`, `flight-recorder.ts`, `tuning-panel.ts`
+i strona telemetrii (`telemetry.html` + `telemetry.ts` + `recording-codec.ts`). `vite.config.ts` uproszczony do
+jednego wejścia (domyślne `index.html`). **`packages/shared` NIETKNIĘTY** — to rdzeń fizyki współdzielony z
+serwerem (część eksportów używana już tylko przez serwer/testy; świadomie nie przycinane). Protokół BEZ zmian (v5).
+**Deploy:** front+back RAZEM — backend MUSI działać, bo MP pod rootem bez serwera WS nie wystartuje (lobby).
+`docs/phases/*` zostają jako zapis historyczny (opisują przeszłe fazy, w tym SP).
+
 ⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
 → overlay obserwatora; drużynowy; v5 z wyborem samolotu + licznik 20 mm + ekran ładowania + zryw botów) +
 playtest poprawek 2026-06-21 (zryw botów „trudnych", nazwiska PL/DE) + playtest balansu 1v1 Spitfire↔Bf 109 +

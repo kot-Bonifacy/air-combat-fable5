@@ -9,6 +9,11 @@ budowana metodą vibecodingu — jedna faza na sesję, każda faza w osobnym pli
 **Priorytet nr 1 projektu: fizyka lotu, która daje się stroić i debugować.**
 Szczegółowy projekt modelu lotu: `docs/fizyka-lotu.md` — to dokument nadrzędny dla faz 1–3.
 
+> **Aktualizacja 2026-06-22 — tryb single-player USUNIĘTY (decyzja usera).** SP (`main.ts`) był etapem
+> rozwoju i bazą parytetu MP↔SP; po osiągnięciu parytetu stał się zbędny. Jedyną wersją gry jest teraz
+> **multiplayer**, serwowany pod rootem `/` (także na `dogfight.tatanga.eu`). Fragmenty poniżej i w
+> `docs/phases/*` opisujące SP to zapis historyczny. Szczegóły usunięcia: CLAUDE.md („Usunięcie trybu SP").
+
 ---
 
 ## Lekcje z poprzednich podejść (dlaczego ten plan wygląda tak, a nie inaczej)
