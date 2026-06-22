@@ -125,3 +125,57 @@ Zmierzone (seed 1940): szczyt 1145 m, średnica lądu ~6 km, plaża −Z piaszcz
 
 ⏳ user: weryfikacja wzrokowa (plaża piaszczysta? czysta woda za nią? orientacja góra/dół = ±Z OK?) + ew. dostrojenie
 stałych `BEACH_*`/`BAY_*` (wszystko parametryczne; orientacja = znak `dirZ`).
+
+## Doszlif terenu — skała alpejska (2026-06-22, 466 testów zielone, `shared/world/terrain.ts` NIETKNIĘTY)
+
+Feedback usera ze zrzutu: kształt góry OK, ale stoki wyglądają nienaturalnie — brązowe, rozmazane, z pionowymi
+smugami; brąz kłóci się z ośnieżonym szczytem. Decyzja usera: charakter **alpejski** (zielona łąka niżej → szary
+piarg w środkowych/górnych partiach → śnieg na czapie). Zmiana **czysto kliencka** (renderer + plik tekstury) —
+profil terenu się nie zmienia, więc bez ruszania `shared`, bez złotych testów, bez przymusu deployu front+back razem.
+
+Diagnoza pionowych smug: dawna `rock_face_03` to brązowy **klif z ukośnymi pęknięciami**; rzutowany triplanarnie i
+minifikowany z lotu zlewał się w kierunkowe smugi. Skała wchodziła też za nisko (próg 300 m) → cała środkowa góra brązowa.
+
+Zmiany (`packages/client/src/world.ts`, shader terenu):
+- **Tekstura skały**: `rock_face_03` (brąz) → **`gray_rocks`** (Polyhaven CC0, 2K) — szary, **izotropowy** piarg/gruz
+  (brak kierunkowych form → smugi nie wracają). Ta sama nazwa pliku `rock.jpg` (bez zmiany URL w shaderze). W shaderze
+  lekko odsycona (kilka rdzawych okruchów → ku czystej szarości) i rozjaśniona ×1.12; okres kafla 50→40 m.
+- **Progi**: skała wg wysokości 300→**440 m** (start) i 560→**760 m** (pełna) — zieleń sięga wyżej; skała na stromiznach
+  (klify) bez zmian co do idei, próg `flatness` 0.55/0.80→**0.50/0.74** (tylko strome ściany). Śnieg 620/880→**720/980**.
+- **Łąka**: dwa kroki — najpierw przefarb 0.22→0.14, potem (po feedbacku „zieleń ma być wyraźna") **mocny** przefarb
+  ku żywej zieleni: `mix(grass, gluma·vec3(0.42,0.82,0.24), 0.6)` (zachowany detal jasności tekstury, narzucona nasycona,
+  jaśniejsza zieleń — sama `rocky_terrain_02` jest oliwkowo-przygaszona).
+- **Makro-szum jasności**: ±16%→**±10%** (`mix(0.90,1.10)`) — koniec ciemnych „kałuż" cienia ze zrzutu.
+
+Wpis `assets/LICENSES.md` zaktualizowany (gray_rocks, CC0). typecheck + 466 testów + lint + build zielone.
+Zweryfikowane wzrokowo przez usera (zrzut): brąz zniknął, szara skała pod śniegiem, plaża, zieleń podbita.
+
+## Doszlif — drzewa (jodły) POWRACAJĄ nowym podejściem (2026-06-22, 466 testów)
+
+Wcześniej (sekcja wyżej) drzewa jako instancing low-poly zostały **odrzucone** z notatką „nie wracać bez nowego
+pomysłu (realne modele/impostory)". User poprosił o drzewa „z Polyhaven" → nowy pomysł = **realny model 3D**.
+
+Pułapka Polyhaven: drzewa to skany fotogrametryczne (`fir_tree_01` 478 MB, `pine_tree_01` 905 MB, `tree_small_02` 91 MB;
+~7–14 mln tr.) — nieużywalne wprost. Rozwiązanie: pełny **pipeline odchudzania `gltf-transform`** per model: `weld` →
+`simplify` (ratio ~0.006–0.02 = ~1–2% tr.) → `dedup`/`prune` → `webp q92` → `draco` ⇒ **2–5 MB**. KLUCZOWE: NIE używać
+`optimize` (robi `join` per-materiał i scala osobne drzewa modelu w jeden blok → instancja byłaby identyczną grupą).
+Pipeline dyskretny zachowuje osobne węzły-drzewa.
+
+**Iteracja po feedbacku usera** („same jodły to za jednolity las; przesadnie odchudziłeś tekstury"): (a) las **MIESZANY**
+— 3 gatunki: jodła (3 warianty) + sosna (3) + liściaste (1) = **7 sylwetek**, ważony udział (`SPECIES[]` w `forest.ts`,
+wagi 3/3/2); (b) tekstury **1024 px** (były nadmiernie zmniejszone do 512) — webp q92, BEZ resize. Geometrii nie tykano
+(nie było zastrzeżeń do kształtu).
+
+Kod: `packages/client/src/forest.ts` + `createForest(scene, terrain)` w `createWorld`. Wczytanie wielu modeli
+(`Promise.allSettled` — awaria gatunku nie wywraca reszty), `InstancedMesh` per (prototyp × pod-mesh); ważony wybór
+prototypu po polu `variant`; sadzenie deterministyczne (mulberry32) w **kępach** na łagodnych zielonych zboczach:
+pas wysokości 18–380 m (nad plażą, pod skałą), nachylenie ≤ 0.55 (`slopeAt` z różnic `heightAt`), limit `TREE_COUNT=300`.
+Każdy model skalowany własną wspólną skalą (`topM`/wys. modelu → zachowane proporcje wariantów). Foliage (alphaMode BLEND)
+→ **alphaTest 0.5** + `DoubleSide` (instancing nie lubi półprzezroczystości — sortowanie). `frustumCulled=false` (bryła
+instancingu z origin odcinałaby cały las). Czysto wizualne i LOKALNE (klient): drzewa BEZ kolizji, NIE synchronizowane
+w MP (jak chmury). `ior` neutralizowany (jak Bf 109).
+
+Wpisy `assets/LICENSES.md` (`models/fir|pine|broadleaf/*.glb`, Polyhaven CC0). typecheck + lint + 466 testów + build zielone.
+
+⏳ user: weryfikacja wzrokowa (czy drzewa stoją pionowo [zał. Y-up], gęstość/proporcje gatunków OK, igliwie nie
+„pudełkowe" przy alphaTest, brak tąpnięcia fps na RTX) + ew. strojenie `SPECIES`/`TREE_COUNT`/pasa wysokości (stałe w `forest.ts`).

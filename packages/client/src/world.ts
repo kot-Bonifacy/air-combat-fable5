@@ -23,6 +23,7 @@ import {
 } from 'three';
 import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
 import type { Terrain } from '@air-combat/shared';
+import { createForest } from './forest';
 
 // Świat fazy 4 → Faza 20 (teren v2): JEDEN mesh wyspy (vertex colors wg wysokości
 // + szum, flat shading), płaszczyzna oceanu, kopuła nieba (gradient + glow słońca)
@@ -123,7 +124,7 @@ function buildTerrainChunk(
 // powtórzeń. Oświetlenie ambient+słońce jak dawny Lambert; mgła + sRGB na wyjściu. ---
 const TERRAIN_TEX = [
   { url: '/textures/terrain/grass.jpg', fallback: 0x5e7a3e },
-  { url: '/textures/terrain/rock.jpg', fallback: 0x77705f },
+  { url: '/textures/terrain/rock.jpg', fallback: 0x8f8d88 }, // szary piarg (gray_rocks) — neutralny placeholder
   { url: '/textures/terrain/snow.jpg', fallback: 0xeef2f4 },
   { url: '/textures/terrain/sand.jpg', fallback: 0xcdbb86 },
 ] as const;
@@ -231,20 +232,29 @@ function createTerrainMaterial(): ShaderMaterial {
         vec3 grass = tri2(uGrass, vWorldPos, bw, 1.0 / 45.0);
         // realna zielona łąka górska (rocky_terrain_02) → tylko delikatne dostrojenie
         // ku jednolitej zieleni (luma × target); zostawiamy naturalny detal tekstury
+        // łąka: tekstura (rocky_terrain_02) jest oliwkowo-przygaszona → narzucamy ŻYWĄ
+        // zieleń (zielony kanał podbity > neutralnej szarości tej samej jasności), zachowując
+        // detal jasności tekstury (gluma); mocny mix, bo user chce wyraźną zieleń łąki
         float gluma = dot(grass, vec3(0.299, 0.587, 0.114));
-        grass = mix(grass, gluma * vec3(0.30, 0.46, 0.16), 0.22);
-        vec3 rock  = tri2(uRock,  vWorldPos, bw, 1.0 / 50.0);
+        grass = mix(grass, gluma * vec3(0.42, 0.82, 0.24), 0.6);
+        // szary alpejski piarg (gray_rocks): odsycony (kilka rdzawych okruchów w teksturze
+        // → neutralizujemy ku czystej szarości) i lekko rozjaśniony; izotropowy, więc bez
+        // pionowych smug dawnego klifu (rock_face_03)
+        vec3 rock  = tri2(uRock,  vWorldPos, bw, 1.0 / 40.0);
+        rock = mix(rock, vec3(dot(rock, vec3(0.299, 0.587, 0.114))), 0.15) * 1.12;
         vec3 snow  = tri2(uSnow,  vWorldPos, bw, 1.0 / 40.0);
         vec3 sand  = tri2(uSand,  vWorldPos, bw, 1.0 / 22.0);
         sand *= vec3(1.12, 1.02, 0.82); // plaża z góry jest szarawa → ocieplamy ku piaskowi
 
         vec3 col = grass;
-        // skała: wysoko ALBO na stromiznach (klify nawet nisko)
-        float rockByHeight = smoothstep(300.0, 560.0, h);
-        float rockBySlope = 1.0 - smoothstep(0.55, 0.80, flatness);
+        // alpejsko: zielona łąka w dolnych partiach, szary piarg w środkowych/górnych
+        // (próg wysokości podniesiony z 300 → 440 m, by zieleń sięgała wyżej), a do tego
+        // skała na stromiznach (klify) niezależnie od wysokości
+        float rockByHeight = smoothstep(440.0, 760.0, h);
+        float rockBySlope = 1.0 - smoothstep(0.50, 0.74, flatness);
         col = mix(col, rock, clamp(max(rockByHeight, rockBySlope), 0.0, 1.0));
-        // śnieg: wysoko i na łagodniejszych powierzchniach (na klifie zostaje skała)
-        float snowW = smoothstep(620.0, 880.0, h) * smoothstep(0.42, 0.70, flatness);
+        // śnieg: czapa szczytowa na łagodniejszych powierzchniach (na klifie zostaje skała)
+        float snowW = smoothstep(720.0, 980.0, h) * smoothstep(0.45, 0.72, flatness);
         col = mix(col, snow, snowW);
         // plaża / niski ląd przy wodzie: pas piasku (lokalna plaża na −Z na ~+10 m;
         // piasek dominuje do ~15 m, gaśnie ku trawie do ~28 m)
@@ -253,7 +263,7 @@ function createTerrainMaterial(): ShaderMaterial {
         // wielkoskalowa, NIEokresowa wariacja jasności (period ~600 m + ~220 m) —
         // łamie resztę widocznej „kraty" powtórzeń tekstury oglądanej z lotu
         float macro = vnoise(vWorldPos.xz / 600.0) * 0.6 + vnoise(vWorldPos.xz / 220.0) * 0.4;
-        col *= mix(0.84, 1.16, macro);
+        col *= mix(0.90, 1.10, macro); // ±10% (było ±16%) — bez ciemnych „kałuż" cienia
 
         float diff = max(dot(n, sunDir), 0.0);
         col *= ambientColor + sunColor * diff;
@@ -623,6 +633,9 @@ export function createWorld(scene: Scene, terrain: Terrain): World {
   scene.add(sunLight);
 
   for (const m of createTerrainMeshes(terrain)) scene.add(m);
+
+  // las jodłowy na niższych zboczach (instancing, asynchroniczny — drzewa dojdą po wczytaniu modelu)
+  createForest(scene, terrain);
 
   const water = createOceanWater();
   scene.add(water.mesh);
