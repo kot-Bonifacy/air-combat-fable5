@@ -19,6 +19,7 @@ import {
   MouseAimCore,
   PORT,
   DEFAULT_PLANE_TYPE,
+  SEA_LEVEL_M,
   SPOT_RANGE_M,
   aimDirectionBody,
   airDensityKgM3,
@@ -71,8 +72,8 @@ import { ResultsOverlay, ScoreboardOverlay } from './net/match-ui';
 import type { NetConditionsPanel } from './net/net-conditions-panel';
 import { RosterOverlay, type RosterRow } from './roster-overlay';
 import { ZoneBar, type ZoneBarState } from './zone-bar';
-import { SmokeTrails, WRECK_TIER, damageSmokeTier, type SmokeTier } from './smoke';
-import { createPlaneMesh, type PlaneModel } from './plane-mesh';
+import { SmokeTrails, WRECK_TIER, GROUND_FIRE_TIER, damageSmokeTier, type SmokeTier } from './smoke';
+import { createPlaneMesh, charPlaneMesh, restorePlaneMesh, type PlaneModel } from './plane-mesh';
 import { createWorld } from './world';
 
 // Tryb online faza 10 — lobby + pokoje. Klient łączy się LENIWIE (przy pierwszej akcji
@@ -347,6 +348,12 @@ const alertEl = requireEl('arena-alert');
 const healthFracById = new Map<number, number>();
 const lifeById = new Map<number, LifePhase>();
 const smokeAccumById = new Map<number, number>();
+/**
+ * Encje rozbite o LĄD — zwęglone wraki ZOSTAJĄ widoczne (zamrożone, lekko dymią) do końca meczu
+ * (parytet z SP: Combatant.burningWreck). Uderzenie w wodę tu NIE trafia (mesh znika). Czyszczone
+ * przy resecie meczu; pojedynczy respawn (gdyby kiedyś wrócił) przywraca materiały (render loop).
+ */
+const burningWreckIds = new Set<number>();
 
 // scratch (jeden wątek, sekwencyjnie)
 const scratchSmokeDir = new Vector3();
@@ -438,6 +445,7 @@ function resetGameState(): void {
   healthFracById.clear();
   lifeById.clear();
   smokeAccumById.clear();
+  burningWreckIds.clear(); // nowy mecz/reconnect — żadnych zwęglonych wraków z poprzedniego (meshe i tak czyszczone)
   latestStandings = null;
   matchMode = 'ffa';
   factionById.clear();
@@ -496,6 +504,7 @@ function handleSnapshot(snap: Snapshot): void {
     healthFracById.delete(id);
     lifeById.delete(id);
     smokeAccumById.delete(id);
+    burningWreckIds.delete(id);
   }
 }
 
@@ -577,13 +586,32 @@ function onKill(killerId: number, victimId: number, cause: KillCause, localId: n
   } else {
     pushKillFeed(`✕ ${victim} — ${cause === 'collision' ? 'kolizja' : 'rozbicie'}`);
   }
-  // efekt śmierci (parytet z SP, faza 15/16): zestrzelenie w locie / kolizja → ofiara staje
-  // się spadającym wrakiem ('dying'), więc TERAZ tylko mały błysk, a duży wybuch dopiero przy
-  // uderzeniu wraku w ziemię (dying→dead, pętla renderu). Rozbicie o teren ('ground') → serwer
-  // od razu 'dead' (bez fazy wraku) → pełny wybuch tutaj.
+  // efekt śmierci (parytet z SP, faza 15/16): zestrzelenie w locie / kolizja → ofiara staje się
+  // spadającym wrakiem ('dying'), więc TERAZ tylko mały błysk; UDERZENIE w powierzchnię (plusk wody
+  // / wybuch + zwęglony wrak na lądzie) obsługuje pętla renderu (handleSurfaceImpact) po przejściu
+  // →'dead'. Rozbicie o teren ('ground') idzie od razu alive→dead, więc całość efektu robi tamta
+  // ścieżka — tutaj BEZ błysku, by nie dublować.
   const victimMesh = meshes.get(victimId);
-  if (victimMesh) {
-    explosions.spawn(victimMesh.object.position, cause === 'ground' ? 1 : AIR_KILL_FLASH_SCALE);
+  if (victimMesh && cause !== 'ground') {
+    explosions.spawn(victimMesh.object.position, AIR_KILL_FLASH_SCALE);
+  }
+}
+
+/**
+ * Uderzenie encji (lub spadającego wraku) w powierzchnię — wołane po przejściu w 'dead' (parytet z
+ * SP: applySurfaceImpact). Woda → jasny plusk i mesh znika; ląd (wyspa) → ognisty wybuch i ZWĘGLONY
+ * wrak ZOSTAJE na ziemi, lekko dymiąc do końca meczu. O wodzie/lądzie decyduje wysokość terenu
+ * (ten sam seed co serwer) w punkcie uderzenia — bez zmiany protokołu.
+ */
+function handleSurfaceImpact(id: number, m: PlaneModel): void {
+  const p = m.object.position;
+  if (terrain.heightAt(p.x, p.z) > SEA_LEVEL_M) {
+    explosions.spawn(p, 1); // krótki ognisty wybuch przy zderzeniu
+    charPlaneMesh(m.object); // zwęglone materiały
+    burningWreckIds.add(id); // render trzyma mesh widoczny; pętla dymu emituje GROUND_FIRE_TIER
+    m.object.visible = true;
+  } else {
+    explosions.splash(p); // plusk wody — mesh chowany standardowo (visible = life !== 'dead')
   }
 }
 
@@ -1122,6 +1150,7 @@ function updateWorldVisuals(frameDtS: number): void {
     let tier: SmokeTier | null = null;
     if (life === 'dying') tier = WRECK_TIER;
     else if (life === 'alive') tier = damageSmokeTier(healthFracById.get(id) ?? 1, 1);
+    else if (burningWreckIds.has(id)) tier = GROUND_FIRE_TIER; // zwęglony wrak na lądzie — lekki, stały dym
     if (tier === null) {
       smokeAccumById.set(id, 0); // nieuszkodzony — nie kumuluj długu do kolejnego trafienia
       continue;
@@ -1387,7 +1416,8 @@ renderer.setAnimationLoop(() => {
         m.object.position.copy(predictor.renderPosition);
         m.object.quaternion.copy(predictor.renderOrientation);
         newLife = s.life;
-        m.object.visible = newLife !== 'dead';
+        // zwęglony wrak na lądzie ('dead' + burningWreck) zostaje widoczny, zamrożony w miejscu
+        m.object.visible = newLife !== 'dead' || burningWreckIds.has(id);
         m.update(frameDtS, s.throttle, newLife === 'alive');
       } else if (interpolator.sample(id, interpOut)) {
         remoteCount++;
@@ -1395,7 +1425,7 @@ renderer.setAnimationLoop(() => {
         m.object.position.copy(interpOut.position);
         m.object.quaternion.copy(interpOut.orientation);
         newLife = interpOut.life;
-        m.object.visible = newLife !== 'dead';
+        m.object.visible = newLife !== 'dead' || burningWreckIds.has(id);
         m.update(frameDtS, interpOut.throttle, newLife === 'alive');
         if (id === spectateId) {
           spectatedPos.copy(interpOut.position);
@@ -1406,9 +1436,16 @@ renderer.setAnimationLoop(() => {
       } else {
         continue;
       }
-      // wybuch przy uderzeniu wraku w ziemię (dying→dead) — duży, w miejscu mesha (parytet z SP);
-      // dla zestrzelenia/kolizji to moment „dużego" wybuchu (mały błysk był przy zestrzeleniu)
-      if (lifeById.get(id) === 'dying' && newLife === 'dead') explosions.spawn(m.object.position, 1);
+      // przejście w 'dead' (uderzenie wraku w powierzchnię ALBO bezpośrednie rozbicie alive→dead) →
+      // efekt zależny od podłoża: plusk wody / ognisty wybuch + zwęglony wrak na lądzie (parytet z SP).
+      const prevLife = lifeById.get(id);
+      if (newLife === 'dead' && prevLife !== undefined && prevLife !== 'dead') {
+        handleSurfaceImpact(id, m);
+      } else if (newLife === 'alive' && burningWreckIds.has(id)) {
+        // (gdyby kiedyś wrócił respawn) świeże życie zdejmuje zwęglenie — przywróć oryginalne barwy
+        restorePlaneMesh(m.object);
+        burningWreckIds.delete(id);
+      }
       lifeById.set(id, newLife);
     }
     updateDeathState();

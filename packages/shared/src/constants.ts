@@ -152,6 +152,15 @@ export const ZONE_POINTS_PER_SECOND = 1;
 export const MATCH_RESULTS_LINGER_S = 15;
 
 /**
+ * Zwłoka między rozstrzygnięciem meczu a pokazaniem tabeli wyników [s]. W tym czasie
+ * świat WCIĄŻ żyje (fizyka + render + snapshoty), więc widać, jak ostatni pokonany
+ * przeciwnik dymi i spada / rozbija się — satysfakcjonujące domknięcie zamiast natychmiastowego
+ * modala. Stosowane przy KAŻDYM naturalnym końcu meczu (eliminacja/strefa, zwycięstwo i porażka),
+ * w SP i na serwerze. NIE dotyczy ręcznego „zakończ misję" (gracz świadomie przerywa — od razu).
+ */
+export const MATCH_END_VIEW_DELAY_S = 5;
+
+/**
  * Czas nietykalności po (re)spawnie [s] — chroni przed spawn-killem (faza-13.md).
  * Ochrona wygasa po tym czasie ALBO gdy gracz sam otworzy ogień (oddanie ochrony za
  * możliwość ataku — standardowy wzorzec, eliminuje „nieśmiertelnego napastnika").

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FIXED_DT_S,
+  MATCH_END_VIEW_DELAY_S,
   PHYSICS_HZ,
   ZONE_CAPTURE_SECONDS,
   ZONE_CENTER_X_M,
@@ -8,6 +9,9 @@ import {
   type ControlMessage,
   type StandingsMessage,
 } from '@air-combat/shared';
+
+// Po rozstrzygnięciu mecz wisi MATCH_END_VIEW_DELAY_S (widać upadek wroga), zanim wejdzie w 'ended'.
+const END_DELAY_TICKS = Math.ceil(MATCH_END_VIEW_DELAY_S * PHYSICS_HZ);
 import { GameRoom } from './game-room';
 
 // Kontrola strefy KotH na serwerze (faza 17): autorytatywny ZoneControl jako DODATKOWY warunek
@@ -68,7 +72,7 @@ describe('KotH na serwerze — przejęcie strefy', () => {
     // pojedynczy okupant trzymany w środku strefy — kontrola wyłączna, licznik rośnie
     const capTicks = Math.ceil(ZONE_CAPTURE_SECONDS * PHYSICS_HZ);
     let ticks = 0;
-    while (room.state === 'playing' && ticks < capTicks + 120) {
+    while (room.state === 'playing' && ticks < capTicks + END_DELAY_TICKS + 120) {
       repose(room, holder, CENTER);
       room.step(FIXED_DT_S);
       ticks++;
@@ -77,9 +81,10 @@ describe('KotH na serwerze — przejęcie strefy', () => {
     expect(room.state).toBe('ended');
     expect(room.lastEndReason).toBe('zone');
     expect(room.winnerId).toBe(holder);
-    // koniec nastąpił mniej więcej przy progu (nie przez limit czasu meczu = 15 min)
-    expect(ticks).toBeGreaterThanOrEqual(capTicks);
-    expect(ticks).toBeLessThan(capTicks + 60);
+    // przejęcie nastąpiło przy progu, a 'ended' dopiero po zwłoce widoku (~END_DELAY_TICKS później);
+    // luz ±kilka ticków, bo timer zwłoki nalicza się stopniowo (off-by-one względem chwili przejęcia)
+    expect(ticks).toBeGreaterThanOrEqual(capTicks + END_DELAY_TICKS - 5);
+    expect(ticks).toBeLessThan(capTicks + END_DELAY_TICKS + 60);
 
     const ended = member.controls.find((m) => m.t === 'matchEnded');
     expect(ended).toBeDefined();

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { FIXED_DT_S, MATCH_LIVES, type InputFrame, type PlaneState } from '@air-combat/shared';
+import { FIXED_DT_S, MATCH_END_VIEW_DELAY_S, MATCH_LIVES, type InputFrame, type PlaneState } from '@air-combat/shared';
 import { GameRoom } from './game-room';
+
+// Po rozstrzygnięciu mecz wisi MATCH_END_VIEW_DELAY_S (widać upadek wroga), zanim wejdzie w 'ended'.
+const END_DELAY_TICKS = Math.ceil(MATCH_END_VIEW_DELAY_S / FIXED_DT_S);
 
 // Tryb drużynowy na serwerze (faza-18.md): auto-balans frakcji, friendly fire bez kredytu,
 // eliminacja jak SP (MATCH_LIVES żyć/samolot, brak respawnu, ostatnia drużyna wygrywa), bez
@@ -170,6 +173,9 @@ describe('serwer — tryb drużynowy: eliminacja kończy mecz (faza 18)', () => 
     ]);
     hold(room, poses, 200);
     fireUntilDown(room, a, b, poses);
+    // mecz rozstrzygnięty, ale 'ended' dopiero po zwłoce widoku (widać upadek ostatniego wroga)
+    expect(room.state).toBe('playing');
+    hold(room, poses, END_DELAY_TICKS + 5);
     expect(room.state).toBe('ended');
     expect(room.winningFaction).toBe(0); // ostatnia drużyna z samolotami
     expect(room.winnerId).toBe(a); // najlepszy gracz zwycięskiej drużyny

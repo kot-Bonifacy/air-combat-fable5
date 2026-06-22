@@ -84,7 +84,7 @@ describe('FFA — eliminacja (P1: last-man-standing jak SP)', () => {
     room.applyInput(b, input({ fire: false }));
 
     let ticks = 0;
-    while (room.state === 'playing' && ticks < 600) {
+    while (room.state === 'playing' && ticks < 1000) {
       repose(room, a, aPos, false);
       repose(room, b, bPos, true);
       room.step(FIXED_DT_S);
@@ -156,7 +156,7 @@ describe('FFA — eliminacja (P1: last-man-standing jak SP)', () => {
     const bPos: [number, number, number] = [0, 5000, 12];
     room.applyInput(a, input({ fire: true, aimZ: 1 }));
     let ticks = 0;
-    while (room.state === 'playing' && ticks < 600) {
+    while (room.state === 'playing' && ticks < 1000) {
       repose(room, a, aPos, false);
       repose(room, b, bPos, true);
       room.step(FIXED_DT_S);

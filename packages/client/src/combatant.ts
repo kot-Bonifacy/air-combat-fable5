@@ -65,6 +65,13 @@ export class Combatant {
   active = false;
   /** Akumulator czasu między kłębami dymu [s] — wrak ('dying') i trafiona, żywa maszyna. */
   smokeAccumS = 0;
+  /**
+   * Zwęglony wrak leżący na lądzie po uderzeniu (life 'dead'): mesh ZOSTAJE widoczny,
+   * zamrożony w miejscu rozbicia, i lekko dymi do końca meczu. Czyszczone przy (re)spawnie
+   * wraz z przywróceniem oryginalnych materiałów (caller). Uderzenie w wodę go NIE ustawia
+   * (samolot znika pod taflą).
+   */
+  burningWreck = false;
 
   constructor(
     /** Stabilny identyfikator = ownerId pocisków (kill credit). Gracz = 0. */
@@ -121,8 +128,9 @@ export class Combatant {
    */
   render(alpha: number, frameDtS: number): void {
     const phase = this.state.life;
-    // wrak ('dying') zostaje widoczny i spada — chowamy dopiero po uderzeniu o ziemię ('dead')
-    const visible = this.active && (phase === 'alive' || phase === 'dying');
+    // wrak ('dying') zostaje widoczny i spada — chowamy dopiero po uderzeniu o ziemię ('dead');
+    // zwęglony wrak na lądzie ('dead' + burningWreck) zostaje widoczny, zamrożony w miejscu rozbicia
+    const visible = this.active && (phase === 'alive' || phase === 'dying' || this.burningWreck);
     this.mesh.visible = visible;
     if (!visible) return;
     this.mesh.position.lerpVectors(this.prevPos, this.state.position, alpha);

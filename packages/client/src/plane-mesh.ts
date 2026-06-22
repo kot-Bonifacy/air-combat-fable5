@@ -753,3 +753,47 @@ export function createPlaneMesh(type: PlaneType, targetWingspanM: number): Plane
 function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x;
 }
+
+// --- zwęglenie wraku (uderzenie w ląd) ---
+// Po rozbiciu o wyspę samolot ZOSTAJE na ziemi jako spalony, lekko dymiący wrak (parytet SP↔MP).
+// Zwęglenie = podmiana KAŻDEGO materiału mesha na jeden wspólny, ciemny matowy materiał; oryginał
+// chowamy w userData, by dało się go przywrócić przy respawnie / nowym meczu (mesh jest reużywany —
+// „alokuj raz"). Materiał jest współdzielony i NIGDY nie dispose'owany (żadne wraki go nie posiadają).
+
+let charredMaterial: MeshStandardMaterial | null = null;
+function sharedCharredMaterial(): MeshStandardMaterial {
+  charredMaterial ??= new MeshStandardMaterial({
+    color: 0x161310, // zwęglony, niemal czarny metal
+    metalness: 0.2,
+    roughness: 0.95, // matowa sadza, bez połysku
+  });
+  return charredMaterial;
+}
+
+/** Klucz w userData mesha przechowujący oryginalny materiał (do przywrócenia po zwęgleniu). */
+const ORIG_MAT_KEY = '__origMat';
+
+/**
+ * Zwęgla cały model (każdy mesh dostaje wspólny ciemny materiał) — wygląd spalonego wraku
+ * po uderzeniu w ląd. Oryginalne materiały chowa w userData (odwracalne przez restorePlaneMesh).
+ * Idempotentne: ponowne wywołanie nie nadpisze już zapamiętanego oryginału.
+ */
+export function charPlaneMesh(object: Object3D): void {
+  const charred = sharedCharredMaterial();
+  object.traverse((o) => {
+    if (!(o instanceof Mesh)) return;
+    if (o.userData[ORIG_MAT_KEY] === undefined) o.userData[ORIG_MAT_KEY] = o.material;
+    o.material = charred;
+  });
+}
+
+/** Przywraca oryginalne materiały zwęglonego modelu (respawn / nowy mecz). No-op, gdy nie był zwęglony. */
+export function restorePlaneMesh(object: Object3D): void {
+  object.traverse((o) => {
+    if (!(o instanceof Mesh)) return;
+    const orig = o.userData[ORIG_MAT_KEY] as Material | Material[] | undefined;
+    if (orig === undefined) return;
+    o.material = orig;
+    delete o.userData[ORIG_MAT_KEY];
+  });
+}

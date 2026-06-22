@@ -109,6 +109,27 @@ const WRECK_PROFILE: SmokeProfile = {
 /** Spadający wrak: gęsta, ciągła czarna smuga. */
 export const WRECK_TIER: SmokeTier = { profile: WRECK_PROFILE, intervalS: 0.05 };
 
+/**
+ * Zwęglony wrak leżący na lądzie po uderzeniu — „lekko dymi": rzadka, cienka, ciemna
+ * smużka unosząca się ze szczątków (dłużej żyjące kłęby niż przy spadającym wraku, ale
+ * dużo rzadziej emitowane → kolumna dymu zamiast gęstej smugi). Emitowany aż do końca meczu.
+ */
+const GROUND_FIRE_PROFILE: SmokeProfile = {
+  particlesPerPuff: 5,
+  lifetimeS: 2.2,
+  spawnRadiusM: 0.9,
+  riseSpeedMs: 4.5,
+  spreadSpeedMs: 1.4,
+  sizeStart: 4,
+  sizeEnd: 14,
+  opacityStart: 0.4,
+  colorStart: new Color(0x242424), // ciemny dym palącego się płatowca
+  colorEnd: new Color(0x707070), // rozrzedza się do szarości i znika
+};
+
+/** Lekki, stały dym zwęglonego wraku na lądzie (rzadki interwał → cienka kolumna). */
+export const GROUND_FIRE_TIER: SmokeTier = { profile: GROUND_FIRE_PROFILE, intervalS: 0.2 };
+
 const LIGHT_TIER: SmokeTier = { profile: LIGHT_PROFILE, intervalS: 0.16 };
 const MEDIUM_TIER: SmokeTier = { profile: MEDIUM_PROFILE, intervalS: 0.11 };
 const HEAVY_TIER: SmokeTier = { profile: HEAVY_PROFILE, intervalS: 0.07 };

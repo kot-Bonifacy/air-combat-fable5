@@ -20,13 +20,44 @@ const MAX_SPEED_MS = 130;
 /** Cząstki lecą głównie w górę (odbicie od powierzchni). */
 const UP_BIAS_MS = 45;
 const PARTICLE_GRAVITY_MS2 = 25;
-const COLOR_START = new Color(0xffc868);
-const COLOR_END = new Color(0xb33a14);
+
+/** Paleta ognistego wybuchu (rozbicie o ląd / dobicie wraku). */
+const FIRE_COLOR_START = new Color(0xffc868);
+const FIRE_COLOR_END = new Color(0xb33a14);
+/** Paleta plusku wody — jasny, błękitno-biały rozbryzg (zamiast ognia, gdy samolot wpada do morza). */
+const SPLASH_COLOR_START = new Color(0xeaf6ff);
+const SPLASH_COLOR_END = new Color(0x6fb4e0);
+/** Plusk wody: słup tryska wyżej i opada wolniej niż iskry wybuchu (woda, nie odłamki). */
+const SPLASH_UP_BIAS_MS = 70;
+const SPLASH_GRAVITY_MS2 = 16;
+
+/** Styl pojedynczego brzdęku cząstek — co odróżnia ognisty wybuch od plusku wody. */
+interface BurstStyle {
+  colorStart: Color;
+  colorEnd: Color;
+  upBiasMs: number;
+  gravityMs2: number;
+}
+
+const FIRE_STYLE: BurstStyle = {
+  colorStart: FIRE_COLOR_START,
+  colorEnd: FIRE_COLOR_END,
+  upBiasMs: UP_BIAS_MS,
+  gravityMs2: PARTICLE_GRAVITY_MS2,
+};
+const SPLASH_STYLE: BurstStyle = {
+  colorStart: SPLASH_COLOR_START,
+  colorEnd: SPLASH_COLOR_END,
+  upBiasMs: SPLASH_UP_BIAS_MS,
+  gravityMs2: SPLASH_GRAVITY_MS2,
+};
 
 interface Burst {
   points: Points<BufferGeometry, PointsMaterial>;
   velocities: Float32Array;
   ageS: number;
+  /** Barwa i grawitacja tego brzdęku (ogień vs woda) — używane przy starzeniu. */
+  style: BurstStyle;
 }
 
 export class Explosions {
@@ -43,6 +74,20 @@ export class Explosions {
    * zestrzelenia w powietrzu (potem samolot leci dalej jako dymiący wrak).
    */
   spawn(positionM: Vector3, scale = 1): void {
+    this.emit(positionM, scale, FIRE_STYLE);
+  }
+
+  /**
+   * Plusk wody w punkcie — gdy samolot (lub spadający wrak) wpada do morza: jasny,
+   * błękitno-biały słup tryska w górę i opada (zamiast ognistego wybuchu). Sam samolot
+   * znika pod wodą (caller chowa mesh) — bez pływającego, palącego się wraku.
+   */
+  splash(positionM: Vector3, scale = 1): void {
+    this.emit(positionM, scale, SPLASH_STYLE);
+  }
+
+  /** Wspólny emiter brzdęku cząstek; `style` odróżnia ognisty wybuch od plusku wody. */
+  private emit(positionM: Vector3, scale: number, style: BurstStyle): void {
     const positions = new Float32Array(PARTICLE_COUNT * 3);
     const velocities = new Float32Array(PARTICLE_COUNT * 3);
     for (let i = 0; i < PARTICLE_COUNT; i++) {
@@ -56,13 +101,13 @@ export class Explosions {
       const sinPhi = Math.sqrt(1 - cosPhi * cosPhi);
       const speed = (MIN_SPEED_MS + Math.random() * (MAX_SPEED_MS - MIN_SPEED_MS)) * scale;
       velocities[i3] = Math.cos(theta) * sinPhi * speed;
-      velocities[i3 + 1] = cosPhi * speed + UP_BIAS_MS * scale;
+      velocities[i3 + 1] = cosPhi * speed + style.upBiasMs * scale;
       velocities[i3 + 2] = Math.sin(theta) * sinPhi * speed;
     }
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new BufferAttribute(positions, 3));
     const material = new PointsMaterial({
-      color: COLOR_START.clone(),
+      color: style.colorStart.clone(),
       size: 6 * scale,
       transparent: true,
       blending: AdditiveBlending,
@@ -71,7 +116,7 @@ export class Explosions {
     const points = new Points(geometry, material);
     points.frustumCulled = false; // chmura rozlatuje się szybciej niż bounding sphere
     this.scene.add(points);
-    this.bursts.push({ points, velocities, ageS: 0 });
+    this.bursts.push({ points, velocities, ageS: 0, style });
   }
 
   /** Natychmiast usuwa wszystkie żywe wybuchy (reset meczu / reconnect — bez artefaktów). */
@@ -99,9 +144,10 @@ export class Explosions {
       const positionAttr = burst.points.geometry.getAttribute('position') as BufferAttribute;
       const positions = positionAttr.array as Float32Array;
       const velocities = burst.velocities;
+      const gravityMs2 = burst.style.gravityMs2;
       for (let i = 0; i < positions.length; i += 3) {
         // ?? nieosiągalne — bufory mają wspólny rozmiar PARTICLE_COUNT*3
-        const vyMs = (velocities[i + 1] ?? 0) - PARTICLE_GRAVITY_MS2 * dtS;
+        const vyMs = (velocities[i + 1] ?? 0) - gravityMs2 * dtS;
         velocities[i + 1] = vyMs;
         positions[i] = (positions[i] ?? 0) + (velocities[i] ?? 0) * dtS;
         positions[i + 1] = (positions[i + 1] ?? 0) + vyMs * dtS;
@@ -110,7 +156,7 @@ export class Explosions {
       positionAttr.needsUpdate = true;
       const life01 = burst.ageS / LIFETIME_S;
       burst.points.material.opacity = 1 - life01 * life01;
-      burst.points.material.color.copy(COLOR_START).lerp(COLOR_END, life01);
+      burst.points.material.color.copy(burst.style.colorStart).lerp(burst.style.colorEnd, life01);
     }
   }
 }

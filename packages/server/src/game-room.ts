@@ -6,6 +6,7 @@ import {
   Instructor,
   LAGCOMP_HISTORY_TICKS,
   LAGCOMP_MAX_REWIND_MS,
+  MATCH_END_VIEW_DELAY_S,
   MATCH_RESULTS_LINGER_S,
   MAX_EVENTS_PER_FRAME,
   MAX_PLAYERS_PER_ROOM,
@@ -224,6 +225,14 @@ export class GameRoom {
   // --- pętla meczu (faza 13; P1 2026-06-19: oba tryby eliminacyjne jak SP) ---
   /** Czas spędzony w stanie 'ended' [s] — po MATCH_RESULTS_LINGER_S pokój wraca do 'waiting'. */
   private endedTimerS = 0;
+  /**
+   * Mecz rozstrzygnięty, ale matchEnded WSTRZYMANE na MATCH_END_VIEW_DELAY_S: pokój zostaje
+   * 'playing' (fizyka + snapshoty lecą), więc klienci widzą, jak ostatni pokonany wróg dymi
+   * i spada, zanim dostaną tabelę. null = brak oczekującego końca; werdykt zamrożony przy
+   * rozstrzygnięciu. Parytet z SP (matchEndPending w main.ts).
+   */
+  private pendingEnd: { winnerId: number | null; winningFaction: number | null; reason: MatchEndReason } | null = null;
+  private pendingEndTimerS = 0;
   /** Wynik ostatniego meczu (ekran wyników / diagnostyka). */
   winnerId: number | null = null;
   /** Zwycięska drużyna ostatniego meczu drużynowego (faza 18); null w FFA i przy remisie. */
@@ -617,6 +626,8 @@ export class GameRoom {
     if (this.state !== 'waiting' && this.state !== 'ended') return;
     this.state = 'playing';
     this.endedTimerS = 0;
+    this.pendingEnd = null; // świeży mecz — bez zalegającej zwłoki końca z poprzedniego
+    this.pendingEndTimerS = 0;
     this.winnerId = null;
     this.lastEndReason = null;
     // czysty stan walki na nowy mecz: żadnych zalegających pocisków ani eventów
@@ -794,6 +805,20 @@ export class GameRoom {
 
     // 6) rozstrzygnięcie końca meczu (po rozliczeniu trafień tego ticku) — strefa albo eliminacja
     this.checkMatchEnd();
+
+    // 7) zwłoka przed tabelą wyników: gdy mecz rozstrzygnięty, matchEnded wstrzymujemy o
+    // MATCH_END_VIEW_DELAY_S (pokój wciąż 'playing' → fizyka i snapshoty lecą, widać upadek wroga).
+    this.advancePendingEnd(dtS);
+  }
+
+  /** Po rozstrzygnięciu odlicza zwłokę i — po jej upływie — faktycznie kończy mecz (matchEnded). */
+  private advancePendingEnd(dtS: number): void {
+    if (!this.pendingEnd) return;
+    this.pendingEndTimerS += dtS;
+    if (this.pendingEndTimerS < MATCH_END_VIEW_DELAY_S) return;
+    const e = this.pendingEnd;
+    this.pendingEnd = null;
+    this.endMatch(e.winnerId, e.winningFaction, e.reason);
   }
 
   private stepPlayer(player: ServerPlayer, dtS: number): void {
@@ -1215,6 +1240,8 @@ export class GameRoom {
    * limitu zestrzeleń i czasu (usunięte evaluateFfa/zegar).
    */
   private checkMatchEnd(): void {
+    // mecz już rozstrzygnięty (czeka na upływ zwłoki przed tabelą) — nie rozstrzygaj ponownie
+    if (this.pendingEnd) return;
     // strefa KotH (faza 17) ma pierwszeństwo w OBU trybach: pełne przejęcie = natychmiastowe
     // zwycięstwo frakcji (FFA: gracza; drużynowy: drużyny) — to główny cel gry (parytet z SP).
     if (this.zone.captured !== null) {
@@ -1246,18 +1273,29 @@ export class GameRoom {
     const survivingFaction = inPlay.size === 1 ? [...inPlay][0]! : null; // null = remis (obustronna)
     if (this.mode === 'team') {
       const winnerId = survivingFaction === null ? null : this.topPlayerOfFaction(survivingFaction);
-      this.endMatch(winnerId, survivingFaction, 'score');
+      this.scheduleEnd(winnerId, survivingFaction, 'score');
     } else {
       // FFA: frakcja = id → ocalała frakcja to id zwycięzcy; brak drużyn (winningFaction = null)
-      this.endMatch(survivingFaction, null, 'score');
+      this.scheduleEnd(survivingFaction, null, 'score');
     }
   }
 
-  /** Kończy mecz z perspektywy zwycięskiej FRAKCJI (przejęcie strefy). FFA: frakcja = id zwycięzcy;
-   *  drużynowy: zwycięska drużyna + jej najlepszy gracz jako `winnerId` (do ekranu wyników). */
+  /** Planuje koniec meczu z perspektywy zwycięskiej FRAKCJI (przejęcie strefy). FFA: frakcja = id
+   *  zwycięzcy; drużynowy: zwycięska drużyna + jej najlepszy gracz jako `winnerId` (do ekranu wyników). */
   private endByFaction(faction: number, reason: MatchEndReason): void {
-    if (this.mode === 'team') this.endMatch(this.topPlayerOfFaction(faction), faction, reason);
-    else this.endMatch(faction, null, reason);
+    if (this.mode === 'team') this.scheduleEnd(this.topPlayerOfFaction(faction), faction, reason);
+    else this.scheduleEnd(faction, null, reason);
+  }
+
+  /**
+   * Planuje koniec meczu z 5-sekundową zwłoką (MATCH_END_VIEW_DELAY_S): pokój zostaje 'playing',
+   * więc fizyka i snapshoty lecą dalej (klienci widzą upadek ostatniego wroga), a matchEnded
+   * pójdzie dopiero po upływie zwłoki (advancePendingEnd). Idempotentne — werdykt ustalany raz.
+   */
+  private scheduleEnd(winnerId: number | null, winningFaction: number | null, reason: MatchEndReason): void {
+    if (this.pendingEnd) return;
+    this.pendingEnd = { winnerId, winningFaction, reason };
+    this.pendingEndTimerS = 0;
   }
 
   /** Id najlepszego gracza danej frakcji (ranking FFA: zestrzelenia↓/śmierci↑/id↑) albo null. */
@@ -1274,6 +1312,8 @@ export class GameRoom {
   private endMatch(winnerId: number | null, winningFaction: number | null, reason: MatchEndReason): void {
     this.state = 'ended';
     this.endedTimerS = 0;
+    this.pendingEnd = null; // zwłoka domknięta (advancePendingEnd) — wyczyść defensywnie
+    this.pendingEndTimerS = 0;
     this.winnerId = winnerId;
     this.winningFaction = winningFaction;
     this.lastEndReason = reason;

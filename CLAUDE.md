@@ -54,6 +54,21 @@ w JSON obu samolotów = 15 min na 100% gazu), po wyczerpaniu silnik gaśnie (`th
 do 1 przy świeżym spawnie). HUD: wiersz „paliwo %" + „! mało !"/„BRAK PALIWA — SILNIK STANĄŁ". Śmigło nadal kręci
 się wg gazu (nie wg paliwa) — parytet local↔remote (paliwa zdalnych nie ma w snapshocie).
 
+**Sesja poprawek 2026-06-22 (2 zgłoszenia, 466 testów zielone, BEZ bumpu protokołu — v5):** (1) **zwłoka 5 s przed
+tabelą wyników** (`MATCH_END_VIEW_DELAY_S`) przy KAŻDYM naturalnym końcu meczu (eliminacja/strefa, zwycięstwo i
+porażka — decyzja usera) — świat żyje dalej, więc widać upadek ostatniego pokonanego wroga. SP: `scheduleMatchEnd`
+(zamraża werdykt, timer w pętli renderu) → po 5 s `finalizeMatch`; ręczne „zakończ misję" omija zwłokę (od razu).
+Serwer: `pendingEnd`+`advancePendingEnd` w `step()` — pokój zostaje `'playing'` (fizyka+snapshoty lecą), `matchEnded`
+dopiero po zwłoce; klient online bez zmian (czeka na `matchEnded`). (2) **woda vs ląd przy uderzeniu** (parytet
+SP↔MP, BEZ protokołu — decyzja woda/ląd po `terrain.heightAt`>SEA_LEVEL_M, klient ma ten sam seed): **woda** → jasny
+**plusk** (`Explosions.splash`, paleta błękitno-biała, słabsza grawitacja) i samolot **znika** pod taflą; **ląd** →
+krótki ognisty wybuch + **zwęglony wrak ZOSTAJE** w miejscu rozbicia, **lekko dymi** (`GROUND_FIRE_TIER`) do końca
+meczu. Zwęglenie = odwracalna podmiana materiałów na wspólny ciemny (`charPlaneMesh`/`restorePlaneMesh` w
+`plane-mesh.ts`; oryginał w `userData`, przywracany przy (re)spawnie). SP: flaga `Combatant.burningWreck` (render
+trzyma mesh widoczny+dym); MP: `burningWreckIds` w `online-main.ts` (efekt przy przejściu →`dead` w pętli renderu;
+`onKill` już NIE robi wybuchu dla `'ground'` — robi go `handleSurfaceImpact`). Dotyczy bezpośrednich rozbić i
+spadających wraków, gracza i botów.
+
 ⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
 → overlay obserwatora; drużynowy; v5 z wyborem samolotu + licznik 20 mm + ekran ładowania + zryw botów) +
 playtest poprawek 2026-06-21 (zryw botów „trudnych", nazwiska PL/DE) + playtest balansu 1v1 Spitfire↔Bf 109 +
