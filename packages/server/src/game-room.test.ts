@@ -91,6 +91,79 @@ describe('GameRoom — autorytatywna symulacja', () => {
   });
 });
 
+describe('GameRoom — kolejka inputów (jeden input = jeden krok)', () => {
+  it('konsumuje kolejne sekwencje po kolei: ack rośnie o 1 na tick (żaden input pominięty ani powtórzony)', () => {
+    const room = new GameRoom('ABCD');
+    const id = add(room);
+    room.start();
+    for (let seq = 1; seq <= 6; seq++) {
+      room.applyInput(id, input({ sequence: seq }));
+      room.step(FIXED_DT_S);
+      expect(room.lastProcessedSeq(id)).toBe(seq);
+    }
+  });
+
+  it('burst po przestoju klienta: kolejka drenuje do bufora docelowego (ogranicza opóźnienie, trzyma najświeższe)', () => {
+    const room = new GameRoom('ABCD');
+    const id = add(room);
+    room.start();
+    // 5 ramek naraz, bez stepów pomiędzy (klient nadrobił przestój). Bufor docelowy = 3.
+    for (let seq = 1; seq <= 5; seq++) room.applyInput(id, input({ sequence: seq }));
+    room.step(FIXED_DT_S);
+    expect(room.lastProcessedSeq(id)).toBe(3); // najstarsze (1,2) odrzucone — opóźnienie inputu nie narasta
+    room.step(FIXED_DT_S);
+    room.step(FIXED_DT_S);
+    expect(room.lastProcessedSeq(id)).toBe(5); // w kilka ticków dogoniliśmy najświeższy zamiar gracza
+  });
+
+  it('nierówne (jitterowe) dostarczanie inputów daje TEN SAM stan co 1 input/tick — koniec rozjazdu korekty', () => {
+    // Sedno poprawki drżenia: stary model „latest wins" gubił input przy paczce 2 ramek na tick →
+    // serwer rozjeżdżał się z predykcją klienta o ~1 tick co snapshot. Kolejka FIFO konsumuje KAŻDY
+    // input dokładnie raz, w tej samej kolejności — więc jitterowe dostarczanie = idealny strumień.
+    const steady = new GameRoom('ABCD');
+    const jittery = new GameRoom('WXYZ');
+    const a = add(steady);
+    const b = add(jittery);
+    steady.start();
+    jittery.start();
+
+    // input MYSZY (pitch/roll/yaw = 0 → instruktor aktywny), aim zmienny co tick → trajektoria zależna od kolejności
+    const frame = (i: number): InputFrame =>
+      input({
+        sequence: i + 1,
+        throttle: 1,
+        aimX: 0.3 * Math.sin(i * 0.15),
+        aimY: 0.2 * Math.cos(i * 0.1),
+        aimZ: 1,
+      });
+
+    const N = 150;
+    // steady: dokładnie 1 input na tick (idealnie zsynchronizowane zegary)
+    for (let i = 0; i < N; i++) {
+      steady.applyInput(a, frame(i));
+      steady.step(FIXED_DT_S);
+    }
+    // jittery: te same ramki, ale po 2 co drugi tick i 0 w pozostałych (głębokość ≤ bufor docelowy)
+    let next = 0;
+    for (let tick = 0; tick < N; tick++) {
+      if (tick % 2 === 0 && next < N) {
+        jittery.applyInput(b, frame(next++));
+        if (next < N) jittery.applyInput(b, frame(next++));
+      }
+      jittery.step(FIXED_DT_S);
+    }
+
+    const sa = steady.snapshotEntities()[0]!.state;
+    const sb = jittery.snapshotEntities()[0]!.state;
+    expect(sb.position.distanceTo(sa.position)).toBeLessThan(1e-6); // identyczny tor mimo jittera
+    const fa = new Vector3();
+    const fb = new Vector3();
+    getForward(sa.orientation, fa);
+    getForward(sb.orientation, fb);
+    expect(fb.angleTo(fa)).toBeLessThan(1e-6);
+  });
+});
+
 describe('GameRoom — maszyna stanów lobby', () => {
   it('pierwszy gracz zostaje hostem, kolejni nie', () => {
     const room = new GameRoom('ABCD');

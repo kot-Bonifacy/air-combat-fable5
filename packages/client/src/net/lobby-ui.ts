@@ -62,7 +62,8 @@ export interface LobbyCallbacks {
   onJoinRoom(code: string): void;
   onStartMatch(): void;
   onLeaveRoom(): void;
-  /** Wybór typu samolotu w poczekalni (faza 19b; FFA — w drużynowym sprzęt wg strony). */
+  /** Wybór samolotu w poczekalni (faza 19b). FFA: płatowiec; drużynowy: wybór samolotu = wybór
+   *  strony (Spitfire→Alianci, Bf 109→Oś — klimat zachowany). */
   onSelectPlane(plane: PlaneType): void;
   /** Host zmienia ustawienia pokoju w poczekalni (tryb / liczba botów / poziom trudności). */
   onUpdateRoom(opts: { mode: MatchMode; bots: number; difficulty: DifficultyLevel }): void;
@@ -73,7 +74,7 @@ export interface LobbyCallbacks {
 export interface WaitingView {
   code: string;
   state: RoomState;
-  /** Tryb meczu (faza 19b) — FFA pokazuje wybór samolotu; drużynowy: sprzęt wg strony. */
+  /** Tryb meczu (faza 18) — render drużyn + sens selektora (drużynowy: wybór samolotu = strona). */
   mode: MatchMode;
   /** Poziom trudności botów pokoju — selektor hosta w poczekalni. */
   difficulty: DifficultyLevel;
@@ -103,7 +104,7 @@ export class LobbyUI {
   private readonly waitingPlayersEl: HTMLDivElement;
   private readonly startBtn: HTMLButtonElement;
   private readonly waitingHintEl: HTMLDivElement;
-  // wybór samolotu w poczekalni (faza 19b): FFA — select; drużynowy — notka „wg drużyny"
+  // wybór samolotu w poczekalni (faza 19b): select w obu trybach — w drużynowym = wybór strony
   private readonly planeRow: HTMLDivElement;
   private readonly planeLabel: HTMLLabelElement;
   private readonly planeSelect: HTMLSelectElement;
@@ -186,7 +187,7 @@ export class LobbyUI {
     codeCaption.textContent = 'Kod pokoju (podaj znajomym)';
     this.waitingCodeEl = el('div', 'lobby-code');
     this.waitingPlayersEl = el('div', 'lobby-players');
-    // wybór samolotu (faza 19b): w FFA gracz wybiera typ; w drużynowym sprzęt zależy od strony
+    // wybór samolotu (faza 19b): w FFA wybór płatowca; w drużynowym wybór samolotu = wybór strony
     this.planeRow = el('div', 'lobby-row lobby-bot-row');
     this.planeLabel = el('label', 'lobby-label');
     this.planeLabel.textContent = 'Twój samolot';
@@ -207,7 +208,7 @@ export class LobbyUI {
     this.waitModeSelect = selectEl(
       'lobby-select lobby-select-mode',
       MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-      'ffa',
+      'team', // domyślnie drużynowy (życzenie usera 2026-06-22); i tak nadpisywany view.mode
     );
     const settingsBotLabel = el('label', 'lobby-label');
     settingsBotLabel.textContent = 'Boty';
@@ -372,16 +373,13 @@ export class LobbyUI {
       row.append(tag, name, plane);
       this.waitingPlayersEl.append(row);
     }
-    // wybór samolotu: FFA — select ustawiony na MÓJ typ z serwera; drużynowy — notka „wg drużyny"
-    if (view.mode === 'team') {
-      this.planeLabel.textContent = 'Sprzęt: wg drużyny (Spitfire / Bf 109)';
-      this.planeSelect.style.display = 'none';
-    } else {
-      this.planeLabel.textContent = 'Twój samolot';
-      this.planeSelect.style.display = '';
-      const mine = view.players.find((p) => p.id === view.youId);
-      if (mine && this.planeSelect.value !== mine.planeType) this.planeSelect.value = mine.planeType;
-    }
+    // wybór samolotu w OBU trybach: select ustawiony na MÓJ typ z serwera (efektywny typ z roster).
+    // W drużynowym (2026-06-23) wybór samolotu = wybór STRONY (Spitfire→Alianci, Bf 109→Oś) —
+    // etykieta to sygnalizuje; w FFA to po prostu wybór płatowca.
+    this.planeLabel.textContent =
+      view.mode === 'team' ? 'Twój samolot (wybór = strona)' : 'Twój samolot';
+    const mine = view.players.find((p) => p.id === view.youId);
+    if (mine && this.planeSelect.value !== mine.planeType) this.planeSelect.value = mine.planeType;
     const isHost = view.youId === view.hostId;
     // ustawienia pokoju: host edytuje (selektory), reszta widzi podsumowanie tekstowe
     this.settingsRow.style.display = isHost ? '' : 'none';

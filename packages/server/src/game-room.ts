@@ -33,6 +33,7 @@ import {
   PLANE_TYPES,
   planeConfigOf,
   planeTypeForTeam,
+  teamForPlaneType,
   planesCollide,
   resetFireControl,
   resetHealth,
@@ -99,6 +100,19 @@ const INTERP_DELAY_TICKS = Math.round((INTERP_DELAY_MS / 1000) * PHYSICS_HZ);
 /** Cap rewindu lag-comp w tickach (decyzja designerska z faza-11.md). */
 const MAX_REWIND_TICKS = Math.round((LAGCOMP_MAX_REWIND_MS / 1000) * PHYSICS_HZ);
 
+/**
+ * Kolejka inputów gracza: jeden input = jeden krok fizyki (niezmiennik reconciliation —
+ * patrz piloted-plane.ts). Klient predykuje DOKŁADNIE jeden krok na wysłany input; serwer musi
+ * skonsumować ten sam ciąg. Model „latest wins" gubił/powtarzał inputy przy dryfie faz zegarów
+ * klient↔serwer (oba 60 Hz, ale niezsynchronizowane) → stały rozjazd ~1 tick (~1,5 m co snapshot
+ * nawet przy 2 ms ping) → drżenie kamery pościgowej. TARGET = docelowa głębokość bufora jittera:
+ * w normalnej grze kolejka ma 0–2 wpisy (drain się nie odpala, każdy input zużyty raz → korekty
+ * ~mm). Po przestoju klienta (burst do ~15 ramek) nextInput odrzuca nadmiar ponad TARGET, by nie
+ * narastało opóźnienie inputu. MAX = twardy limit pamięci (gdy gracz martwy/respawn nie konsumuje;
+ * spawn i tak czyści kolejkę). */
+const INPUT_QUEUE_TARGET = 3;
+const INPUT_QUEUE_MAX = 64;
+
 /** Sentinel „brak strzelca" w evencie KILL (śmierć od ziemi/kolizji). */
 const NO_KILLER = 0;
 
@@ -151,6 +165,10 @@ interface ServerPlayer {
   /** Wybór samolotu gracza z poczekalni (faza 19b; FFA). Bot: losowany przy dodaniu. Stosowany
    *  przy (re)spawnie; w drużynowym ignorowany (sprzęt wg strony — planeTypeForTeam). */
   selectedType: PlaneType;
+  /** Preferowana STRONA w trybie drużynowym (2026-06-23): wybór samolotu w poczekalni = wybór
+   *  strony (Spitfire→0/Alianci, Bf 109→1/Oś). null = bez wyboru → auto-balans. Choosery są
+   *  utrwalani w assignFactions, resztę (boty, niewybierający) balansuje serwer. */
+  sidePref: number | null;
   /** Typ samolotu, którym encja LATA w bieżącym życiu (faza 19b) — ustawiany w spawn(); kodowany
    *  do snapshotu (v4) i do roster. */
   planeType: PlaneType;
@@ -182,8 +200,13 @@ interface ServerPlayer {
   member: RoomMember | null;
   /** Moment rozłączenia [ms]; null gdy podłączony. Po RECONNECT_WINDOW_MS slot zwalniany. */
   disconnectedAtMs: number | null;
-  /** Najnowszy zdekodowany input (powtarzany, dopóki nie przyjdzie nowy). */
-  latestInput: InputFrame | null;
+  /** Kolejka FIFO nieskonsumowanych inputów (jeden input = jeden krok fizyki — niezmiennik
+   *  reconciliation). WS gwarantuje porządek dostarczania, więc kolejność przyjścia = kolejność
+   *  sekwencji. Zastępuje model „latest wins", który gubił/powtarzał inputy → drżenie kamery. */
+  readonly inputQueue: InputFrame[];
+  /** Ostatni SKONSUMOWANY input: podtrzymywany przy pustej kolejce (klient się spóźnia) i źródło
+   *  spustu w fireWeapon. null = brak inputu w tym życiu (lot prosto neutralnymi żądaniami). */
+  lastInput: InputFrame | null;
   /** Numer ostatniego INPUT uwzględnionego w fizyce — odsyłany jako ack w snapshocie. */
   lastProcessedSeq: number;
   /** Najnowszy serverTick potwierdzony przez klienta (z INPUT.ackServerTick) — baza rewindu lag-comp. */
@@ -399,6 +422,7 @@ export class GameRoom {
       faction: id, // FFA domyślnie; tryb drużynowy nadpisze w assignFaction (auto-balans)
       livesLeft: MATCH_LIVES,
       selectedType: initType,
+      sidePref: null, // brak wyboru strony → auto-balans (drużynowy); ustawiany przez selectPlane
       planeType: initType,
       plane: initPlane,
       sim: createSimPlane(id + 1),
@@ -417,7 +441,8 @@ export class GameRoom {
       sessionToken,
       member,
       disconnectedAtMs: null,
-      latestInput: null,
+      inputQueue: [],
+      lastInput: null,
       lastProcessedSeq: 0,
       lastAckServerTick: 0,
       spawnPos: new Vector3(),
@@ -451,6 +476,11 @@ export class GameRoom {
       player.faction = player.id;
       return;
     }
+    // gracz, który wybrał stronę (przez samolot), trafia na nią; reszta do mniejszej drużyny
+    if (player.sidePref !== null && player.sidePref >= 0 && player.sidePref < TEAM_COUNT) {
+      player.faction = player.sidePref;
+      return;
+    }
     const counts = new Array<number>(TEAM_COUNT).fill(0);
     for (const p of this.players.values()) {
       if (p !== player && p.faction >= 0 && p.faction < TEAM_COUNT) counts[p.faction] = (counts[p.faction] ?? 0) + 1;
@@ -460,7 +490,9 @@ export class GameRoom {
 
   /**
    * Przydziela frakcje WSZYSTKIM uczestnikom (start/rewanż meczu). FFA: frakcja = id. Drużynowy:
-   * równy podział w kolejności id (host→0, kolejny→1, …) — deterministyczny i zbalansowany.
+   * najpierw UTRWALA wybrane strony (gracze, którzy wybrali samolot = stronę, 2026-06-23), potem
+   * resztę (boty, niewybierający) dobiera do mniejszej drużyny — równy podział wokół wyborów,
+   * deterministyczny w kolejności id. Bez wyborów = czysty auto-balans (host→0, kolejny→1, …).
    */
   private assignFactions(): void {
     if (this.mode !== 'team') {
@@ -468,10 +500,20 @@ export class GameRoom {
       return;
     }
     const counts = new Array<number>(TEAM_COUNT).fill(0);
+    // 1) utrwal wybrane strony — gracz wybrał samolot, więc gra po jego stronie
     for (const p of this.players.values()) {
-      const t = smallerTeamIndex(counts);
-      p.faction = t;
-      counts[t] = (counts[t] ?? 0) + 1;
+      if (p.sidePref !== null && p.sidePref >= 0 && p.sidePref < TEAM_COUNT) {
+        p.faction = p.sidePref;
+        counts[p.faction] = (counts[p.faction] ?? 0) + 1;
+      }
+    }
+    // 2) resztę (boty + gracze bez wyboru) wyrównaj do mniejszej drużyny
+    for (const p of this.players.values()) {
+      if (p.sidePref === null) {
+        const t = smallerTeamIndex(counts);
+        p.faction = t;
+        counts[t] = (counts[t] ?? 0) + 1;
+      }
     }
   }
 
@@ -500,14 +542,24 @@ export class GameRoom {
   }
 
   /**
-   * Wybór samolotu gracza w poczekalni (faza 19b; FFA — w drużynowym sprzęt wg strony, więc
-   * wybór jest ignorowany w efektywnym typie). Zapamiętuje wybór i odświeża roster (efektywny typ
-   * w roomPlayers); stosowany przy najbliższym (re)spawnie — w praktyce na starcie meczu. Boty i
-   * nieznani gracze ignorowani (niezmiennik nr 11: walidacja w connection przez clampPlaneType).
+   * Wybór samolotu gracza w poczekalni (faza 19b). FFA: wprost wybór płatowca (selectedType).
+   * Drużynowy (2026-06-23): wybór samolotu = wybór STRONY (Spitfire→Alianci, Bf 109→Oś) — klimat
+   * zachowany, więc zapamiętujemy preferencję strony (sidePref) i od razu przenosimy gracza na nią;
+   * efektywny typ i tak wynika ze strony (planeTypeForTeam). Stosowane przy najbliższym (re)spawnie
+   * (start meczu). Boty i nieznani gracze ignorowani (niezm. nr 11: clampPlaneType w connection).
    */
   selectPlane(id: number, type: PlaneType): void {
     const player = this.players.get(id);
-    if (!player || player.isBot || player.selectedType === type) return;
+    if (!player || player.isBot) return;
+    if (this.mode === 'team') {
+      const side = teamForPlaneType(type);
+      if (player.sidePref === side) return;
+      player.sidePref = side;
+      player.faction = side; // natychmiast widoczne w roster/kolorach poczekalni
+      this.broadcastRoomUpdate();
+      return;
+    }
+    if (player.selectedType === type) return;
     player.selectedType = type;
     this.broadcastRoomUpdate(); // roster pokazuje nowy (efektywny) typ w poczekalni
   }
@@ -718,13 +770,35 @@ export class GameRoom {
     }
   }
 
-  /** Zapamiętuje najnowszy input (już zwalidowany przez warstwę połączenia). */
+  /** Dokłada input do kolejki gracza (już zwalidowany przez warstwę połączenia). `lastAckServerTick`
+   *  (świeżość widoku klienta dla rewindu lag-comp) bierzemy z NAJŚWIEŻSZEGO odbioru — niezależnie
+   *  od kolejki ruchu. Konsumpcja (jeden input = jeden krok) dzieje się w nextInput podczas stepu. */
   applyInput(id: number, frame: InputFrame): void {
     const player = this.players.get(id);
     if (player) {
-      player.latestInput = frame;
+      player.inputQueue.push(frame);
+      // twardy limit pamięci: gracz martwy/respawn nie konsumuje, a klient nadal śle (spawn czyści)
+      if (player.inputQueue.length > INPUT_QUEUE_MAX) player.inputQueue.shift();
       player.lastAckServerTick = frame.ackServerTick >>> 0;
     }
+  }
+
+  /**
+   * Kolejny input do kroku fizyki: zdejmij jeden z kolejki FIFO (jeden input = jeden krok —
+   * niezmiennik reconciliation). Gdy kolejka głębsza niż TARGET (burst po przestoju klienta /
+   * dryf zegara) — przeskocz nadmiar, by nie narastało opóźnienie inputu (bierz najświeższe
+   * intencje). Pusta kolejka → podtrzymaj ostatni skonsumowany (klient chwilowo się spóźnia).
+   * Aktualizuje `lastProcessedSeq` (ack rekonsyliacji) ze SKONSUMOWANEGO inputu.
+   */
+  private nextInput(player: ServerPlayer): InputFrame | null {
+    const q = player.inputQueue;
+    while (q.length > INPUT_QUEUE_TARGET) q.shift();
+    const next = q.shift();
+    if (next) {
+      player.lastInput = next;
+      player.lastProcessedSeq = next.sequence;
+    }
+    return player.lastInput;
   }
 
   /** Liczba zestrzeleń gracza (kredyt) — diagnostyka/testy; tabela wyników w fazie 13. */
@@ -827,8 +901,7 @@ export class GameRoom {
 
     if (state.life === 'alive') {
       if (player.protectionTimerS > 0) player.protectionTimerS = Math.max(0, player.protectionTimerS - dtS);
-      const input = player.latestInput;
-      if (input) player.lastProcessedSeq = input.sequence;
+      const input = this.nextInput(player); // jeden input = jeden krok (niezmiennik reconciliation)
       // ta sama autorytatywna ścieżka co predykcja klienta (shared/world/piloted-plane).
       const event = stepPilotedPlane(
         player.sim,
@@ -848,8 +921,7 @@ export class GameRoom {
       // shared/world/piloted-plane: stepWreckPiloted) — niezmiennik reconciliation.
       // Ack sekwencji tu, by replay wraku po stronie klienta miał punkt odniesienia.
       // wreckImpact w środku → 'dead' i start odliczania respawnu (buchalteria była przy zestrzeleniu).
-      const input = player.latestInput;
-      if (input) player.lastProcessedSeq = input.sequence;
+      const input = this.nextInput(player); // jeden input = jeden krok (niezmiennik reconciliation)
       stepWreckPiloted(
         player.sim,
         player.plane,
@@ -949,7 +1021,7 @@ export class GameRoom {
     // pomijają), ale broń wciąż działa z bieżącej pozy.
     const wreckCanFire = state.life === 'dying' && !player.isBot;
     if (state.life !== 'alive' && !wreckCanFire) return;
-    const triggerHeld = player.isBot ? this.botManager.fireOf(player.id) : (player.latestInput?.fire ?? false);
+    const triggerHeld = player.isBot ? this.botManager.fireOf(player.id) : (player.lastInput?.fire ?? false);
     // otwarcie ognia oddaje ochronę respawnu (nietykalny nie może też zadawać — faza 13)
     if (triggerHeld && player.protectionTimerS > 0) player.protectionTimerS = 0;
     const rewindTicks = this.computeRewindTicks(player);
@@ -1145,6 +1217,10 @@ export class GameRoom {
     state.life = 'alive';
     state.lifeTimerS = 0;
     player.instructor.reset();
+    // świeże życie: porzuć inputy sprzed śmierci (klient też czyści predykcję przy zmianie fazy) —
+    // lot prosto neutralnymi żądaniami, aż przyjdzie pierwszy input nowego życia
+    player.inputQueue.length = 0;
+    player.lastInput = null;
     player.sim.gLoadMachine.reset();
     player.sim.gLoadEffects.reserve = 1;
     player.sim.gLoadEffects.blackoutFactor = 0;

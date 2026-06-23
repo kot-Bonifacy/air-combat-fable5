@@ -10,6 +10,7 @@ import {
   planeTypeForTeam,
   planeTypeFromCode,
   planeTypeToCode,
+  teamForPlaneType,
   type PlaneType,
 } from './plane-type';
 
@@ -48,6 +49,14 @@ describe('rejestr typów samolotów', () => {
   it('sprzęt drużyny: 0 = Spitfire (Alianci), 1 = Bf 109 (Oś)', () => {
     expect(planeTypeForTeam(0)).toBe('spitfire');
     expect(planeTypeForTeam(1)).toBe('bf109');
+  });
+
+  it('wybór samolotu = strona (odwrotność planeTypeForTeam): Spitfire→0, Bf 109→1', () => {
+    expect(teamForPlaneType('spitfire')).toBe(0);
+    expect(teamForPlaneType('bf109')).toBe(1);
+    // round-trip: strona → samolot → strona
+    expect(teamForPlaneType(planeTypeForTeam(0))).toBe(0);
+    expect(teamForPlaneType(planeTypeForTeam(1))).toBe(1);
   });
 
   it('rozpiętość z geometrii zgodna z historią (Spit ≈ 11,2 m, 109 ≈ 9,9 m)', () => {

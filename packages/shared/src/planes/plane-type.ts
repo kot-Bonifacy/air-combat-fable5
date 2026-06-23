@@ -66,3 +66,13 @@ export function clampPlaneType(raw: unknown): PlaneType {
 export function planeTypeForTeam(faction: number): PlaneType {
   return faction === 1 ? 'bf109' : 'spitfire';
 }
+
+/**
+ * Strona drużyny dla wybranego samolotu — ODWROTNOŚĆ planeTypeForTeam (Spitfire → drużyna 0
+ * Alianci, Bf 109 → drużyna 1 Oś). W trybie drużynowym wybór samolotu w poczekalni = wybór
+ * STRONY (decyzja użytkownika 2026-06-23): klimat Alianci↔Oś zostaje (każda strona ma swój
+ * samolot), a gracz steruje tym, po której stronie gra, wybierając płatowiec.
+ */
+export function teamForPlaneType(type: PlaneType): number {
+  return type === 'bf109' ? 1 : 0;
+}

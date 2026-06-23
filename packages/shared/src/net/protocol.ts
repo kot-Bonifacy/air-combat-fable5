@@ -653,8 +653,9 @@ export interface JoinRoomMessage {
   code: string;
 }
 
-/** Klient → serwer: wybór typu samolotu (faza 19b; tylko FFA — w drużynowym sprzęt wg strony).
- *  Serwer klampuje (clampPlaneType, niezm. nr 11) i stosuje przy najbliższym (re)spawnie. */
+/** Klient → serwer: wybór typu samolotu (faza 19b). FFA: wybór płatowca; drużynowy (2026-06-23):
+ *  wybór samolotu = wybór STRONY (Spitfire→Alianci, Bf 109→Oś). Serwer klampuje (clampPlaneType,
+ *  niezm. nr 11) i stosuje przy najbliższym (re)spawnie. */
 export interface SelectPlaneMessage {
   t: 'selectPlane';
   plane: PlaneType;
@@ -722,8 +723,8 @@ export interface RoomJoinedMessage {
   youId: number;
   hostId: number;
   state: RoomState;
-  /** Tryb meczu pokoju (faza 19b) — poczekalnia wie, czy pokazać wybór samolotu (FFA) czy sprzęt
-   *  jest wg strony (drużynowy). */
+  /** Tryb meczu pokoju (faza 18) — render drużyn + sens selektora samolotu (drużynowy: wybór
+   *  samolotu = wybór strony Alianci/Spitfire ↔ Oś/Bf 109). */
   mode: MatchMode;
   /** Poziom trudności botów pokoju — poczekalnia odświeża selektor hosta (ustawienia na żywo). */
   difficulty: DifficultyLevel;

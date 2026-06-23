@@ -181,7 +181,7 @@ const scene = new Scene();
 const camera = new PerspectiveCamera(60, 1, 0.5, 30000);
 camera.position.set(0, 1500, -1000);
 camera.lookAt(0, 800, 0);
-const chaseCamera = new ChaseCamera(camera);
+const chaseCamera = new ChaseCamera(camera, renderer.domElement);
 const orbit = new OrbitCamera(camera, renderer.domElement);
 let cameraMode: 'pościgowa' | 'orbitalna' = 'pościgowa';
 
@@ -483,8 +483,8 @@ function handleSnapshot(snap: Snapshot): void {
     ensureMesh(e.id, e.planeType);
     healthFracById.set(e.id, e.healthFrac); // dym uszkodzeń (lokalny i obce) wg HP serwera
     if (e.isLocal) {
-      // własny typ ujawnia się tu (FFA: wybór; drużynowy: wg strony) — przestaw lokalny samolot
-      // PRZED reconcile, by predykcja od pierwszego kroku liczyła właściwą kopertą osiągów.
+      // własny typ ujawnia się tu (FFA: wybór gracza; drużynowy: wg strony) — przestaw lokalny
+      // samolot PRZED reconcile, by predykcja od pierwszego kroku liczyła właściwą kopertą osiągów.
       if (e.planeType !== localPlaneType) setLocalPlane(e.planeType);
       predictor.reconcile(e, snap.ackSeq);
       localHealthFrac = e.healthFrac;
@@ -627,9 +627,9 @@ function playerName(id: number): string {
 
 // --- lobby UI + sieć ---
 const lobby = new LobbyUI({
-  // „Załóż własną grę": pokój z domyślnymi ustawieniami — host konfiguruje tryb/boty/poziom/samolot
-  // dopiero w poczekalni (jeden prosty ekran wejściowy)
-  onCreateRoom: () => withConnection((c) => c.createRoom()),
+  // „Załóż własną grę": pokój domyślnie DRUŻYNOWY (życzenie usera 2026-06-22) — host i tak może
+  // zmienić tryb/boty/poziom/samolot w poczekalni (jeden prosty ekran wejściowy)
+  onCreateRoom: () => withConnection((c) => c.createRoom(0, undefined, 'team')),
   onJoinRoom: (code) => withConnection((c) => c.joinRoom(code)),
   onStartMatch: () => net?.startMatch(),
   onLeaveRoom: () => {
@@ -884,7 +884,7 @@ function onRoomJoined(msg: RoomJoinedMessage): void {
   roomView = {
     code: msg.code,
     state: msg.state,
-    mode: msg.mode, // faza 19b: poczekalnia pokazuje wybór samolotu (FFA) / sprzęt wg drużyny
+    mode: msg.mode, // render drużyn + sens selektora (drużynowy: wybór samolotu = wybór strony)
     difficulty: msg.difficulty,
     botCount: countBots(msg.players),
     players: msg.players,
@@ -1061,16 +1061,11 @@ function updateHud(): void {
   });
 }
 
-/** Wiersze dodatkowe HUD online: pokój, własne zestrzelenia, HP, ping, FPS. */
+/** Wiersze dodatkowe HUD online: pokój, HP, ping, FPS.
+ *  Licznik zestrzeleń celowo NIEpokazywany — widnieje już przy nicku gracza w liście
+ *  uczestników (lewy górny róg, `RosterOverlay`); redundancja usunięta na życzenie usera. */
 function hudExtraLines(): string[] {
   const lines: string[] = ['', hudRow('pokój', roomView?.code ?? '—')];
-  if (latestStandings) {
-    // P1 (2026-06-19): oba tryby eliminacyjne, bez limitu zestrzeleń i czasu → brak linii „mecz N/N"
-    // ani zegara; pełna tabela na Tab. Pokazujemy tylko własny licznik zestrzeleń.
-    const localId = net?.localPlayerId ?? null;
-    const myKills = latestStandings.rows.find((r) => r.id === localId)?.kills ?? 0;
-    lines.push(hudRow('zestrz.', String(myKills)));
-  }
   // klawiszologia żyje w ekranie „Jak grać" (lobby); status celowania pokazuje już wiersz „ster"
   lines.push(
     hudRow('HP', (localHealthFrac * 100).toFixed(0), '%'),

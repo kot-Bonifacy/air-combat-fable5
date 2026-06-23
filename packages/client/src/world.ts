@@ -470,6 +470,12 @@ function createOceanWater(): Water {
         vec3 reflColor = skyAt(R);
         float fres = 0.02 + 0.98 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
         vec3 col = mix(waterColor, reflColor, fres);
+        // cieniowanie grzbietów fal: modulacja SAMEGO koloru wody składnikiem
+        // dyfuzyjnym wg normalnej i słońca. Widoczne TAKŻE przy patrzeniu pionowo
+        // z góry, gdzie Fresnel gaśnie (~0.02) i odbicie nie niesie już ruchu fal —
+        // bez tego tafla z lotu wygląda statycznie (animacja jest, ale nie ma jak się ujawnić).
+        float ridge = dot(N, sunDir) * 0.5 + 0.5;
+        col = mix(col, col * (0.85 + 0.3 * ridge), 0.6);
         col += sunColor * pow(max(dot(R, sunDir), 0.0), 120.0) * 1.2; // błysk słońca
         float f = clamp((vFogDepth - fogNear) / (fogFar - fogNear), 0.0, 1.0);
         gl_FragColor = vec4(mix(col, fogColor, f), 1.0);

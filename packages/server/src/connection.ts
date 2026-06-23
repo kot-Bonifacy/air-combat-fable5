@@ -302,7 +302,7 @@ export class Connection implements RoomMember {
       youId: playerId,
       hostId: room.hostId ?? playerId,
       state: room.state,
-      mode: room.mode, // faza 19b: klient wie, czy oferować wybór samolotu (FFA)
+      mode: room.mode, // klient: render trybu + sens selektora samolotu (drużynowy = wybór strony)
       difficulty: room.difficulty, // poczekalnia: selektor poziomu botów (host)
       players: room.roomPlayers(),
     };
