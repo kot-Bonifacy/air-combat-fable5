@@ -16,6 +16,9 @@ export class DownedOverlay {
   private readonly spectateBtn: HTMLButtonElement;
   /** Tytuł nakładki — zależny od przyczyny śmierci (ZESTRZELONY / KOLIZJA / ROZBITY), ustawiany w show(). */
   private readonly title: HTMLElement;
+  /** Podpowiedź o sterowaniu spadającym wrakiem — chowana, gdy nie ma czym sterować (rozbicie/kolizja
+   *  prosto w ziemię, alive→dead bez fazy 'dying'). */
+  private readonly hint: HTMLElement;
 
   constructor(onSpectate: () => void, onStandings: () => void, onEnd: () => void) {
     this.root = document.createElement('div');
@@ -34,6 +37,7 @@ export class DownedOverlay {
     const hint = document.createElement('div');
     hint.textContent = 'steruj wrakiem: W/S/A/D, Q/E   •   Spacja: ogień   — albo:';
     hint.style.cssText = 'font:12px monospace;color:#9ab;';
+    this.hint = hint;
 
     const buttons = document.createElement('div');
     buttons.style.cssText = 'display:flex;justify-content:center;';
@@ -59,9 +63,12 @@ export class DownedOverlay {
   }
 
   /** Pokazuje nakładkę; `canSpectate` decyduje, czy dostępny jest tryb obserwatora.
-   *  `title` to komunikat śmierci wg przyczyny (ZESTRZELONY / KOLIZJA / ROZBITY). */
-  show(canSpectate: boolean, title: string): void {
+   *  `title` to komunikat śmierci wg przyczyny (ZESTRZELONY / KOLIZJA / ROZBITY).
+   *  `flyableWreck` (domyślnie true) — gdy false (rozbicie/kolizja prosto w ziemię, bez fazy
+   *  spadającego wraku), chowamy podpowiedź o sterowaniu wrakiem (nie ma czym sterować). */
+  show(canSpectate: boolean, title: string, flyableWreck = true): void {
     this.title.textContent = title;
+    this.hint.style.display = flyableWreck ? 'block' : 'none';
     this.spectateBtn.style.display = canSpectate ? 'inline-block' : 'none';
     this.root.style.display = 'flex';
   }

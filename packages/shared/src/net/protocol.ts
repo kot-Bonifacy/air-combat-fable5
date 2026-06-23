@@ -696,6 +696,24 @@ export interface LeaveRoomMessage {
   t: 'leaveRoom';
 }
 
+/**
+ * Klient → serwer: zakończ CAŁY mecz i wróć do poczekalni (gdy w grze są SAME boty — host kończy
+ * misję). Serwer egzekwuje: tylko host i tylko gdy nie ma innych ludzi (humanCount ≤ 1) — inaczej
+ * ignoruje, bo nie przerywamy gry pozostałym graczom (ci wychodzą przez leaveMatch). Bez bumpu wersji.
+ */
+export interface EndMatchMessage {
+  t: 'endMatch';
+}
+
+/**
+ * Klient → serwer: wycofaj się z trwającego meczu, ale ZOSTAŃ w pokoju (powrót do poczekalni bez
+ * kończenia meczu — gdy grają jeszcze inni ludzie). Samolot natychmiast wypada z walki (martwy, bez
+ * respawnu) i wraca do gry dopiero przy następnym starcie meczu. Bez bumpu wersji.
+ */
+export interface LeaveMatchMessage {
+  t: 'leaveMatch';
+}
+
 // --- serwer → klient ---
 
 /** Serwer → klient: przyjęcie do lobby, parametry symulacji + token sesji do reconnectu.
@@ -846,6 +864,8 @@ export type ControlMessage =
   | QuickPlayMessage
   | StartMatchMessage
   | LeaveRoomMessage
+  | EndMatchMessage
+  | LeaveMatchMessage
   | WelcomeMessage
   | RoomListMessage
   | RoomJoinedMessage
@@ -868,6 +888,8 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'quickPlay',
   'startMatch',
   'leaveRoom',
+  'endMatch',
+  'leaveMatch',
   'welcome',
   'roomList',
   'roomJoined',

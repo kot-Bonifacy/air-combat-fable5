@@ -381,9 +381,12 @@ export class LobbyUI {
     const mine = view.players.find((p) => p.id === view.youId);
     if (mine && this.planeSelect.value !== mine.planeType) this.planeSelect.value = mine.planeType;
     const isHost = view.youId === view.hostId;
-    // ustawienia pokoju: host edytuje (selektory), reszta widzi podsumowanie tekstowe
-    this.settingsRow.style.display = isHost ? '' : 'none';
-    this.settingsSummary.style.display = isHost ? 'none' : '';
+    // wycofany gracz ogląda poczekalnię, choć mecz wciąż TRWA (state≠'waiting', leaveMatch 2026-06-23):
+    // nie ma czego startować ani ustawiać — chowamy Start/ustawienia i mówimy, że mecz w toku.
+    const matchInProgress = view.state !== 'waiting';
+    // ustawienia pokoju: host edytuje (selektory), reszta widzi podsumowanie tekstowe (oba tylko w 'waiting')
+    this.settingsRow.style.display = isHost && !matchInProgress ? '' : 'none';
+    this.settingsSummary.style.display = !isHost && !matchInProgress ? '' : 'none';
     if (isHost) {
       this.waitModeSelect.value = view.mode;
       this.waitBotsSelect.value = String(view.botCount);
@@ -393,10 +396,12 @@ export class LobbyUI {
       this.settingsSummary.textContent =
         `Tryb: ${modeLabel}  ·  Boty: ${String(view.botCount)} (${DIFFICULTY_LABELS[view.difficulty]})`;
     }
-    this.startBtn.style.display = isHost ? '' : 'none';
-    this.waitingHintEl.textContent = isHost
-      ? 'Jesteś hostem — ustaw tryb/boty i wystartuj, gdy zbierze się ekipa.'
-      : 'Czekaj, aż host wystartuje mecz…';
+    this.startBtn.style.display = isHost && !matchInProgress ? '' : 'none';
+    this.waitingHintEl.textContent = matchInProgress
+      ? 'Mecz w toku — dołączysz, gdy host wystartuje kolejny.'
+      : isHost
+        ? 'Jesteś hostem — ustaw tryb/boty i wystartuj, gdy zbierze się ekipa.'
+        : 'Czekaj, aż host wystartuje mecz…';
   }
 
   /** Host wysłał zmianę ustawień (tryb/boty/poziom) — wszystkie naraz, serwer klampuje. */

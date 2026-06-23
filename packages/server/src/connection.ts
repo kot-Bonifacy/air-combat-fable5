@@ -254,6 +254,24 @@ export class Connection implements RoomMember {
         this.room.start();
         return;
       }
+      case 'endMatch': {
+        // host kończy CAŁY mecz (gra z samymi botami) → powrót do poczekalni. Egzekwujemy regułę
+        // serwerowo (defense in depth): tylko host i tylko gdy NIE ma innych ludzi (humanCount ≤ 1) —
+        // inaczej nie przerywamy gry pozostałym (klient w tym wypadku użyje leaveMatch).
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        if (this.room.hostId !== this.playerId) {
+          this.sendControl({ t: 'error', code: 'notHost', message: 'tylko host może zakończyć mecz' });
+          return;
+        }
+        if (this.room.humanCount > 1) return; // są inni ludzie — ignoruj (powrót do poczekalni przez leaveMatch)
+        this.room.abortMatch();
+        return;
+      }
+      case 'leaveMatch':
+        // gracz wycofuje się z meczu, zostając w pokoju (poczekalnia); mecz trwa dla pozostałych
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        this.room.withdrawToLobby(this.playerId);
+        return;
       case 'leaveRoom':
         this.leaveRoom();
         return;

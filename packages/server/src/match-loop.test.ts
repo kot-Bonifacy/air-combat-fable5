@@ -232,6 +232,56 @@ describe('FFA — respawn z ochroną i wyborem miejsca', () => {
   });
 });
 
+describe('zakończenie misji (Esc) — abortMatch / withdrawToLobby (2026-06-23)', () => {
+  it('abortMatch: playing → waiting BEZ ekranu wyników, rozsyła roomUpdate state=waiting', () => {
+    const room = new GameRoom('ABCD');
+    const member = recordingMember();
+    add(room, member, 'A');
+    add(room, recordingMember(), 'B');
+    room.start();
+    expect(room.state).toBe('playing');
+    member.controls.length = 0;
+
+    room.abortMatch();
+
+    expect(room.state).toBe('waiting');
+    expect(member.controls.some((m) => m.t === 'matchEnded')).toBe(false); // bez ekranu wyników
+    expect(member.controls.some((m) => m.t === 'roomUpdate' && m.state === 'waiting')).toBe(true);
+  });
+
+  it('withdrawToLobby: samolot wypada z walki (martwy, 0 żyć, bez respawnu); start() przywraca', () => {
+    const room = new GameRoom('ABCD');
+    const a = add(room, recordingMember(), 'A');
+    add(room, recordingMember(), 'B');
+    add(room, recordingMember(), 'C'); // ≥2 frakcje wciąż grają po wycofaniu A → mecz trwa
+    room.start();
+
+    room.withdrawToLobby(a);
+    expect(room.livesOf(a)).toBe(0);
+    expect(lifeOf(room, a)).toBe('dead');
+
+    // ponad próg respawnu — wycofany NIE wraca do gry, mecz wciąż trwa (B i C żyją)
+    for (let i = 0; i < 300; i++) room.step(FIXED_DT_S);
+    expect(lifeOf(room, a)).not.toBe('alive');
+    expect(room.state).toBe('playing');
+
+    // mecz kończy się (tu: przerwany) → poczekalnia → kolejny start zeruje wycofanie i życia → A znów lata
+    room.abortMatch();
+    room.start();
+    expect(lifeOf(room, a)).toBe('alive');
+    expect(room.livesOf(a)).toBe(1);
+  });
+
+  it('abortMatch i withdrawToLobby są no-op poza stanem playing (poczekalnia)', () => {
+    const room = new GameRoom('ABCD');
+    const a = add(room, recordingMember(), 'A');
+    room.abortMatch();
+    expect(room.state).toBe('waiting');
+    room.withdrawToLobby(a); // poza meczem — nie zeruje życia
+    expect(room.livesOf(a)).toBe(1);
+  });
+});
+
 describe('FFA — tabela wyników (standings)', () => {
   it('broadcastStandings wysyła posortowaną tabelę i status strefy', () => {
     const room = new GameRoom('ABCD');

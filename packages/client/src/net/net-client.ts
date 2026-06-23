@@ -250,6 +250,16 @@ export class NetClient {
     this.latestSnapshot = undefined;
   }
 
+  /** Zakończ CAŁY mecz i wróć do poczekalni (gra z samymi botami — host). Serwer egzekwuje warunki. */
+  endMatch(): void {
+    this.sendControl({ t: 'endMatch' });
+  }
+
+  /** Wycofaj się z trwającego meczu, zostając w pokoju (powrót do poczekalni; reszta gra dalej). */
+  leaveMatch(): void {
+    this.sendControl({ t: 'leaveMatch' });
+  }
+
   /** Wysyła ramkę INPUT (symulator TX: opóźnia/odrzuca). No-op poza połączeniem. */
   sendInput(frame: InputFrame): void {
     if (this.status !== 'connected' || this.ws.readyState !== WebSocket.OPEN) return;

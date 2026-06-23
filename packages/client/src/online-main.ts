@@ -55,6 +55,7 @@ import {
 import { BulletTracers } from './bullet-tracers';
 import { ChaseCamera } from './chase-camera';
 import { DownedOverlay } from './downed-overlay';
+import { PauseMenu } from './pause-menu';
 import { EnemyMarker } from './enemy-marker';
 import { Explosions } from './explosion';
 import { OrbitCamera } from './orbit-camera';
@@ -196,6 +197,17 @@ let cameraMode: 'pościgowa' | 'orbitalna' = 'pościgowa';
 type PlayerDeath = 'none' | 'wreck' | 'spectating';
 let playerDeath: PlayerDeath = 'none';
 let prevLocalLife: LifePhase = 'alive';
+// Czy stan śmierci wiąże się ze STEROWALNYM spadającym wrakiem ('dying'): true dla zestrzelenia/
+// kolizji (faza 'dying'), false dla rozbicia prosto w ziemię (alive→dead) — wtedy nie ma czym
+// sterować, więc DownedOverlay chowa podpowiedź o wraku. Zob. updateDeathState.
+let downedFlyableWreck = true;
+// Menu pauzy (Esc, 2026-06-23): zakończenie misji / powrót do poczekalni w trakcie meczu. Świat
+// żyje dalej (serwer autorytatywny) — flaga tylko bramkuje ogień/celowanie i zwalnia kursor.
+let pauseMenuOpen = false;
+// Gracz wycofał się z trwającego meczu, zostając w pokoju (leaveMatch): ogląda poczekalnię, choć
+// pokój wciąż 'playing'. Blokuje wciągnięcie z powrotem do gry przez roomUpdate i ekran wyników;
+// znika, gdy pokój wróci do 'waiting' (koniec bieżącego meczu) albo przy pełnym wyjściu/nowym meczu.
+let withdrawnToWaiting = false;
 // Przyczyna ostatniej śmierci LOKALNEGO gracza (z eventu KILL) — dobiera komunikat: ogień wroga →
 // ZESTRZELONY, zderzenie z samolotem → KOLIZJA, rozbicie o teren/wodę → ROZBITY. null poza śmiercią.
 let localDeathCause: KillCause | null = null;
@@ -260,6 +272,7 @@ window.addEventListener('keyup', (e) => {
   }
 });
 function triggerHeld(): boolean {
+  if (pauseMenuOpen) return false; // menu pauzy otwarte — nie strzelaj (kursor klika przyciski)
   return (mouseAim.locked && triggerMouse) || triggerKey;
 }
 
@@ -267,15 +280,74 @@ function triggerHeld(): boolean {
 // lot tylko z klawiatury (mysz-celownik wyłączona); pościgowa wraca do celowania myszą,
 // gdy gracz żyje. updateMouseAimEnabled spina stan myszy z trybem kamery i stanem śmierci.
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyC' && phase === 'playing') {
+  if (e.code === 'KeyC' && phase === 'playing' && !pauseMenuOpen) {
     cameraMode = cameraMode === 'pościgowa' ? 'orbitalna' : 'pościgowa';
     updateMouseAimEnabled();
   }
 });
 
-/** Mysz-celownik aktywna tylko w kamerze pościgowej i gdy gracz żyje (nie wrak/obserwator). */
+// Esc (2026-06-23): menu pauzy w trakcie meczu — zakończenie misji / powrót do poczekalni. Świat
+// leci dalej (serwer autorytatywny). Ignorujemy podczas pisania (np. czat poczekalni) i poza grą.
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Escape' || phase !== 'playing' || isEditingText()) return;
+  e.preventDefault();
+  togglePauseMenu();
+});
+
+/** Otwiera/zamyka menu pauzy (Esc). Otwarcie zwalnia pointer lock i gasi celowanie myszą, by
+ *  dało się kliknąć przyciski; zamknięcie przywraca stan myszy wg trybu kamery i życia gracza. */
+function togglePauseMenu(): void {
+  if (phase !== 'playing') return;
+  if (pauseMenuOpen) {
+    pauseMenuOpen = false;
+    pauseMenu.hide();
+    updateMouseAimEnabled();
+  } else {
+    pauseMenuOpen = true;
+    pauseMenu.show(otherHumansPresent());
+    mouseAim.enabled = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+}
+
+/** Czy w pokoju jest co najmniej JEDEN inny człowiek (poza nami) — decyduje o trybie zakończenia:
+ *  same boty → koniec całego meczu; inni ludzie → powrót do poczekalni bez kończenia im gry. */
+function otherHumansPresent(): boolean {
+  if (!roomView) return false;
+  let humans = 0;
+  for (const p of roomView.players) if (!p.isBot) humans++;
+  return humans > 1;
+}
+
+/**
+ * Zakończenie misji wg kontekstu (życzenie usera 2026-06-23): gdy w grze są SAME boty — host kończy
+ * cały mecz (endMatch → serwer wraca pokojem do 'waiting' → poczekalnia przez roomUpdate); gdy grają
+ * inni ludzie — wycofujemy się z meczu bez kończenia go pozostałym (leaveMatch) i od razu pokazujemy
+ * poczekalnię. Wołane z menu pauzy oraz z nakładki po zestrzeleniu (DownedOverlay).
+ */
+function endMissionContextual(): void {
+  pauseMenuOpen = false;
+  pauseMenu.hide();
+  if (otherHumansPresent()) {
+    net?.leaveMatch();
+    enterWaitingFromWithdraw();
+  } else {
+    net?.endMatch(); // przejście do poczekalni zrobi onRoomUpdate (state='waiting' z abortMatch)
+  }
+}
+
+/** Wycofany gracz przechodzi do poczekalni TEGO pokoju, choć mecz wciąż trwa (state='playing').
+ *  Flaga withdrawnToWaiting trzyma go w poczekalni do końca bieżącego meczu (patrz onRoomUpdate). */
+function enterWaitingFromWithdraw(): void {
+  if (!roomView) return;
+  withdrawnToWaiting = true;
+  enterWaiting(roomView);
+}
+
+/** Mysz-celownik aktywna tylko w kamerze pościgowej, gdy gracz żyje (nie wrak/obserwator) i nie
+ *  jest otwarte menu pauzy (Esc zwalnia kursor do kliknięcia przycisków). */
 function updateMouseAimEnabled(): void {
-  const wantEnabled = cameraMode === 'pościgowa' && playerDeath === 'none';
+  const wantEnabled = cameraMode === 'pościgowa' && playerDeath === 'none' && !pauseMenuOpen;
   mouseAim.enabled = wantEnabled;
   if (!wantEnabled && document.pointerLockElement) document.exitPointerLock();
 }
@@ -470,9 +542,14 @@ function resetGameState(): void {
   // stan śmierci/obserwatora/kamery do wartości startowych (nowy mecz / reconnect / poczekalnia)
   playerDeath = 'none';
   prevLocalLife = 'alive';
+  downedFlyableWreck = true;
   spectatorTargetId = null;
   spectatedValid = false;
   cameraMode = 'pościgowa';
+  // świeży mecz / wyjście: zamknij menu pauzy i wyczyść stan wycofania (nowy mecz wciąga z powrotem)
+  pauseMenuOpen = false;
+  pauseMenu.hide();
+  withdrawnToWaiting = false;
   updateMouseAimEnabled();
   hideCombatOverlays();
 }
@@ -722,18 +799,23 @@ function playerHasTeammates(): boolean {
 const downedOverlay = new DownedOverlay(
   () => choosePlayerSpectate(), // tryb obserwatora (gdy jest kogo oglądać)
   () => scoreboard.toggle(), // tabela wyników (poza tym też na Tab)
-  () => {
-    // „zakończ misję" online = opuść pokój i wróć do lobby
-    net?.leaveRoom();
-    enterLobby();
-  },
+  () => endMissionContextual(), // „zakończ misję" = koniec meczu (same boty) lub powrót do poczekalni (są ludzie)
 );
 
-/** Wejście w stan spadającego wraku gracza (lokalna predykcja 'dying' już steruje meshem). */
-function enterPlayerWreck(): void {
+// menu pauzy (Esc): te same akcje kontekstowe co DownedOverlay, dostępne w dowolnym momencie meczu
+const pauseMenu = new PauseMenu(
+  () => togglePauseMenu(), // „wróć do gry" — menu jest otwarte, więc toggle je zamyka
+  () => endMissionContextual(),
+);
+
+/** Wejście w stan śmierci gracza. `flyableWreck` = true dla zestrzelenia/kolizji (steruje spadającym
+ *  wrakiem, lokalna predykcja 'dying'); false dla rozbicia prosto w ziemię (alive→dead, brak wraku do
+ *  sterowania). W obu wypadkach pokazujemy nakładkę z trybem obserwatora i zakończeniem misji. */
+function enterPlayerWreck(flyableWreck: boolean): void {
   playerDeath = 'wreck';
+  downedFlyableWreck = flyableWreck;
   spectatorTargetId = null;
-  updateMouseAimEnabled(); // wrak: kursor wolny do nakładki, ster z klawiatury
+  updateMouseAimEnabled(); // kursor wolny do nakładki, ster (wrak) z klawiatury
 }
 
 /** Respawn gracza (serwer dał 'alive' po cyklu wraku): powrót do normalnej gry. */
@@ -808,7 +890,11 @@ function cycleSpectatorTarget(dir: 1 | -1): void {
 function updateDeathState(): void {
   if (!predictor.ready) return;
   const life = predictor.sim.state.life;
-  if (prevLocalLife === 'alive' && life === 'dying') enterPlayerWreck();
+  // alive→dying: zestrzelenie/kolizja → sterowalny spadający wrak. alive→dead (z pominięciem 'dying'):
+  // rozbicie prosto o teren/wodę → brak wraku do sterowania, ale wciąż dajemy obserwatora/zakończenie
+  // (bez tej gałęzi gracz po rozbiciu zostawał „uwięziony" na ekranie ROZBITY — życzenie usera 2026-06-23).
+  if (prevLocalLife === 'alive' && life === 'dying') enterPlayerWreck(true);
+  else if (prevLocalLife === 'alive' && life === 'dead') enterPlayerWreck(false);
   else if (life === 'alive' && prevLocalLife !== 'alive') onLocalRespawn();
   prevLocalLife = life;
 }
@@ -876,8 +962,13 @@ function createNet(nick: string, token: string | null): NetClient {
       hostId: msg.hostId,
     };
     if (msg.state === 'playing') {
-      if (phase !== 'playing') enterPlaying();
+      // wycofany gracz CZEKA w poczekalni mimo trwającego meczu (np. inny gracz się rozłączył →
+      // roomUpdate 'playing'); NIE wciągaj go z powrotem do gry — odśwież tylko poczekalnię.
+      if (withdrawnToWaiting && phase === 'lobby') lobby.updateWaiting(roomView);
+      else if (phase !== 'playing') enterPlaying();
     } else if (msg.state === 'waiting') {
+      // bieżący mecz się skończył (też dla wycofanego) → znów normalny uczestnik poczekalni
+      withdrawnToWaiting = false;
       // ekran wyników wygasł na serwerze → powrót do poczekalni (z meczu albo z lobby)
       results.hide();
       if (phase === 'playing') enterWaiting(roomView);
@@ -905,6 +996,11 @@ function createNet(nick: string, token: string | null): NetClient {
 
 function onMatchEnded(msg: MatchEndedMessage): void {
   if (!roomView) return;
+  // wycofany do poczekalni gracz (phase 'lobby') NIE dostaje ekranu wyników — jest już w poczekalni
+  // i nie przerywamy mu tego widoku; po powrocie pokoju do 'waiting' wróci normalnym uczestnikiem.
+  if (phase !== 'playing') return;
+  pauseMenuOpen = false;
+  pauseMenu.hide(); // gdyby gracz trzymał otwarte menu pauzy w chwili naturalnego końca meczu
   scoreboard.hide();
   matchResultsShown = true;
   const isHost = roomView.youId === roomView.hostId;
@@ -1284,8 +1380,8 @@ function updateHudOverlays(): void {
 
   // nakładka decyzji po zestrzeleniu (steruj wrakiem / obserwator / tabela / opuść pokój) —
   // dopóki gracz nie wrócił do gry (wrak lub czeka na respawn) i nie ogląda tabeli/wyników
-  if (playerDeath === 'wreck' && !scoreboard.visible && !matchResultsShown) {
-    downedOverlay.show(canSpectate(), deathLabel(localDeathCause));
+  if (playerDeath === 'wreck' && !scoreboard.visible && !matchResultsShown && !pauseMenuOpen) {
+    downedOverlay.show(canSpectate(), deathLabel(localDeathCause), downedFlyableWreck);
   } else {
     downedOverlay.hide();
   }

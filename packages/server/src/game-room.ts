@@ -221,6 +221,9 @@ interface ServerPlayer {
   readonly prevPos: Vector3;
   /** Bot serwerowy (faza 12): sterowany przez AI, member zawsze null. */
   readonly isBot: boolean;
+  /** Gracz wycofał się z BIEŻĄCEGO meczu, zostając w pokoju (powrót do poczekalni bez kończenia gry
+   *  innym — leaveMatch). Samolot martwy i bez respawnu; flaga znika przy starcie kolejnego meczu. */
+  withdrawn: boolean;
 }
 
 export class GameRoom {
@@ -450,6 +453,7 @@ export class GameRoom {
       slot,
       prevPos: new Vector3(),
       isBot,
+      withdrawn: false,
     };
     this.players.set(id, player);
     return player;
@@ -701,6 +705,7 @@ export class GameRoom {
       player.assists = 0;
       player.deaths = 0;
       player.livesLeft = MATCH_LIVES; // pełna pula żyć na nowy mecz (drużynowy: 1/samolot jak SP)
+      player.withdrawn = false; // wycofani z poprzedniego meczu wracają do gry przy starcie kolejnego
       this.spawn(player);
     }
     this.broadcastControl({ t: 'matchStarted' });
@@ -708,6 +713,51 @@ export class GameRoom {
     // P1: oba tryby eliminacyjne jak SP — last-man-standing (FFA) / ostatnia drużyna (team) + strefa
     const goal = this.mode === 'team' ? 'eliminacja drużyny / strefa' : 'last-man-standing / strefa';
     this.onInfo?.(`pokój ${this.code}: start meczu (${this.mode}, ${goal}, ${String(this.players.size)} uczestników)`);
+  }
+
+  /**
+   * Host PRZERYWA trwający mecz (gra z samymi botami — życzenie usera 2026-06-23): playing →
+   * waiting BEZ ekranu wyników. Gracz wraca prosto do poczekalni (klient reaguje na roomUpdate
+   * state='waiting'). Czyści walkę i strefę jak świeży reset. No-op poza 'playing'. Egzekwowanie
+   * „tylko host + brak innych ludzi" jest w connection (klient i tak pokazuje tę opcję tylko z botami).
+   */
+  abortMatch(): void {
+    if (this.state !== 'playing') return;
+    this.state = 'waiting';
+    this.endedTimerS = 0;
+    this.pendingEnd = null;
+    this.pendingEndTimerS = 0;
+    this.winnerId = null;
+    this.winningFaction = null;
+    this.lastEndReason = null;
+    for (const b of this.pool.bullets) b.active = false;
+    this.pendingEvents.length = 0;
+    this.zone.reset();
+    this.zoneControlling = null;
+    this.zoneOccupied = false;
+    this.broadcastRoomUpdate();
+    this.onInfo?.(`pokój ${this.code}: mecz przerwany (powrót do poczekalni)`);
+  }
+
+  /**
+   * Gracz WYCOFUJE się z trwającego meczu, ale ZOSTAJE w pokoju (życzenie usera 2026-06-23: gdy
+   * grają jeszcze inni ludzie, powrót do poczekalni bez kończenia im gry). Samolot natychmiast
+   * wypada z walki: martwy, 0 żyć (nie trzyma frakcji „w grze" → eliminacja może rozstrzygnąć w
+   * step()), bez respawnu (withdrawn). Wraca do gry przy następnym starcie meczu (start() zeruje
+   * withdrawn + życia i spawnuje od nowa). No-op poza 'playing' / dla nieznanego gracza.
+   */
+  withdrawToLobby(id: number): void {
+    if (this.state !== 'playing') return;
+    const player = this.players.get(id);
+    if (!player) return;
+    player.withdrawn = true;
+    player.livesLeft = 0;
+    player.sim.state.life = 'dead';
+    player.sim.state.lifeTimerS = 0;
+    player.protectionTimerS = 0;
+    player.inputQueue.length = 0;
+    player.lastInput = null;
+    player.damagedBy.clear();
   }
 
   /** Odłącza połączenie gracza, trzymając slot na reconnect (okno RECONNECT_WINDOW_MS). */
@@ -942,7 +992,7 @@ export class GameRoom {
    *  grze ścieżka „respawn w trakcie" jest więc martwa, zostaje dla LATE-JOIN i guardu NaN
    *  (catch w step → spawn(player, true) z pominięciem tego gatingu). updateLifecycle i tak biegnie. */
   private canRespawn(player: ServerPlayer): boolean {
-    return player.livesLeft > 0;
+    return player.livesLeft > 0 && !player.withdrawn;
   }
 
   /**

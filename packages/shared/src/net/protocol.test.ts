@@ -295,6 +295,11 @@ describe('wiadomości kontrolne (JSON)', () => {
     expect(parseControlMessage(JSON.stringify({ t: 'matchStarted' }))?.t).toBe('matchStarted');
   });
 
+  it('parsuje zakończenie misji: endMatch (host, same boty) i leaveMatch (powrót do poczekalni)', () => {
+    expect(parseControlMessage(JSON.stringify({ t: 'endMatch' }))?.t).toBe('endMatch');
+    expect(parseControlMessage(JSON.stringify({ t: 'leaveMatch' }))?.t).toBe('leaveMatch');
+  });
+
   it('parsuje wiadomości poczekalni: updateRoom, chatSend i chat', () => {
     expect(parseControlMessage(JSON.stringify({ t: 'updateRoom', mode: 'team', bots: 3 }))?.t).toBe('updateRoom');
     expect(parseControlMessage(JSON.stringify({ t: 'chatSend', text: 'cześć' }))?.t).toBe('chatSend');

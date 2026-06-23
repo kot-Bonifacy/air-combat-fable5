@@ -93,6 +93,23 @@ po czasie `visible=false`+usuń wpis; czyszczone przy respawnie/resecie/usunięc
 i tak znikał od razu — „pływające" wraki widziane przez usera mogą być płytką wodą przybrzeżną klasyfikowaną jako ląd
 przez `terrain.heightAt`>SEA_LEVEL_M; do weryfikacji wzrokowej.)
 
+**Zakończenie misji w dowolnym momencie 2026-06-23 (życzenie usera, 474 testy zielone, BEZ bumpu protokołu — v5,
+addytywne wiadomości JSON):** klawisz **Esc** otwiera menu pauzy (`pause-menu.ts`, `PauseMenu`) w trakcie meczu (świat
+żyje dalej — serwer autorytatywny, nic się nie pauzuje; menu tylko zwalnia kursor i bramkuje ogień/celowanie przez
+`pauseMenuOpen`). Akcja końca jest **kontekstowa** (`otherHumansPresent()` z `roomView.players`): (a) **same boty** →
+„ZAKOŃCZ MISJĘ" = `net.endMatch()` → serwer `abortMatch()` (playing→**waiting** BEZ ekranu wyników) → wszyscy do
+poczekalni przez `roomUpdate`; (b) **są ludzie** → „WRÓĆ DO POCZEKALNI" = `net.leaveMatch()` → serwer
+`withdrawToLobby(id)` (samolot martwy, `livesLeft=0`, `withdrawn=true`, bez respawnu — nie blokuje eliminacji), klient
+od razu pokazuje poczekalnię (`withdrawnToWaiting`), **mecz trwa dla reszty**; gracz wraca do gry przy następnym
+`start()` (zeruje `withdrawn`+życia). Serwer egzekwuje regułę (connection): `endMatch` tylko host **i** `humanCount≤1`,
+`leaveMatch` dla każdego członka. Poczekalnia podczas trwającego meczu (lobby-ui `updateWaiting`, `view.state≠'waiting'`):
+chowa Start/ustawienia, pokazuje „mecz w toku". Guardy klienta: `onRoomUpdate` 'playing' nie wciąga wycofanego z powrotem,
+`onMatchEnded` pomijany w phase 'lobby'. **Tryb obserwatora po zniszczeniu** też dla **bezpośredniego rozbicia o teren**
+(alive→dead z pominięciem fazy 'dying') — `updateDeathState` łapie teraz tę gałąź (wcześniej gracz zostawał „uwięziony"
+na ekranie ROZBITY bez nakładki); `DownedOverlay.show(...,flyableWreck)` chowa podpowiedź o sterowaniu wrakiem, gdy nie
+ma czym sterować. Akcja „ZAKOŃCZ MISJĘ" w `DownedOverlay` używa tej samej logiki kontekstowej. Te same akcje dostępne
+w menu Esc i w nakładce po zestrzeleniu. ⏳ user: smoke (Esc→koniec z botami; Esc→poczekalnia gdy 2 ludzi; obserwator po rozbiciu o teren).
+
 ⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
 → overlay obserwatora; drużynowy; v5 z wyborem samolotu + licznik 20 mm + ekran ładowania + zryw botów) +
 playtest poprawek 2026-06-21 (zryw botów „trudnych", nazwiska PL/DE) + playtest balansu 1v1 Spitfire↔Bf 109 +
