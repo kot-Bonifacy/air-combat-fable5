@@ -80,6 +80,19 @@ serwerem (część eksportów używana już tylko przez serwer/testy; świadomie
 **Deploy:** front+back RAZEM — backend MUSI działać, bo MP pod rootem bez serwera WS nie wystartuje (lobby).
 `docs/phases/*` zostają jako zapis historyczny (opisują przeszłe fazy, w tym SP).
 
+**Sesja poprawek 2026-06-23 (2 zgłoszenia, czysto klienckie, 470 testów zielone, BEZ protokołu — v5):**
+(1) **komunikat śmierci wg przyczyny** (`KillCause` z eventu KILL): ogień wroga → „ZESTRZELONY", zderzenie z
+samolotem (`collision`) → „KOLIZJA", rozbicie o teren/wodę (`ground`) → „ROZBITY" (decyzja usera: rozróżniać, nie
+jeden napis). `localDeathCause` ustawiany w `onKill` gdy `victimId===localId`; helper `deathLabel`; użyty w alercie
+pełnoekranowym i w tytule `DownedOverlay.show(canSpectate, title)` (dodany param); reset w `onLocalRespawn`/`resetGameState`;
+domyślnie (przyczyna nieznana) → „ZESTRZELONY". (2) **tonięcie wraku na wodzie**: zamiast unoszenia się — wrak osiada
+na tafli, po `WATER_SINK_HOLD_S=0.6 s` zanurza się (`WATER_SINK_SPEED_MS=9`) i po `WATER_SINK_TOTAL_S=1.5 s` znika.
+`sinkingWrecks: Map<id,czas>` rozłączna z `burningWreckIds` (woda znika, ląd zostaje zwęglony); `handleSurfaceImpact`
+woda → `splash`+`sinkingWrecks.set(id,0)`; pętla renderu: widoczność `|| sinkingWrecks.has(id)`, opuszczanie `position.y`,
+po czasie `visible=false`+usuń wpis; czyszczone przy respawnie/resecie/usunięciu encji. (Uwaga: nad otwartym morzem mesh
+i tak znikał od razu — „pływające" wraki widziane przez usera mogą być płytką wodą przybrzeżną klasyfikowaną jako ląd
+przez `terrain.heightAt`>SEA_LEVEL_M; do weryfikacji wzrokowej.)
+
 ⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
 → overlay obserwatora; drużynowy; v5 z wyborem samolotu + licznik 20 mm + ekran ładowania + zryw botów) +
 playtest poprawek 2026-06-21 (zryw botów „trudnych", nazwiska PL/DE) + playtest balansu 1v1 Spitfire↔Bf 109 +

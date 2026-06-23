@@ -117,6 +117,11 @@ const FOE_COLOR = 0xff3020;
 const FFA_FACTION_COLORS = [0xff3b30, 0xff8c1a, 0xff4fd8, 0x32d0ff, 0xa56bff, 0xff6ea0];
 const SMOKE_BACK_OFFSET_M = 3; // punkt emisji dymu cofnięty ZA ogon (nie ze środka kadłuba)
 const AIR_KILL_FLASH_SCALE = 0.4; // mały błysk przy zestrzeleniu w locie (duży wybuch dopiero o ziemię)
+// Tonięcie wraku na wodzie (życzenie usera 2026-06-23): wrak osiada na tafli, po krótkim holdzie
+// zanurza się pod wodę i znika — zamiast unoszenia się/natychmiastowego zniknięcia. Całość ~1,5 s.
+const WATER_SINK_HOLD_S = 0.6; // wrak leży na tafli, zanim zacznie tonąć
+const WATER_SINK_SPEED_MS = 9; // prędkość zanurzania pod taflę [m/s] (po holdzie)
+const WATER_SINK_TOTAL_S = 1.5; // po tym czasie mesh jest chowany i wpis usuwany
 
 function cssColor(hex: number): string {
   return `#${hex.toString(16).padStart(6, '0')}`;
@@ -191,6 +196,9 @@ let cameraMode: 'pościgowa' | 'orbitalna' = 'pościgowa';
 type PlayerDeath = 'none' | 'wreck' | 'spectating';
 let playerDeath: PlayerDeath = 'none';
 let prevLocalLife: LifePhase = 'alive';
+// Przyczyna ostatniej śmierci LOKALNEGO gracza (z eventu KILL) — dobiera komunikat: ogień wroga →
+// ZESTRZELONY, zderzenie z samolotem → KOLIZJA, rozbicie o teren/wodę → ROZBITY. null poza śmiercią.
+let localDeathCause: KillCause | null = null;
 /** Id obserwowanego pilota po wejściu w tryb obserwatora; null = wybór automatyczny (pierwszy żywy). */
 let spectatorTargetId: number | null = null;
 // poza obserwowanego (z interpolacji) do kamery — wypełniane w pętli renderu, gdy obserwujemy
@@ -354,6 +362,13 @@ const smokeAccumById = new Map<number, number>();
  * przy resecie meczu; pojedynczy respawn (gdyby kiedyś wrócił) przywraca materiały (render loop).
  */
 const burningWreckIds = new Set<number>();
+/**
+ * Encje rozbite o WODĘ — wrak osiada na tafli, po chwili tonie i znika (życzenie usera 2026-06-23).
+ * Mapuje id → czas [s] od uderzenia; pętla renderu opuszcza mesh pod wodę i po WATER_SINK_TOTAL_S
+ * chowa go (usuwając wpis). Rozłączne z `burningWreckIds` (ląd zostaje, woda znika). Czyszczone
+ * przy resecie meczu, respawnie i usunięciu encji ze snapshotu.
+ */
+const sinkingWrecks = new Map<number, number>();
 
 // scratch (jeden wątek, sekwencyjnie)
 const scratchSmokeDir = new Vector3();
@@ -446,6 +461,8 @@ function resetGameState(): void {
   lifeById.clear();
   smokeAccumById.clear();
   burningWreckIds.clear(); // nowy mecz/reconnect — żadnych zwęglonych wraków z poprzedniego (meshe i tak czyszczone)
+  sinkingWrecks.clear(); // jw. — żadnych tonących wraków z poprzedniego meczu
+  localDeathCause = null; // nowy mecz — zapomnij przyczynę śmierci z poprzedniego
   latestStandings = null;
   matchMode = 'ffa';
   factionById.clear();
@@ -505,6 +522,7 @@ function handleSnapshot(snap: Snapshot): void {
     lifeById.delete(id);
     smokeAccumById.delete(id);
     burningWreckIds.delete(id);
+    sinkingWrecks.delete(id);
   }
 }
 
@@ -574,6 +592,8 @@ function spawnCosmeticVolley(ownerId: number, seed: number, shots: number): void
 
 function onKill(killerId: number, victimId: number, cause: KillCause, localId: number | null): void {
   const victim = playerName(victimId);
+  // przyczyna WŁASNEJ śmierci → komunikat (ZESTRZELONY/KOLIZJA/ROZBITY) w nakładce wraku i alercie
+  if (victimId === localId) localDeathCause = cause;
   if (cause === 'air') {
     // teamkill (friendly fire ON w drużynowym) — serwer NIE kredytuje, więc oznaczamy w feedzie
     // „(sojusznik!)" i NIE pokazujemy złotego markera zestrzelenia (parytet z SP).
@@ -599,9 +619,10 @@ function onKill(killerId: number, victimId: number, cause: KillCause, localId: n
 
 /**
  * Uderzenie encji (lub spadającego wraku) w powierzchnię — wołane po przejściu w 'dead' (parytet z
- * SP: applySurfaceImpact). Woda → jasny plusk i mesh znika; ląd (wyspa) → ognisty wybuch i ZWĘGLONY
- * wrak ZOSTAJE na ziemi, lekko dymiąc do końca meczu. O wodzie/lądzie decyduje wysokość terenu
- * (ten sam seed co serwer) w punkcie uderzenia — bez zmiany protokołu.
+ * SP: applySurfaceImpact). Woda → jasny plusk, wrak osiada na tafli i po chwili tonie/znika
+ * (sinkingWrecks, życzenie usera 2026-06-23); ląd (wyspa) → ognisty wybuch i ZWĘGLONY wrak ZOSTAJE
+ * na ziemi, lekko dymiąc do końca meczu. O wodzie/lądzie decyduje wysokość terenu (ten sam seed co
+ * serwer) w punkcie uderzenia — bez zmiany protokołu.
  */
 function handleSurfaceImpact(id: number, m: PlaneModel): void {
   const p = m.object.position;
@@ -611,7 +632,8 @@ function handleSurfaceImpact(id: number, m: PlaneModel): void {
     burningWreckIds.add(id); // render trzyma mesh widoczny; pętla dymu emituje GROUND_FIRE_TIER
     m.object.visible = true;
   } else {
-    explosions.splash(p); // plusk wody — mesh chowany standardowo (visible = life !== 'dead')
+    explosions.splash(p); // plusk wody
+    sinkingWrecks.set(id, 0); // wrak zostaje chwilę widoczny, potem tonie i znika (pętla renderu)
   }
 }
 
@@ -623,6 +645,17 @@ function pushKillFeed(text: string): void {
 function playerName(id: number): string {
   const found = roomView?.players.find((p: RoomPlayer) => p.id === id);
   return found?.nick ?? `#${String(id)}`;
+}
+
+/**
+ * Komunikat śmierci LOKALNEGO gracza wg przyczyny z eventu KILL (życzenie usera 2026-06-23:
+ * „ZESTRZELONY" tylko, gdy padł od ognia). Zderzenie z samolotem → KOLIZJA, rozbicie o teren/wodę
+ * → ROZBITY. Domyślnie (przyczyna nieznana, np. świeże zestrzelenie zanim dotrze event) → ZESTRZELONY.
+ */
+function deathLabel(cause: KillCause | null): string {
+  if (cause === 'collision') return 'KOLIZJA';
+  if (cause === 'ground') return 'ROZBITY';
+  return 'ZESTRZELONY';
 }
 
 // --- lobby UI + sieć ---
@@ -707,6 +740,7 @@ function enterPlayerWreck(): void {
 function onLocalRespawn(): void {
   playerDeath = 'none';
   spectatorTargetId = null;
+  localDeathCause = null; // świeże życie — zapomnij przyczynę poprzedniej śmierci
   downedOverlay.hide();
   updateMouseAimEnabled();
 }
@@ -1234,7 +1268,7 @@ function updateHudOverlays(): void {
   } else if (wreck) {
     alertEl.style.opacity = '0'; // komunikat i akcje są w nakładce u dołu
   } else if (!localAlive) {
-    alertEl.textContent = 'ZESTRZELONY';
+    alertEl.textContent = deathLabel(localDeathCause); // ZESTRZELONY tylko od ognia; inaczej KOLIZJA/ROZBITY
     alertEl.className = 'crash';
     alertEl.style.opacity = '1';
   } else {
@@ -1251,7 +1285,7 @@ function updateHudOverlays(): void {
   // nakładka decyzji po zestrzeleniu (steruj wrakiem / obserwator / tabela / opuść pokój) —
   // dopóki gracz nie wrócił do gry (wrak lub czeka na respawn) i nie ogląda tabeli/wyników
   if (playerDeath === 'wreck' && !scoreboard.visible && !matchResultsShown) {
-    downedOverlay.show(canSpectate());
+    downedOverlay.show(canSpectate(), deathLabel(localDeathCause));
   } else {
     downedOverlay.hide();
   }
@@ -1412,7 +1446,7 @@ renderer.setAnimationLoop(() => {
         m.object.quaternion.copy(predictor.renderOrientation);
         newLife = s.life;
         // zwęglony wrak na lądzie ('dead' + burningWreck) zostaje widoczny, zamrożony w miejscu
-        m.object.visible = newLife !== 'dead' || burningWreckIds.has(id);
+        m.object.visible = newLife !== 'dead' || burningWreckIds.has(id) || sinkingWrecks.has(id);
         m.update(frameDtS, s.throttle, newLife === 'alive');
       } else if (interpolator.sample(id, interpOut)) {
         remoteCount++;
@@ -1420,7 +1454,7 @@ renderer.setAnimationLoop(() => {
         m.object.position.copy(interpOut.position);
         m.object.quaternion.copy(interpOut.orientation);
         newLife = interpOut.life;
-        m.object.visible = newLife !== 'dead' || burningWreckIds.has(id);
+        m.object.visible = newLife !== 'dead' || burningWreckIds.has(id) || sinkingWrecks.has(id);
         m.update(frameDtS, interpOut.throttle, newLife === 'alive');
         if (id === spectateId) {
           spectatedPos.copy(interpOut.position);
@@ -1436,10 +1470,24 @@ renderer.setAnimationLoop(() => {
       const prevLife = lifeById.get(id);
       if (newLife === 'dead' && prevLife !== undefined && prevLife !== 'dead') {
         handleSurfaceImpact(id, m);
-      } else if (newLife === 'alive' && burningWreckIds.has(id)) {
-        // (gdyby kiedyś wrócił respawn) świeże życie zdejmuje zwęglenie — przywróć oryginalne barwy
-        restorePlaneMesh(m.object);
+      } else if (newLife === 'alive' && (burningWreckIds.has(id) || sinkingWrecks.has(id))) {
+        // (gdyby wrócił respawn) świeże życie zdejmuje zwęglenie/tonięcie — przywróć barwy i widoczność
+        if (burningWreckIds.has(id)) restorePlaneMesh(m.object);
         burningWreckIds.delete(id);
+        sinkingWrecks.delete(id);
+      }
+      // tonięcie wraku na wodzie: po krótkim holdzie opuszczaj mesh pod taflę, po WATER_SINK_TOTAL_S znika
+      const sinkAge = sinkingWrecks.get(id);
+      if (sinkAge !== undefined) {
+        const t = sinkAge + frameDtS;
+        if (t >= WATER_SINK_TOTAL_S) {
+          sinkingWrecks.delete(id);
+          m.object.visible = false;
+        } else {
+          sinkingWrecks.set(id, t);
+          m.object.visible = true;
+          m.object.position.y -= Math.max(0, t - WATER_SINK_HOLD_S) * WATER_SINK_SPEED_MS;
+        }
       }
       lifeById.set(id, newLife);
     }

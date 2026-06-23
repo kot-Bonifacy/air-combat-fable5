@@ -14,6 +14,8 @@ function styleActionButton(b: HTMLButtonElement, accent: string): void {
 export class DownedOverlay {
   private readonly root: HTMLElement;
   private readonly spectateBtn: HTMLButtonElement;
+  /** Tytuł nakładki — zależny od przyczyny śmierci (ZESTRZELONY / KOLIZJA / ROZBITY), ustawiany w show(). */
+  private readonly title: HTMLElement;
 
   constructor(onSpectate: () => void, onStandings: () => void, onEnd: () => void) {
     this.root = document.createElement('div');
@@ -27,6 +29,7 @@ export class DownedOverlay {
     title.style.cssText =
       'font:700 20px/1 monospace;color:#ff6a4a;letter-spacing:2px;' +
       'text-shadow:0 0 12px rgba(255,90,60,0.6);';
+    this.title = title;
 
     const hint = document.createElement('div');
     hint.textContent = 'steruj wrakiem: W/S/A/D, Q/E   •   Spacja: ogień   — albo:';
@@ -55,8 +58,10 @@ export class DownedOverlay {
     document.body.appendChild(this.root);
   }
 
-  /** Pokazuje nakładkę; `canSpectate` decyduje, czy dostępny jest tryb obserwatora. */
-  show(canSpectate: boolean): void {
+  /** Pokazuje nakładkę; `canSpectate` decyduje, czy dostępny jest tryb obserwatora.
+   *  `title` to komunikat śmierci wg przyczyny (ZESTRZELONY / KOLIZJA / ROZBITY). */
+  show(canSpectate: boolean, title: string): void {
+    this.title.textContent = title;
     this.spectateBtn.style.display = canSpectate ? 'inline-block' : 'none';
     this.root.style.display = 'flex';
   }

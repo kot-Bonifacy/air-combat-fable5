@@ -220,11 +220,15 @@
         color: #cde;
         font: 600 18px/1.4 monospace;
         letter-spacing: 1px;
-        transition: opacity 0.4s ease;
       }
+      /* przejście TYLKO przy chowaniu (na .hidden, nie na bazie): pokazanie ekranu ładowania
+         przy starcie meczu musi być NATYCHMIASTOWE — fade-in 0,4 s odsłaniał na chwilę bryły
+         zastępcze samolotu (jeszcze bez wczytanego .glb) przez półprzezroczystą nakładkę.
+         Chowanie zostaje płynne (wszystkie modele już gotowe → odsłania oteksturowany samolot). */
       #loading.hidden {
         opacity: 0;
         pointer-events: none;
+        transition: opacity 0.4s ease;
       }
       #loading .title {
         font-size: 26px;
