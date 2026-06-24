@@ -15,9 +15,10 @@ const ENGINE_GAIN_IDLE = 0.3;
 const ENGINE_GAIN_FULL = 0.92;
 const ENGINE_TAU_S = 0.18; // wygładzanie zmian obrotów (bez „zipper noise")
 // Per-model wzmocnienie głośności silnika — wyrównuje percepcyjną energię różnych nagrań źródłowych.
-// Sample Spitfire'a (Merlin „na postoju") jest energetycznie cichszy niż run-up Bf 109 mimo podobnego
-// RMS → podbity, by oba samoloty brzmiały równie obecnie (user 2026-06-24: Spitfire był za cichy).
-const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.3, bf109: 1.0 };
+// Sample Spitfire'a to teraz pełnomocowy start Merlina (P-51, bogatszy/„mięsisty" — user 2026-06-24:
+// poprzedni był cichy i płaski), peak ~-2,5 dB → mnożnik 1,65 daje ~+5 dB nad Bf 109 z zapasem na clip
+// (peak·0,92·1,65 ≈ 1,17 → przy domyślnym master 0,7 = 0,82, czysto).
+const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.65, bf109: 1.0 };
 
 const GUN_RATE_303 = 1.12; // Spitfire: 8× .303 — lekki, szybki grzechot (wyżej)
 const GUN_RATE_MG17 = 0.94; // Bf 109: MG 17 — cięższy ton (niżej)
