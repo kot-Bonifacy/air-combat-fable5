@@ -19,7 +19,7 @@ w którym trafia do repo (niezmiennik nr 8 z CLAUDE.md).
 | `models/broadleaf/broadleaf-web.glb` | Tree Small 02 / Polyhaven | https://polyhaven.com/a/tree_small_02 | CC0 (atrybucja niewymagana) | odchudzony z oryginału (skan 91 MB) do ~2,3 MB: gltf-transform simplify + tekstury 1024 px WebP q92 + Draco; las mieszany (doszlif 2026-06-22) |
 | `textures/terrain/snow.jpg` | Snow 02 / Polyhaven | https://polyhaven.com/a/snow_02 | CC0 (atrybucja niewymagana) | bez zmian (plik); podbicie 1K→2K (doszlif 2026-06-21); tekstura terenu (triplanar — śnieg) |
 | `textures/terrain/sand.jpg` | Aerial Beach 01 / Polyhaven | https://polyhaven.com/a/aerial_beach_01 | CC0 (atrybucja niewymagana) | bez zmian (plik); 2K; tekstura terenu (triplanar — plaża z góry; ocieplana w shaderze; doszlif 2026-06-21, zastąpił `sand_01`) |
-| `audio/engine-spitfire.ogg` | „P-51 Mustang Takeoff" / Fight2FlyPhoto | https://freesound.org/people/Fight2FlyPhoto/sounds/143561/ | CC-BY 3.0 | silnik **Packard Merlin V12** (licencyjny Rolls-Royce Merlin — ten sam silnik co Spitfire) na pełnej mocy; **bezszwowa pętla 4,5 s** zrobiona z segmentu startu (t=14–19,7 s): koniec crossfadowany równomocowo (qsin 1,2 s) na początek → brak słyszalnego szwu, mono OGG (faza 21; podmieniony 2026-06-24 — poprzedni `276597`/squashy555 CC0 był cichy i płaski, kolejny miał słyszalny szew pętli) |
+| `audio/engine-spitfire.ogg` | „P51 with supercharger" / doubletrigger | https://freesound.org/people/doubletrigger/sounds/110736/ | CC-BY 3.0 | silnik **Packard Merlin V12** (licencyjny Rolls-Royce Merlin — ten sam silnik co Spitfire), **naziemny run-up sprężarki = STAŁE obroty**; **bezszwowa pętla 2,8 s** ze stabilnego fragmentu (t=0,8–3,8 s): krótki crossfade równomocowy (qsin 0,2 s) na początek → brak szwu i bez „dodawania gazu", mono OGG, +3,8 dB (faza 21; podmieniany 2026-06-24: `276597` był cichy/płaski → `143561` był startem o ROSNĄCYCH obrotach „jak dodawanie gazu" → ten run-up jest stały) |
 | `audio/engine-bf109.ogg` | „Bf-109 — Daimler-Benz Run-Up" / Fight2FlyPhoto | https://freesound.org/people/Fight2FlyPhoto/sounds/142898/ | CC-BY 3.0 | autentyczny silnik **Daimler-Benz DB 601** (Bf 109 E-3); wycięty ~4 s segment run-up, mono OGG (faza 21) |
 | `audio/guns-mg.ogg` | „MACHINE GUN CLEAN" / EricsSoundschmiede | https://freesound.org/people/EricsSoundschmiede/sounds/457408/ | CC0 (atrybucja niewymagana) | grzechot karabinu maszynowego (Spitfire .303 / Bf 109 MG 17 — ton różnicowany pitch'em w kodzie); pętla, mono OGG (faza 21) |
 | `audio/cannon.ogg` | „Cannon Shot" / qubodup | https://freesound.org/people/qubodup/sounds/187767/ | CC0 (atrybucja niewymagana) | dudnienie działka **20 mm MG FF** (Bf 109); pojedynczy strzał, mono OGG (faza 21) |
@@ -53,8 +53,8 @@ wejściowym lobby (wymóg CC-BY przy publicznym deployu).
 
 **`audio/engine-spitfire.ogg`** — silnik Merlin (Spitfire; Packard Merlin V12 z P-51, faza 21):
 
-> "P-51 Mustang Takeoff" (https://freesound.org/people/Fight2FlyPhoto/sounds/143561/)
-> by Fight2FlyPhoto -- licensed under CC-BY 3.0 (http://creativecommons.org/licenses/by/3.0/)
+> "P51 with supercharger" (https://freesound.org/people/doubletrigger/sounds/110736/)
+> by doubletrigger -- licensed under CC-BY 3.0 (http://creativecommons.org/licenses/by/3.0/)
 
 **`audio/engine-bf109.ogg`** — silnik Daimler-Benz DB 601 (Bf 109, faza 21):
 
