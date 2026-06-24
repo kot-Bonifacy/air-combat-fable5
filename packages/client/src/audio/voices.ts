@@ -15,9 +15,12 @@ const ENGINE_GAIN_IDLE = 0.3;
 const ENGINE_GAIN_FULL = 0.92;
 const ENGINE_TAU_S = 0.18; // wygładzanie zmian obrotów (bez „zipper noise")
 // Per-model wzmocnienie głośności silnika — wyrównuje percepcyjną energię różnych nagrań źródłowych.
-// Sample Spitfire'a to naziemny run-up sprężarki Merlina (P-51, STAŁE obroty — user 2026-06-24: start
-// miał rosnące obroty „jak dodawanie gazu"), bezszwowa pętla 2,8 s, peak ~-3,3 dB → mnożnik 1,65 daje
-// ~+3,4 dB nad Bf 109 z zapasem na clip (peak·0,92·1,65 ≈ 1,04 → przy domyślnym master 0,7 = 0,73, czysto).
+// Sample Spitfire'a to STAŁY run silnika tłokowego (CC-BY 614788, Piper engine test) — wybrany za płaską
+// obwiednię. Historia (user 2026-06-24): „P51 supercharger" 110736 = PRZELOT → „przelatujący samolot z
+// ziemi"; Merlin static 276597 = operator blipował gazem → pętla „dodawała gazu co 2–4 s". Ten jest
+// stały (≈±0,5 dB) i z bliska. Pętla 4,0 s (wolna od transientów — omija skrzyp w nagraniu), RMS
+// dopasowane do poprzedniego → mnożnik 1,65 utrzymuje
+// głośność na zaakceptowanym poziomie (master 0,7, czysto). Szczegóły/alternatywy w assets/LICENSES.md.
 const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.65, bf109: 1.0 };
 
 const GUN_RATE_303 = 1.12; // Spitfire: 8× .303 — lekki, szybki grzechot (wyżej)
