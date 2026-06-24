@@ -47,6 +47,10 @@ Poza zakresem: muzyka, voice lines, doppler (nice-to-have: backlog).
 
 - Dźwięk silnika z surowego sample'a w pętli ma słyszalny szew — crossfade dwóch instancji
   albo szukać sample przygotowanego do loopowania
+  → **rozwiązane (2026-06-24)**: pętla bezszwowa wypalona w PLIKU `engine-spitfire.ogg` — koniec
+  crossfadowany równomocowo (ffmpeg `afade c=qsin` 1,2 s) na początek, oba wejścia `amix` aktywne
+  całą długość (apad → brak renormalizacji dropoutu). Test: RMS jednolity i brak skoku peaku na
+  złączu. Prostsze i pewniejsze niż crossfade dwóch instancji w kodzie (Three.js `Audio` = 1 źródło).
 - PositionalAudio na encji, która umiera → cleanup, inaczej wiszące źródła (wyciek)
 - Miks: broń własna NIE może zagłuszać buffetu przeciągnięcia (informacja > efekciarstwo)
 
