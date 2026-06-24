@@ -64,6 +64,11 @@ export class PauseMenu {
     this.shown = true;
   }
 
+  /** Dokłada własny element (np. panel głośności audio) na dole menu — przed podpowiedzią. */
+  mount(el: HTMLElement): void {
+    this.root.insertBefore(el, this.hint);
+  }
+
   hide(): void {
     this.root.style.display = 'none';
     this.shown = false;

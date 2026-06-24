@@ -19,6 +19,16 @@ w którym trafia do repo (niezmiennik nr 8 z CLAUDE.md).
 | `models/broadleaf/broadleaf-web.glb` | Tree Small 02 / Polyhaven | https://polyhaven.com/a/tree_small_02 | CC0 (atrybucja niewymagana) | odchudzony z oryginału (skan 91 MB) do ~2,3 MB: gltf-transform simplify + tekstury 1024 px WebP q92 + Draco; las mieszany (doszlif 2026-06-22) |
 | `textures/terrain/snow.jpg` | Snow 02 / Polyhaven | https://polyhaven.com/a/snow_02 | CC0 (atrybucja niewymagana) | bez zmian (plik); podbicie 1K→2K (doszlif 2026-06-21); tekstura terenu (triplanar — śnieg) |
 | `textures/terrain/sand.jpg` | Aerial Beach 01 / Polyhaven | https://polyhaven.com/a/aerial_beach_01 | CC0 (atrybucja niewymagana) | bez zmian (plik); 2K; tekstura terenu (triplanar — plaża z góry; ocieplana w shaderze; doszlif 2026-06-21, zastąpił `sand_01`) |
+| `audio/engine-spitfire.ogg` | „merlin engine" / squashy555 | https://freesound.org/people/squashy555/sounds/276597/ | CC0 (atrybucja niewymagana) | dźwięk silnika **Rolls-Royce Merlin** (Spitfire); wycięty ~4 s stabilny segment, mono OGG (faza 21) |
+| `audio/engine-bf109.ogg` | „Bf-109 — Daimler-Benz Run-Up" / Fight2FlyPhoto | https://freesound.org/people/Fight2FlyPhoto/sounds/142898/ | CC-BY 3.0 | autentyczny silnik **Daimler-Benz DB 601** (Bf 109 E-3); wycięty ~4 s segment run-up, mono OGG (faza 21) |
+| `audio/guns-mg.ogg` | „MACHINE GUN CLEAN" / EricsSoundschmiede | https://freesound.org/people/EricsSoundschmiede/sounds/457408/ | CC0 (atrybucja niewymagana) | grzechot karabinu maszynowego (Spitfire .303 / Bf 109 MG 17 — ton różnicowany pitch'em w kodzie); pętla, mono OGG (faza 21) |
+| `audio/cannon.ogg` | „Cannon Shot" / qubodup | https://freesound.org/people/qubodup/sounds/187767/ | CC0 (atrybucja niewymagana) | dudnienie działka **20 mm MG FF** (Bf 109); pojedynczy strzał, mono OGG (faza 21) |
+| `audio/explosion.ogg` | „Nearby explosion with debris" / juskiddink | https://freesound.org/people/juskiddink/sounds/108641/ | CC-BY 4.0 | wybuch przy rozbiciu/plusku; ~3 s, mono OGG (faza 21) |
+| `audio/hit-metal.ogg` | „Bullet Hit Metal" / coolguy244e | https://freesound.org/people/coolguy244e/sounds/267893/ | CC0 (atrybucja niewymagana) | metaliczny łomot trafienia we własny kadłub; ~0,5 s, mono OGG (faza 21) |
+
+Świst opływu, buffet przeciągnięcia, „ding" potwierdzenia i klik UI są **syntetyzowane proceduralnie**
+(Web Audio, bez sampli) — nie wymagają atrybucji. Wszystkie sample audio pobrane z freesound.org
+i przekonwertowane `ffmpeg` (wycinek + mono + OGG); szczegóły strojenia w `packages/client/src/audio/`.
 
 ## Pełne uznania autorstwa (formuła wymagana przez autora)
 
@@ -40,3 +50,16 @@ Oryginał formuły i licencji: `assets/models/spitfire/license.txt`.
 
 Oryginał formuły i licencji: `assets/models/bf109/license.txt`. Atrybucja widoczna też na ekranie
 wejściowym lobby (wymóg CC-BY przy publicznym deployu).
+
+**`audio/engine-bf109.ogg`** — silnik Daimler-Benz DB 601 (Bf 109, faza 21):
+
+> "Bf-109 - Daimler-Benz Run-Up" (https://freesound.org/people/Fight2FlyPhoto/sounds/142898/)
+> by Fight2FlyPhoto -- licensed under CC-BY 3.0 (http://creativecommons.org/licenses/by/3.0/)
+
+**`audio/explosion.ogg`** — wybuch (faza 21):
+
+> "Nearby explosion with debris.wav" (https://freesound.org/people/juskiddink/sounds/108641/)
+> by juskiddink -- licensed under CC-BY 4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Atrybucje CC-BY audio należy pokazać też na ekranie wejściowym lobby (jak modele) — do dopięcia
+przy najbliższej zmianie UI lobby (na razie udokumentowane tu).

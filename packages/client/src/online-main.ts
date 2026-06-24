@@ -76,6 +76,8 @@ import { ZoneBar, type ZoneBarState } from './zone-bar';
 import { SmokeTrails, WRECK_TIER, GROUND_FIRE_TIER, damageSmokeTier, type SmokeTier } from './smoke';
 import { createPlaneMesh, charPlaneMesh, restorePlaneMesh, type PlaneModel } from './plane-mesh';
 import { createWorld } from './world';
+import { AudioManager } from './audio/audio-manager';
+import type { EngineVoice, GunVoice, WindVoice } from './audio/voices';
 
 // Tryb online faza 10 — lobby + pokoje. Klient łączy się LENIWIE (przy pierwszej akcji
 // w lobby), dzięki czemu hello niesie aktualny nick. Token sesji z welcome trzymamy w
@@ -222,6 +224,51 @@ let spectatedValid = false;
 // teren z TYM SAMYM seedem co serwer (TERRAIN_SEED) — świat zgodny po obu stronach
 const terrain = createTerrain();
 const world = createWorld(scene, terrain);
+
+// Dźwięk (faza 21): listener na kamerze (3D pozycyjne obcych z grafu sceny). Sample ładujemy od razu
+// (≈180 KB), AudioContext odblokowujemy pierwszym gestem (autoplay policy) — patrz audio-manager.
+const audio = new AudioManager(camera, scene);
+void audio.load();
+const unlockAudio = (): void => audio.unlock();
+window.addEventListener('pointerdown', unlockAudio);
+window.addEventListener('keydown', unlockAudio);
+// delikatny klik UI przy przyciskach lobby (faza 21 „dźwięki UI lobby") — generycznie, bez edycji lobby-ui
+window.addEventListener('pointerdown', (e) => {
+  if (phase === 'lobby' && e.target instanceof HTMLButtonElement) audio.uiClick();
+});
+// Pętle silnika/broni per encja (cleanup przy śmierci/usunięciu — pułapka: wiszące źródła = wyciek);
+// świst+buffet (proceduralne) tworzony leniwie po załadowaniu sampli/odblokowaniu kontekstu.
+interface EntityAudio {
+  plane: PlaneType;
+  engine: EngineVoice;
+  gun: GunVoice;
+}
+const entityAudioById = new Map<number, EntityAudio>();
+let wind: WindVoice | null = null;
+
+/** Tworzy/aktualizuje głosy silnika+broni encji; odbudowa przy zmianie typu samolotu (respawn innym).
+ *  `host===undefined` → własny samolot (niepozycyjny); inaczej pozycyjny, podpięty do meshu. */
+function ensureEntityAudio(id: number, plane: PlaneType, host: PlaneModel['object'] | undefined): EntityAudio {
+  let ea = entityAudioById.get(id);
+  if (ea && ea.plane !== plane) {
+    disposeEntityAudio(id);
+    ea = undefined;
+  }
+  if (!ea) {
+    const local = host === undefined;
+    ea = { plane, engine: audio.createEngine(plane, local, host), gun: audio.createGun(plane, local, host) };
+    entityAudioById.set(id, ea);
+  }
+  return ea;
+}
+
+function disposeEntityAudio(id: number): void {
+  const ea = entityAudioById.get(id);
+  if (!ea) return;
+  ea.engine.dispose();
+  ea.gun.dispose();
+  entityAudioById.delete(id);
+}
 
 // Światła (ambient + słońce kierunkowe) tworzy createWorld — wspólny SUN_DIR (faza 20).
 const pmrem = new PMREMGenerator(renderer);
@@ -503,6 +550,7 @@ function clearMeshes(): void {
   meshTypeById.clear();
   planeTypeById.clear();
   presentIds.clear();
+  for (const id of [...entityAudioById.keys()]) disposeEntityAudio(id); // zatrzymaj silniki/broń starego meczu
 }
 
 /** Świeży stan gry przy wejściu do meczu (nowy mecz / reconnect): zero starych encji. */
@@ -600,6 +648,7 @@ function handleSnapshot(snap: Snapshot): void {
     smokeAccumById.delete(id);
     burningWreckIds.delete(id);
     sinkingWrecks.delete(id);
+    disposeEntityAudio(id); // encja zniknęła z meczu → zatrzymaj jej silnik/broń (cleanup źródeł)
   }
 }
 
@@ -626,9 +675,13 @@ function handleEvents(events: GameEvent[]): void {
     if (ev.kind === 'muzzle') {
       spawnCosmeticVolley(ev.ownerId, ev.seed, ev.shots);
       if (ev.ownerId === localId) muzzleFlash.flash(); // błysk luf tylko dla własnego samolotu (jak SP)
+      entityAudioById.get(ev.ownerId)?.gun.note(); // grzechot broni (per typ; Bf 109 dokłada działko)
     } else if (ev.kind === 'hit') {
       // hit marker dopiero z potwierdzenia serwera (uczciwość > responsywność) — gdy to JA trafiłem
       if (ev.shooterId === localId && !hitMarkerKill) hitMarkerTimerS = HIT_MARKER_S;
+      // dźwięk: oberwałem → metaliczny łomot w kadłub; trafiłem wroga → cichy „ding" potwierdzenia
+      if (ev.victimId === localId) audio.play('hit-metal', 0.85);
+      else if (ev.shooterId === localId) audio.hitConfirm();
     } else {
       onKill(ev.killerId, ev.victimId, ev.cause, localId);
     }
@@ -705,11 +758,13 @@ function handleSurfaceImpact(id: number, m: PlaneModel): void {
   const p = m.object.position;
   if (terrain.heightAt(p.x, p.z) > SEA_LEVEL_M) {
     explosions.spawn(p, 1); // krótki ognisty wybuch przy zderzeniu
+    audio.playAt('explosion', p, 1); // huk rozbicia (pozycyjny — tłumiony odległością)
     charPlaneMesh(m.object); // zwęglone materiały
     burningWreckIds.add(id); // render trzyma mesh widoczny; pętla dymu emituje GROUND_FIRE_TIER
     m.object.visible = true;
   } else {
     explosions.splash(p); // plusk wody
+    audio.playAt('explosion', p, 0.45, 1.35); // głuchy, wyższy plusk (brak osobnego sampla wody)
     sinkingWrecks.set(id, 0); // wrak zostaje chwilę widoczny, potem tonie i znika (pętla renderu)
   }
 }
@@ -807,6 +862,11 @@ const pauseMenu = new PauseMenu(
   () => togglePauseMenu(), // „wróć do gry" — menu jest otwarte, więc toggle je zamyka
   () => endMissionContextual(),
 );
+// suwak głośności + wycisz w menu pauzy (faza 21); klawisz M przełącza mute w dowolnym momencie
+pauseMenu.mount(audio.createSettingsPanel());
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyM' && !isEditingText()) audio.toggleMute();
+});
 
 /** Wejście w stan śmierci gracza. `flyableWreck` = true dla zestrzelenia/kolizji (steruje spadającym
  *  wrakiem, lokalna predykcja 'dying'); false dla rozbicia prosto w ziemię (alive→dead, brak wraku do
@@ -1535,6 +1595,8 @@ renderer.setAnimationLoop(() => {
     spectatedValid = false;
     for (const [id, m] of meshes) {
       let newLife: LifePhase;
+      let aThrottle: number; // gaz i prędkość do dźwięku silnika (źródło zależne od gałęzi local/obcy)
+      let aSpeed: number;
       if (id === localId) {
         if (!predictor.ready) continue;
         const s = predictor.sim.state;
@@ -1544,6 +1606,8 @@ renderer.setAnimationLoop(() => {
         // zwęglony wrak na lądzie ('dead' + burningWreck) zostaje widoczny, zamrożony w miejscu
         m.object.visible = newLife !== 'dead' || burningWreckIds.has(id) || sinkingWrecks.has(id);
         m.update(frameDtS, s.throttle, newLife === 'alive');
+        aThrottle = s.throttle;
+        aSpeed = s.velocity.length();
       } else if (interpolator.sample(id, interpOut)) {
         remoteCount++;
         if (interpOut.extrapolated) extrapolatingCount++;
@@ -1552,6 +1616,8 @@ renderer.setAnimationLoop(() => {
         newLife = interpOut.life;
         m.object.visible = newLife !== 'dead' || burningWreckIds.has(id) || sinkingWrecks.has(id);
         m.update(frameDtS, interpOut.throttle, newLife === 'alive');
+        aThrottle = interpOut.throttle;
+        aSpeed = interpOut.velocity.length();
         if (id === spectateId) {
           spectatedPos.copy(interpOut.position);
           spectatedQuat.copy(interpOut.orientation);
@@ -1571,6 +1637,21 @@ renderer.setAnimationLoop(() => {
         if (burningWreckIds.has(id)) restorePlaneMesh(m.object);
         burningWreckIds.delete(id);
         sinkingWrecks.delete(id);
+      }
+      // dźwięk silnika+broni encji (faza 21): pętla pozycyjna dla obcych (host=mesh), centralna dla
+      // własnego. Martwy/wrak → cisza silnika (eksplozję/łomot robią osobne ścieżki). Broń gra, gdy
+      // świeże eventy MUZZLE odświeżają licznik (gun.note); tu tylko decay i ew. dudnienie działka.
+      if (audio.ready) {
+        const plane = planeTypeById.get(id) ?? DEFAULT_PLANE_TYPE;
+        if (newLife === 'alive') {
+          const ea = ensureEntityAudio(id, plane, id === localId ? undefined : m.object);
+          // paliwo gasi silnik tylko lokalnie (zdalnych nie ma w snapshocie — grają, póki żyją)
+          const engineOn = id === localId ? predictor.sim.state.fuelFrac > 0.001 : true;
+          ea.engine.update(frameDtS, aThrottle, aSpeed, engineOn);
+          ea.gun.update(frameDtS, m.object.position);
+        } else {
+          disposeEntityAudio(id);
+        }
       }
       // tonięcie wraku na wodzie: po krótkim holdzie opuszczaj mesh pod taflę, po WATER_SINK_TOTAL_S znika
       const sinkAge = sinkingWrecks.get(id);
@@ -1613,6 +1694,12 @@ renderer.setAnimationLoop(() => {
       const cameraFloorM = surfaceHeightM(terrain, camera.position.x, camera.position.z) + 3;
       if (camera.position.y < cameraFloorM) camera.position.y = cameraFloorM;
       maybeHideLoading(); // znika dopiero, gdy wczytają się modele wszystkich samolotów
+      // świst opływu (rośnie z IAS) + buffet przeciągnięcia — z WŁASNej maszyny (obserwacja/wrak → gaśnie)
+      if (audio.ready) {
+        wind ??= audio.createWind();
+        const ownActive = !isSpectating() && s.life === 'alive';
+        wind.update(s.iasMs, predictor.sim.stallEffects.buffetIntensity, ownActive);
+      }
     }
     // ping w HUD odświeżany co ~1 s (decyzja użytkownika 2026-06-21 — był aktualizowany co klatkę)
     pingRefreshAccumS += frameDtS;

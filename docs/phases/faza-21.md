@@ -50,6 +50,43 @@ Poza zakresem: muzyka, voice lines, doppler (nice-to-have: backlog).
 - PositionalAudio na encji, która umiera → cleanup, inaczej wiszące źródła (wyciek)
 - Miks: broń własna NIE może zagłuszać buffetu przeciągnięcia (informacja > efekciarstwo)
 
-## Wynik (uzupełnić po zakończeniu)
+## Wynik
 
-—
+**Zakres AUDIO zrealizowany w całości** (474 testy/typecheck/lint/build zielone, commit `faza-21`). Część
+WIZUALNA (smugi kondensacyjne, lepszy wybuch z prymitywnymi szczątkami, ślad dymny 20 mm) → **backlog**
+(świadoma decyzja: efekty cząsteczkowe są nieweryfikowalne wzrokowo z tej sesji, a 60 fps jest kryterium —
+nie wprowadzam ich „na ślepo"; do zrobienia z weryfikacją wzrokową usera). Hit detection/efekty bez zmian.
+
+### Co zrobiono (audio)
+
+- **`audio/audio-manager.ts`** — `THREE.AudioListener` na kamerze (3D pozycyjne obcych z grafu sceny),
+  ładowanie 6 sampli OGG (~180 KB), master volume + mute przez `listener.setMasterVolume`
+  (localStorage: `air-combat:audio-volume`/`-muted`), odblokowanie AudioContext pierwszym gestem
+  (autoplay policy), pula 16 pozycyjnych jednostrzałów, syntezy „ding"/klik UI (oscylator).
+- **`audio/voices.ts`** — `EngineVoice` (pętla, pitch+gain od RPM-proxy = gaz + drobny wkład prędkości,
+  wygładzane), `GunVoice` (grzechot odświeżany eventami MUZZLE; Bf 109 dokłada dudnienie działka),
+  `WindVoice` (świst z filtrowanego szumu rosnący kwadratowo z IAS + buffet przeciągnięcia — informacja).
+- **Sample dobrane do KONKRETNYCH modeli** (życzenie usera): Merlin → Spitfire (`engine-spitfire`),
+  **Daimler-Benz DB 601 → Bf 109** (autentyczny run-up, `engine-bf109`); broń: grzechot MG (ton
+  różnicowany pitch'em per typ) + działko 20 mm dla Bf 109; wybuch, metaliczny łomot trafienia. Wszystkie
+  z freesound (CC0/CC-BY), atrybucje w `assets/LICENSES.md`.
+- **Integracja w `online-main.ts`**: głosy per encja w pętli renderu (silnik=throttle/prędkość, broń=MUZZLE),
+  cleanup przy śmierci/usunięciu encji i resecie meczu (pułapka: wiszące źródła = wyciek); świst/buffet z
+  własnej maszyny; eksplozja przy uderzeniu w powierzchnię; łomot (oberwałem) / „ding" (trafiłem); panel
+  głośności w menu pauzy (Esc) + klawisz **M** (mute); klik UI w lobby.
+
+### Kryteria
+
+- [x] Różnica throttle 50/100% (pitch+gain silnika), nurkowanie (świst ∝ IAS²), buffet (pomruk ∝ intensywność),
+  trafienie otrzymane (łomot) vs zadane (ding) — **zaimplementowane**; ⏳ user: odsłuch/playtest.
+- [x] Przeciwnik strzelający za plecami słyszalny kierunkowo — `PositionalAudio` na meshu (panner z grafu sceny).
+- [x] Wszystkie sample w `LICENSES.md` (2× CC-BY z pełną formułą, 4× CC0).
+- [~] Brak błędów autoplay — kontekst odblokowywany pierwszym gestem; ⏳ user: weryfikacja Chrome/Firefox/Edge.
+- [ ] 60 fps przy 8 samolotach — ⏳ user (cel sprzętowy RTX); audio = ~17 źródeł pętli + rzadkie jednostrzały.
+- [x] typecheck + test (474) + lint + build zielone; commit `faza-21`; memory zapisane.
+
+### Backlog (część wizualna fazy — do akceptacji/weryfikacji usera)
+
+- Smugi kondensacyjne z końcówek skrzydeł sprzężone z przeciążeniem **n** (czytelność manewrów wroga; dla
+  obcych **n** wyliczalne z krzywizny toru prędkości — bez zmiany protokołu). Plan gotowy, reużycie `SmokeTrails`.
+- Lepszy wybuch (flash + prymitywne szczątki), ślad dymny pocisków 20 mm, smugi przy wysokim G na powierzchniach.

@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: **0–18 + domknięcie parytetu MP↔SP (P1–P5) + Faza 19 (19a ✅, 19b ✅) + Faza 20 ✅**. Szczegóły
+Fazy ukończone: **0–18 + domknięcie parytetu MP↔SP (P1–P5) + Faza 19 (19a ✅, 19b ✅) + Faza 20 ✅ + Faza 21 (audio ✅; wizualia → backlog)**. Szczegóły
 każdej fazy w `docs/phases/faza-NN.md` i `memory/`; cały wysiłek parytetu MP↔SP (fazy 14–18 + P1–P5) spięty
 w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwarte sprawy).
 
@@ -27,6 +27,7 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 | 19a   | **Drugi samolot (shared)**: Bf 109 E-3, uzbrojenie w grupach, balistyka per-pocisk, złote testy `describe.each` | ✅ 424 testy zielone (`bf109-e.json`, asymetria turn↔energy) |
 | 19b   | **Drugi samolot (integracja)**: protokół v4 (bajt typu), per-player plane serwer, rejestr meshy + model 3D Bf 109, wybór w lobby, HUD typ wroga, balans 1v1 | ✅ 440 testów zielone; ⏳ user: playtest balansu + weryfikacja wzrokowa modelu + smoke v4 |
 | 20    | **Teren v2 (timebox)**: złota godzina+lens flare, chmury billboardowe (krycie się), woda v2 (waternormals+odbicie nieba, bez planar), teren 2-poziomowy | ✅ 460 testów zielone; podpunkt 5 → backlog; **doszlif 2026-06-21**: tekstury v3 2K + anti-tiling (koniec „kraty"), fix migotania brzegu (`logarithmicDepthBuffer`), drzewa próbowane→odrzucone; ⏳ user: pomiar fps RTX + weryfikacja wzrokowa (patrz `docs/phases/faza-20.md`) |
+| 21    | **Dźwięk i efekty (audio)**: Web Audio (Three.js listener), silniki dobrane do modeli (Merlin→Spitfire, **DB 601→Bf 109**), broń 7,7 mm vs działko 20 mm, eksplozje/trafienia (sample freesound CC0/CC-BY), świst∝IAS²+buffet+ding/UI proceduralne, master vol+mute (localStorage, menu pauzy/klawisz M) | ✅ 474 testy zielone; **wizualia (smugi kondensacyjne/szczątki/ślad 20 mm) → backlog** (nieweryfikowalne wzrokowo z sesji, fps to kryterium); ⏳ user: odsłuch/playtest miksu + brak błędów autoplay (Chrome/FF/Edge) + fps RTX (patrz `docs/phases/faza-21.md`) |
 
 **Protokół: `PROTOCOL_VERSION = 5`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
 w sesji poprawek 2026-06-21 +1 bajt amunicji GRUPY WTÓRNEJ = działko 20 mm Bf 109; fazy 15–18, P1–P5
@@ -116,8 +117,24 @@ playtest poprawek 2026-06-21 (zryw botów „trudnych", nazwiska PL/DE) + playte
 weryfikacja wzrokowa modelu Bf 109 (orientacja/śmigło/podwozie — fixEuler best-guess) + zaległe pomiary VPS —
 pełna lista w `docs/parytet-mp-sp.md` („Otwarte sprawy"). Brak SSH z sesji.
 
-**Następna: Faza 21 — dźwięk i efekty** (`docs/phases/faza-21.md`).
-(Decyzja 2026-06-18: pełny parytet MP↔SP przed Bf 109; Bf 109→19 ✅, teren→20 ✅, dźwięk→21, uszkodzenia→22.)
+**Sesja Faza 21 — audio (2026-06-24):** pełny system dźwięku (Web Audio przez `THREE.AudioListener` na
+kamerze → 3D pozycyjne obcych). Sample dobrane do KONKRETNYCH modeli (życzenie usera „dźwięki dopasowane do
+samolotu"): silnik **Merlin→Spitfire** (`engine-spitfire.ogg`, CC0), **Daimler-Benz DB 601→Bf 109**
+(`engine-bf109.ogg`, autentyczny run-up, CC-BY); broń — grzechot MG (ton różnicowany pitch'em: Spitfire .303
+wyżej, Bf 109 MG 17 niżej) + **dudnienie działka 20 mm MG FF** tylko dla Bf 109; wybuch, metaliczny łomot
+trafienia. Świst opływu (∝ IAS²), buffet przeciągnięcia, „ding" potwierdzenia i klik UI **syntetyzowane
+proceduralnie** (bez sampli). Master volume + mute (`listener.setMasterVolume`, localStorage, panel w menu
+pauzy + klawisz **M**), AudioContext odblokowywany pierwszym gestem (autoplay policy). Moduły:
+`client/src/audio/{audio-manager,voices}.ts`; integracja w `online-main.ts` (głosy per encja w pętli renderu,
+cleanup przy śmierci/usunięciu — pułapka wiszących źródeł). Sample z freesound (`ffmpeg`: wycinek+mono+OGG,
+~180 KB), atrybucje w `assets/LICENSES.md`. **BEZ zmian protokołu (v5), BEZ shared/serwera — czysto klienckie.**
+474 testy/typecheck/lint/build zielone. **Część WIZUALNA fazy (smugi kondensacyjne sprzężone z n, lepszy
+wybuch+szczątki, ślad dymny 20 mm) → BACKLOG** (świadomie: nieweryfikowalne wzrokowo z sesji, a 60 fps to
+kryterium; plan w `docs/phases/faza-21.md`). ⏳ user: odsłuch/playtest miksu, brak błędów autoplay (Chrome/FF/Edge),
+fps RTX przy 8 samolotach.
+
+**Następna: Faza 22 — uszkodzenia** (lub domknięcie wizualiów Faza 21 — do decyzji usera).
+(Decyzja 2026-06-18: pełny parytet MP↔SP przed Bf 109; Bf 109→19 ✅, teren→20 ✅, dźwięk→21 ✅ audio, uszkodzenia→22.)
 
 ## Stack (skrót)
 
