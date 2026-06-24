@@ -551,6 +551,10 @@ function clearMeshes(): void {
   planeTypeById.clear();
   presentIds.clear();
   for (const id of [...entityAudioById.keys()]) disposeEntityAudio(id); // zatrzymaj silniki/broń starego meczu
+  if (wind) {
+    wind.dispose(); // świst opływu własnego samolotu — pętla nie kończy się sama (gra dalej poza meczem)
+    wind = null; // render odtworzy leniwie (`wind ??=`) przy następnym meczu
+  }
 }
 
 /** Świeży stan gry przy wejściu do meczu (nowy mecz / reconnect): zero starych encji. */
@@ -1129,6 +1133,10 @@ function enterWaiting(view: WaitingView): void {
   phase = 'lobby';
   matchResultsShown = false;
   stopRoomPolling(); // jesteśmy już w pokoju — przestań odpytywać listę otwartych gier
+  // z meczu do poczekalni („zakończ misję"/wycofanie): usuń encje i ZATRZYMAJ ich silniki/świst — inaczej
+  // pętle audio grają dalej w poczekalni (render bramkuje audio przez phase==='playing', ale pętle żyją same).
+  // NIE wołamy pełnego resetGameState (zeruje withdrawnToWaiting, ustawiane przed enterWaiting w wycofaniu).
+  clearMeshes();
   scoreboard.hide();
   results.hide();
   hideCombatOverlays(); // z meczu do poczekalni: zgaś markery/roster/horyzont/alert (render staje)
