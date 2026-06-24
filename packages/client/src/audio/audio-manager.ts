@@ -234,9 +234,9 @@ export class AudioManager {
 
   /** Pętla silnika danego samolotu. `local=true` (brak `host`) → niepozycyjna (centralna, najważniejszy
    *  dźwięk); obcy → pozycyjna, podpięta do `host` (mesh). */
-  createEngine(plane: PlaneType, local: boolean, host?: Object3D): EngineVoice {
+  createEngine(plane: PlaneType, _local: boolean, host?: Object3D): EngineVoice {
     const buf = this.buffers.get(`engine-${plane}` as SfxName);
-    return new EngineVoice(this, buf, local, host);
+    return new EngineVoice(this, buf, plane, host);
   }
 
   /** Pętla broni danego samolotu (grzechot 7,7 mm); Bf 109 dokłada dudnienie działka 20 mm. */

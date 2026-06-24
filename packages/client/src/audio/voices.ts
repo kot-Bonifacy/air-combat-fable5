@@ -14,6 +14,10 @@ const ENGINE_RATE_FULL = 1.34; // przy pełnym gazie
 const ENGINE_GAIN_IDLE = 0.3;
 const ENGINE_GAIN_FULL = 0.92;
 const ENGINE_TAU_S = 0.18; // wygładzanie zmian obrotów (bez „zipper noise")
+// Per-model wzmocnienie głośności silnika — wyrównuje percepcyjną energię różnych nagrań źródłowych.
+// Sample Spitfire'a (Merlin „na postoju") jest energetycznie cichszy niż run-up Bf 109 mimo podobnego
+// RMS → podbity, by oba samoloty brzmiały równie obecnie (user 2026-06-24: Spitfire był za cichy).
+const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.3, bf109: 1.0 };
 
 const GUN_RATE_303 = 1.12; // Spitfire: 8× .303 — lekki, szybki grzechot (wyżej)
 const GUN_RATE_MG17 = 0.94; // Bf 109: MG 17 — cięższy ton (niżej)
@@ -85,11 +89,13 @@ class LoopVoice {
 /** Pętla silnika — pitch i głośność od RPM-proxy (gaz, lekko prędkość). Sample dobrany do modelu. */
 export class EngineVoice {
   private readonly loop: LoopVoice;
+  private readonly gainMul: number;
   private rate = ENGINE_RATE_IDLE;
   private gain = 0;
 
-  constructor(am: AudioManager, buffer: AudioBuffer | undefined, _local: boolean, host?: Object3D) {
+  constructor(am: AudioManager, buffer: AudioBuffer | undefined, plane: PlaneType, host?: Object3D) {
     this.loop = new LoopVoice(am, buffer, host);
+    this.gainMul = ENGINE_GAIN_MUL[plane];
   }
 
   /** `active` = żywy samolot z pracującym silnikiem (paliwo). Martwy/wrak → wyciszenie. */
@@ -98,7 +104,7 @@ export class EngineVoice {
     // RPM-proxy: głównie gaz + drobny wkład prędkości (śmigło „rozkręcone" w nurkowaniu)
     const rpm = Math.min(1, Math.max(0, 0.1 + 0.82 * throttle + 0.0006 * speedMs));
     const targetRate = ENGINE_RATE_IDLE + (ENGINE_RATE_FULL - ENGINE_RATE_IDLE) * rpm;
-    const targetGain = active ? ENGINE_GAIN_IDLE + (ENGINE_GAIN_FULL - ENGINE_GAIN_IDLE) * throttle : 0;
+    const targetGain = active ? (ENGINE_GAIN_IDLE + (ENGINE_GAIN_FULL - ENGINE_GAIN_IDLE) * throttle) * this.gainMul : 0;
     const k = smoothK(dtS, ENGINE_TAU_S);
     this.rate += (targetRate - this.rate) * k;
     this.gain += (targetGain - this.gain) * k;
