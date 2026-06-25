@@ -147,7 +147,7 @@ FFA bez zmian (płaska lista). Rozpoznanie wróg/sojusznik w locie nadal po FRAK
 niezmieniony, ale semantyka poczekalni rozjechana między wersjami). ⏳ user: smoke (2 ludzi → ta sama drużyna; wybór
 różnych samolotów po tej samej stronie; boty wyrównują). **Uwaga UX:** skoro obie drużyny mogą mieć ten sam samolot,
 jedynym wizualnym znacznikiem strony jest kolor markera (sylwetka już nie zdradza drużyny) — ewentualne mocniejsze
-oznaczenie (tint kadłuba/znaki) to osobny temat. **NIEZACOMMITOWANE.**
+oznaczenie (tint kadłuba/znaki) to osobny temat. **Zacommitowane `b81f89a` + push.**
 
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
