@@ -73,6 +73,8 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
       smoothingTauS: 0.12,
       yawGain: 0.5,
       maxYawRateDegS: 8,
+      aimExpo: 0, // fizyka liczona ręcznie → liniowy instruktor jak dawniej
+      aimExpoRefDeg: 60,
     },
     wreck: {
       baseLoadG: 0.35,

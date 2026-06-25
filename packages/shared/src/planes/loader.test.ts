@@ -71,6 +71,8 @@ function validRaw(): Record<string, unknown> {
       smoothingTauS: 0.12,
       yawGain: 0.5,
       maxYawRateDegS: 8,
+      aimExpo: 1.0,
+      aimExpoRefDeg: 60,
     },
     wreck: {
       baseLoadG: 0.35,

@@ -73,7 +73,9 @@
     "pushoverConeDeg": 20,
     "smoothingTauS": 0.08,
     "yawGain": 0.5,
-    "maxYawRateDegS": 10
+    "maxYawRateDegS": 10,
+    "aimExpo": 1.0,
+    "aimExpoRefDeg": 60
   },
   "wreck": {
     "baseLoadG": 0.35,

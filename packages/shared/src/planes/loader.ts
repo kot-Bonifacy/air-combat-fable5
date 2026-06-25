@@ -172,6 +172,14 @@ export interface InstructorConfig {
   yawGain: number;
   /** Limit żądania yaw [°/s]. */
   maxYawRateDegS: number;
+  /**
+   * Siła krzywej wykładniczej reakcji celownika (boost ciągnięcia przy dużym
+   * oddaleniu kursora od nosa). 0 = liniowo jak dawniej; 1 = do 2× przy
+   * `aimExpoRefDeg`. Małe oddalenie kursora pozostaje ~bez zmian.
+   */
+  aimExpo: number;
+  /** Oddalenie kursora [°], przy którym boost krzywej osiąga pełnię (1 + aimExpo). */
+  aimExpoRefDeg: number;
 }
 
 type NumericKey = Exclude<
@@ -245,6 +253,8 @@ const INSTRUCTOR_RANGES: Record<keyof InstructorConfig, readonly [min: number, m
   bankThresholdDeg: [1, 90],
   pushoverConeDeg: [0, 90],
   smoothingTauS: [0.01, 2],
+  aimExpo: [0, 4],
+  aimExpoRefDeg: [5, 120],
   yawGain: [0, 10],
   maxYawRateDegS: [0, 45],
 };

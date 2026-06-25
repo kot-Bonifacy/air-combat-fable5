@@ -1,5 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
-import { maxRollRateRadS } from '../physics/envelope';
+import { airDensityKgM3, dynamicPressurePa } from '../physics/atmosphere';
+import { maxRollRateRadS, nAvailG } from '../physics/envelope';
 import { nDemandForPitchRate } from '../physics/plane-step';
 import type { PlaneState } from '../physics/state';
 import type { PlaneConfig } from '../planes/loader';
@@ -12,6 +13,30 @@ import type { PlaneConfig } from '../planes/loader';
 // dokładnie tego interfejsu — nie umieją złamać koperty.
 
 const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * Krzywa wykładnicza reakcji celownika myszy: mnożnik wzmocnienia ciągnięcia
+ * rosnący z |błąd kątowy| (= oddalenie kursora od nosa). Przy małym błędzie ≈1
+ * (delikatny ruch myszy jak dawniej — nachylenie w zerze = 1, precyzyjne
+ * celowanie bez zmian), przy |błąd| ≥ refRad ustala się na (1 + expo): duże
+ * oddalenie kursora = mocniejsza zmiana kierunku lotu. expo = 0 wyłącza (czysta
+ * liniowość). Stosowane TYLKO do pitch (pull) — roll/yaw i tak saturują do
+ * fizycznego limitu, a boost rollError psułby precyzyjne korekty w bok
+ * (atan2 daje duży kąt przechylenia nawet przy małym oddaleniu kursora w bok).
+ */
+function expoPullGainFactor(errRad: number, expo: number, refRad: number): number {
+  if (expo <= 0 || refRad <= 0) return 1;
+  return 1 + expo * Math.min(1, Math.abs(errRad) / refRad);
+}
+
+/**
+ * Maksymalny clRatio (n_demand / n_avail), do którego instruktor dawkuje G przy
+ * wzmocnieniu wykładniczym. Poniżej progu buffetu (0.9) i przeciągnięcia (1.0),
+ * więc daleki kursor ciągnie aż do granicy koperty — mocniej, gdy jest zapas
+ * prędkości/G — ale samolot nie departuje przy płynnym śledzeniu (fizyka-lotu.md
+ * rozdz. 7; por. „pilot dawkuje G wg HUD clRatio 0.85" w testach manewrów).
+ */
+const INSTRUCTOR_MAX_CLRATIO = 0.85;
 
 /** Żądania pilota PRZED kopertą — wspólne wyjście instruktora i klawiatury. */
 export interface PilotDemands {
@@ -89,8 +114,13 @@ export class Instructor {
     const maxRoll = maxRollRateRadS(state.iasMs, plane);
     const rawRoll = Math.min(maxRoll, Math.max(-maxRoll, cfg.aggressivenessRoll * rollErrorRad));
     // n proporcjonalne do błędu w płaszczyźnie (rozdz. 7: aggressiveness w G/rad);
-    // nasycenie robi koperta (n_avail / nMaxG) w pilotStep
-    const rawPullG = cfg.aggressivenessPitch * pullErrorRad;
+    // krzywa wykładnicza wzmacnia ciągnięcie przy dużym oddaleniu kursora (małe
+    // ruchy bez zmian); nasycenie robi koperta (n_avail / nMaxG) w pilotStep
+    const expoRefRad = cfg.aimExpoRefDeg * DEG_TO_RAD;
+    const rawPullG =
+      cfg.aggressivenessPitch *
+      pullErrorRad *
+      expoPullGainFactor(pullErrorRad, cfg.aimExpo, expoRefRad);
     const maxYaw = cfg.maxYawRateDegS * DEG_TO_RAD;
     const yawErrorRad = Math.atan2(lateral, Math.max(scratchTargetBody.z, 0));
     const rawYaw = Math.min(maxYaw, Math.max(-maxYaw, cfg.yawGain * yawErrorRad));
@@ -105,6 +135,16 @@ export class Instructor {
     out.yawRateRadS = this.smoothedYawRateRadS;
     // baza n: lot po prostej (nośna równoważy grawitację ⊥ do toru) + ciągnięcie
     out.nDemandG = nDemandForPitchRate(state, 0) + this.smoothedPullG;
+    // Krzywa wykładnicza może zażądać więcej G, niż daje skrzydło przy małej
+    // prędkości (wolny szczyt pętli) → samolot by przeciągnął. Klampujemy więc
+    // wzmocnione ciągnięcie do bezpiecznego pułapu koperty (nAvail liczone tym
+    // samym wzorem co w pilotStep) — daleki kursor ciągnie do granicy, ale nie
+    // poza nią. Tylko gdy expo aktywne i ciągniemy (push/baza/expo=0 bez zmian).
+    if (cfg.aimExpo > 0 && this.smoothedPullG > 0) {
+      const qPa = dynamicPressurePa(airDensityKgM3(state.position.y), state.velocity.length());
+      const stallSafeMaxG = INSTRUCTOR_MAX_CLRATIO * nAvailG(qPa, plane);
+      if (out.nDemandG > stallSafeMaxG) out.nDemandG = stallSafeMaxG;
+    }
     return out;
   }
 }

@@ -61,6 +61,35 @@ describe('instruktor — pojedynczy tick (regulator P)', () => {
     expect(demands.nDemandG).toBeLessThan(1); // pcha
   });
 
+  it('krzywa wykładnicza: duże oddalenie kursora ciągnie superliniowo, małe ~bez zmian', () => {
+    // cel w płaszczyźnie symetrii (lateral=0 → czyste ciągnięcie, roll≈0);
+    // tylko instructor.update (bez fizyki) → filtr zbiega do surowego żądania.
+    // Duża prędkość → spory zapas koperty, więc klamp clRatio≈0.85 NIE obcina
+    // pomiaru i mierzymy czystą krzywą wykładniczą.
+    const pullAtElevation = (elevDeg: number): number => {
+      const sim = levelSim(200);
+      const instructor = new Instructor();
+      const demands = createPilotDemands();
+      const a = elevDeg * DEG;
+      const target = new Vector3(0, Math.sin(a), Math.cos(a));
+      for (let i = 0; i < 240; i++) {
+        instructor.update(sim.state, plane, target, FIXED_DT_S, demands);
+      }
+      return demands.nDemandG;
+    };
+
+    const base = pullAtElevation(0); // cel przed nosem → tylko baza lotu
+    const pullSmall = pullAtElevation(10) - base;
+    const pullLarge = pullAtElevation(60) - base;
+
+    // liniowo stosunek = 60/10 = 6; krzywa (aimExpo=1, ref=60°) daje wyraźnie więcej
+    expect(pullLarge / pullSmall).toBeGreaterThan(7);
+    // ale małe oddalenie prawie nietknięte: mnożnik gainu ~1.17, < +25%
+    const linearSmall = plane.instructor.aggressivenessPitch * (10 * DEG);
+    expect(pullSmall / linearSmall).toBeGreaterThan(1.0);
+    expect(pullSmall / linearSmall).toBeLessThan(1.25);
+  });
+
   it('cel za ogonem z boku → najpierw roll (pull wygaszone)', () => {
     const sim = levelSim();
     const instructor = new Instructor();
