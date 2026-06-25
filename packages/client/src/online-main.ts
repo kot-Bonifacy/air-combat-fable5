@@ -8,9 +8,13 @@ import {
 } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
+  AA_BALLISTICS,
   ARENA_WARNING_DISTANCE_M,
   BULLET_POOL_CAPACITY,
   BulletPool,
+  EMPLACEMENT_DISPERSION_MRAD,
+  EMPLACEMENT_MUZZLE_HEIGHT_M,
+  EMPLACEMENT_POINTS,
   INPUT_HZ,
   MATCH_LIVES,
   MAX_PLAYERS_PER_ROOM,
@@ -76,6 +80,7 @@ import { ZoneBar, type ZoneBarState } from './zone-bar';
 import { SmokeTrails, WRECK_TIER, GROUND_FIRE_TIER, damageSmokeTier, type SmokeTier } from './smoke';
 import { createPlaneMesh, charPlaneMesh, restorePlaneMesh, type PlaneModel } from './plane-mesh';
 import { createWorld } from './world';
+import { buildEmplacements, charEmplacement, restoreEmplacement } from './emplacement-mesh';
 import { AudioManager } from './audio/audio-manager';
 import type { EngineVoice, GunVoice, WindVoice } from './audio/voices';
 
@@ -224,6 +229,20 @@ let spectatedValid = false;
 // teren z TYM SAMYM seedem co serwer (TERRAIN_SEED) — świat zgodny po obu stronach
 const terrain = createTerrain();
 const world = createWorld(scene, terrain);
+
+// Naziemne stanowiska ogniowe (Część 2): meshe statyczne (pozycje z seeda terenu, jak serwer).
+// Stan zniszczenia + dym + pozycyjny dźwięk serii MG trzymane równolegle do grup; tracery ognia
+// spawnują się z eventów AA_FIRE do `cosmeticPool`. Reset (odbudowa) przy nowym meczu/reconnect.
+const emplacementGroups = buildEmplacements(scene, terrain);
+const emplacementMuzzles = emplacementGroups.map((g) =>
+  g.position.clone().setY(g.position.y + EMPLACEMENT_MUZZLE_HEIGHT_M),
+);
+const emplacementDestroyed: boolean[] = emplacementGroups.map(() => false);
+const emplacementGuns: (GunVoice | null)[] = emplacementGroups.map(() => null);
+const emplacementSmokeAccum: number[] = emplacementGroups.map(() => 0);
+const scratchEmplacementSmoke = new Vector3();
+/** Klucz „właściciela" tracerów AA w `tracerCounter`/`cosmeticPool` — poza zakresem id samolotów. */
+const AA_TRACER_KEY_BASE = 1000;
 
 // Dźwięk (faza 21): listener na kamerze (3D pozycyjne obcych z grafu sceny). Sample ładujemy od razu
 // (≈180 KB), AudioContext odblokowujemy pierwszym gestem (autoplay policy) — patrz audio-manager.
@@ -551,6 +570,11 @@ function clearMeshes(): void {
   planeTypeById.clear();
   presentIds.clear();
   for (const id of [...entityAudioById.keys()]) disposeEntityAudio(id); // zatrzymaj silniki/broń starego meczu
+  // zatrzymaj pozycyjne głosy broni stanowisk (jak głosy encji — wiszące źródła = wyciek)
+  for (let i = 0; i < emplacementGuns.length; i++) {
+    emplacementGuns[i]?.dispose();
+    emplacementGuns[i] = null;
+  }
   if (wind) {
     wind.dispose(); // świst opływu własnego samolotu — pętla nie kończy się sama (gra dalej poza meczem)
     wind = null; // render odtworzy leniwie (`wind ??=`) przy następnym meczu
@@ -586,6 +610,12 @@ function resetGameState(): void {
   smokeAccumById.clear();
   burningWreckIds.clear(); // nowy mecz/reconnect — żadnych zwęglonych wraków z poprzedniego (meshe i tak czyszczone)
   sinkingWrecks.clear(); // jw. — żadnych tonących wraków z poprzedniego meczu
+  // odbuduj stanowiska ogniowe na nowy mecz (zdejmij zwęglenie, wyzeruj dym) — serwer też je resetuje
+  for (let i = 0; i < emplacementGroups.length; i++) {
+    if (emplacementDestroyed[i]) restoreEmplacement(emplacementGroups[i]!);
+    emplacementDestroyed[i] = false;
+    emplacementSmokeAccum[i] = 0;
+  }
   localDeathCause = null; // nowy mecz — zapomnij przyczynę śmierci z poprzedniego
   latestStandings = null;
   matchMode = 'ffa';
@@ -686,9 +716,81 @@ function handleEvents(events: GameEvent[]): void {
       // dźwięk: oberwałem → metaliczny łomot w kadłub; trafiłem wroga → cichy „ding" potwierdzenia
       if (ev.victimId === localId) audio.play('hit-metal', 0.85);
       else if (ev.shooterId === localId) audio.hitConfirm();
-    } else {
+    } else if (ev.kind === 'kill') {
       onKill(ev.killerId, ev.victimId, ev.cause, localId);
+    } else if (ev.kind === 'aaFire') {
+      spawnAaCosmeticVolley(ev.index, ev.seed, ev.shots, ev.dir);
+      noteAaGun(ev.index); // pozycyjny grzechot serii MG ze stanowiska
+    } else if (ev.kind === 'aaDestroyed') {
+      setEmplacementDestroyed(ev.index, true);
+      if (ev.killerId === localId) pushKillFeed(`✕ stanowisko ogniowe  +${String(EMPLACEMENT_POINTS)}`);
     }
+  }
+}
+
+/**
+ * Kosmetyczne tracery salwy stanowiska naziemnego (AA). Pociski autorytatywne liczy serwer; te tu
+ * tylko świecą (damage 0) i gasną po czasie życia — żeby pilot WIDZIAŁ ogień z ziemi i mógł unikać.
+ * Odtwarzane z pozy WYLOTU stanowiska (stała) + bazowy kierunek z eventu + rozrzut z seeda (jak MUZZLE).
+ */
+function spawnAaCosmeticVolley(index: number, seed: number, shots: number, dir: Vector3): void {
+  const muzzle = emplacementMuzzles[index];
+  if (!muzzle) return;
+  const rng = createRng(seed);
+  const dispersionRad = EMPLACEMENT_DISPERSION_MRAD * MRAD_TO_RAD;
+  const key = AA_TRACER_KEY_BASE + index;
+  let counter = tracerCounter.get(key) ?? 0;
+  for (let i = 0; i < shots; i++) {
+    cosmDir.copy(dir);
+    applyDispersion(cosmDir, dispersionRad, rng);
+    cosmVel.copy(cosmDir).multiplyScalar(AA_BALLISTICS.muzzleVelocityMs);
+    const tracer = counter % 3 === 0;
+    counter++;
+    cosmeticPool.spawn(muzzle, cosmVel, 0, key, tracer, AA_BALLISTICS.bulletDragK, AA_BALLISTICS.bulletLifetimeS);
+  }
+  tracerCounter.set(key, counter);
+}
+
+/** Pozycyjny grzechot serii MG ze stanowiska (ten sam sampel co Spitfire); pętla tworzona leniwie. */
+function noteAaGun(index: number): void {
+  if (!audio.ready) return;
+  const group = emplacementGroups[index];
+  if (!group) return;
+  let g = emplacementGuns[index];
+  if (!g) {
+    g = audio.createGun('spitfire', false, group); // .303, pozycyjny (host = mesh stanowiska)
+    emplacementGuns[index] = g;
+  }
+  g.note();
+}
+
+/** Ustawia stan zniszczenia stanowiska: zwęglenie + cisza broni (zniszczone) lub odbudowa. Idempotentne. */
+function setEmplacementDestroyed(index: number, destroyed: boolean): void {
+  const group = emplacementGroups[index];
+  if (!group || emplacementDestroyed[index] === destroyed) return;
+  emplacementDestroyed[index] = destroyed;
+  if (destroyed) {
+    charEmplacement(group);
+    emplacementGuns[index]?.dispose();
+    emplacementGuns[index] = null;
+  } else {
+    restoreEmplacement(group);
+    emplacementSmokeAccum[index] = 0;
+  }
+}
+
+/** Pętla renderu: decay/pozycja głosów broni stanowisk + lekki dym zniszczonych (GROUND_FIRE_TIER). */
+function updateEmplacements(frameDtS: number): void {
+  for (let i = 0; i < emplacementGroups.length; i++) {
+    emplacementGuns[i]?.update(frameDtS, emplacementMuzzles[i]!);
+    if (!emplacementDestroyed[i]) continue;
+    let acc = (emplacementSmokeAccum[i] ?? 0) + frameDtS;
+    while (acc >= GROUND_FIRE_TIER.intervalS) {
+      acc -= GROUND_FIRE_TIER.intervalS;
+      scratchEmplacementSmoke.copy(emplacementGroups[i]!.position).y += 1.0; // dym znad szczątków
+      smoke.emit(scratchEmplacementSmoke, GROUND_FIRE_TIER.profile);
+    }
+    emplacementSmokeAccum[i] = acc;
   }
 }
 
@@ -738,7 +840,8 @@ function onKill(killerId: number, victimId: number, cause: KillCause, localId: n
       hitMarkerKill = true;
     }
   } else {
-    pushKillFeed(`✕ ${victim} — ${cause === 'collision' ? 'kolizja' : 'rozbicie'}`);
+    const reason = cause === 'collision' ? 'kolizja' : cause === 'flak' ? 'ostrzał z ziemi' : 'rozbicie';
+    pushKillFeed(`✕ ${victim} — ${reason}`);
   }
   // efekt śmierci (parytet z SP, faza 15/16): zestrzelenie w locie / kolizja → ofiara staje się
   // spadającym wrakiem ('dying'), więc TERAZ tylko mały błysk; UDERZENIE w powierzchnię (plusk wody
@@ -1046,6 +1149,8 @@ function createNet(nick: string, token: string | null): NetClient {
     matchMode = msg.mode;
     rebuildFactions(msg.rows);
     scoreboard.update(msg.rows, msg.mode, localFaction);
+    // synchronizacja stanu stanowisk (v6) — dla późno dołączających i na wypadek zgubionego eventu
+    for (let i = 0; i < msg.aaDestroyed.length; i++) setEmplacementDestroyed(i, msg.aaDestroyed[i] ?? false);
   };
   c.onMatchEnded = (msg) => onMatchEnded(msg);
   c.onServerShutdown = () => {
@@ -1259,11 +1364,12 @@ function updateHud(): void {
   });
 }
 
-/** Wiersze dodatkowe HUD online: pokój, HP, ping, FPS.
- *  Licznik zestrzeleń celowo NIEpokazywany — widnieje już przy nicku gracza w liście
+/** Wiersze dodatkowe HUD online: HP, ping, FPS.
+ *  Kod pokoju celowo NIEpokazywany w HUD (życzenie usera) — widnieje w poczekalni.
+ *  Licznik zestrzeleń też NIEpokazywany — widnieje już przy nicku gracza w liście
  *  uczestników (lewy górny róg, `RosterOverlay`); redundancja usunięta na życzenie usera. */
 function hudExtraLines(): string[] {
-  const lines: string[] = ['', hudRow('pokój', roomView?.code ?? '—')];
+  const lines: string[] = [''];
   // klawiszologia żyje w ekranie „Jak grać" (lobby); status celowania pokazuje już wiersz „ster"
   lines.push(
     hudRow('HP', (localHealthFrac * 100).toFixed(0), '%'),
@@ -1717,6 +1823,7 @@ renderer.setAnimationLoop(() => {
     }
     updateCombatVisuals(frameDtS);
     updateWorldVisuals(frameDtS);
+    updateEmplacements(frameDtS); // stanowiska naziemne: głosy broni + dym zniszczonych
     updateHud();
     updateHudOverlays();
   }

@@ -225,3 +225,61 @@ export const LAGCOMP_HISTORY_TICKS = 20;
  * 250 ms pokrywa w pełni ping ≤ 150 ms przy buforze 100 ms (kryterium fazy „co widzę, to trafiam").
  */
 export const LAGCOMP_MAX_REWIND_MS = 250;
+
+// --- stanowiska ogniowe naziemne (AA) — cele naziemne na zboczach góry ---
+
+/** Liczba stanowisk ogniowych na wyspie (rozmieszczone na zboczach góry, poza plażą i zatoką). */
+export const EMPLACEMENT_COUNT = 3;
+
+/**
+ * Zasięg wykrycia/ognia stanowiska [m]: strzela do samolotów bliżej niż to (o ile widoczne,
+ * nieprzesłonięte górą). Twardy próg odległości środka stanowiska do środka samolotu.
+ * 1000 m mieści się w donośności .303 (pocisk żyje 3 s ≈ max ~1170 m; czas lotu na 1000 m ≈ 2,3 s).
+ */
+export const EMPLACEMENT_RANGE_M = 1000;
+
+/** Liczba luf stanowiska — 2× .303 (balistyka jak Spitfire; decyzja usera: ten sam kaem). */
+export const EMPLACEMENT_BARRELS = 2;
+
+/** Rozmiar taśmy [pociski] — po jej wystrzeleniu stanowisko musi przeładować (zmiana taśmy). */
+export const EMPLACEMENT_BELT_SIZE = 400;
+
+/** Czas zmiany taśmy / przeładowania [s] — w tym czasie stanowisko milczy (~30 s przerwy). */
+export const EMPLACEMENT_RELOAD_S = 30;
+
+/** Długość pojedynczej serii ognia [s] (z taśmy strzela seriami, nie ciągłym strumieniem). */
+export const EMPLACEMENT_BURST_ON_S = 0.8;
+/** Przerwa między seriami w obrębie tej samej taśmy [s]. */
+export const EMPLACEMENT_BURST_GAP_S = 0.7;
+
+/** Wysokość wylotu luf nad podstawą stanowiska (na gruncie) [m]. */
+export const EMPLACEMENT_MUZZLE_HEIGHT_M = 2.6;
+
+/** Promień sfery trafień stanowiska [m] — pocisk SAMOLOTU w tym promieniu niszczy je (jeden strzał). */
+export const EMPLACEMENT_HIT_RADIUS_M = 5;
+
+/** Punkty za zniszczenie stanowiska ogniowego (decyzja usera: 20 pkt). */
+export const EMPLACEMENT_POINTS = 20;
+
+/**
+ * Stała czasowa wygładzania (lag) namiaru stanowiska [s] — KLUCZOWY mechanizm dodawalności
+ * („umiarkowane", decyzja usera): działo wyprzedza cel lecący prosto, ale przy manewrze jego
+ * namiar opóźnia się i pociski mijają. Większa wartość = łatwiej uniknąć ostrzału manewrem.
+ */
+export const EMPLACEMENT_AIM_LAG_TAU_S = 0.45;
+
+/** Promień stożka rozrzutu pojedynczego pocisku stanowiska [mrad] — drobny, „niedoskonały" ogień. */
+export const EMPLACEMENT_DISPERSION_MRAD = 4.0;
+
+/** Amplituda losowego błędu namiaru na JEDNĄ serię [mrad] — stały dryf w obrębie serii (margines mijania). */
+export const EMPLACEMENT_AIM_BIAS_MRAD = 6.0;
+
+/** Liczba próbek wzdłuż odcinka przy teście widoczności (czy górę nie przesłania linii ognia). */
+export const EMPLACEMENT_LOS_SAMPLES = 24;
+
+/**
+ * Sentinel właściciela pocisku AA — celowo poza zakresem id samolotów (id ≤ 255). Dzięki temu
+ * pocisk AA trafia każdy samolot (warunek „nie trafiaj właściciela" nigdy nie zachodzi) i NIE
+ * niszczy innych stanowisk (osobny strażnik w resolveHits). Zdarzenia AA mają własny kanał (nie MUZZLE).
+ */
+export const EMPLACEMENT_BULLET_OWNER = 0xffff;

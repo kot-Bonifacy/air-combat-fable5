@@ -1,12 +1,14 @@
-import { ASSIST_POINTS, KILL_POINTS, ZONE_POINTS_PER_SECOND } from '../constants';
+import { ASSIST_POINTS, EMPLACEMENT_POINTS, KILL_POINTS, ZONE_POINTS_PER_SECOND } from '../constants';
 
 // Tabela wyników meczu (faza 7). CZYSTA logika (bez Three, bez DOM) — jak match.ts
 // i zone.ts: ranking per pilot + agregat per drużyna da się przetestować tablicą
 // wejść. Renderowanie nakładki żyje po stronie klienta (menu.ts).
 //
 // Model punktów:
-//   • pilot:   zestrzelenia · KILL_POINTS + asysty · ASSIST_POINTS + sekundy strefy FRAKCJI · ZONE_POINTS_PER_SECOND
-//   • drużyna: Σ zestrzeleń drużyny · KILL_POINTS + Σ asyst drużyny · ASSIST_POINTS + sekundy strefy frakcji · ZONE_POINTS_PER_SECOND
+//   • pilot:   zestrzelenia · KILL_POINTS + asysty · ASSIST_POINTS + zniszczone stanowiska · EMPLACEMENT_POINTS
+//              + sekundy strefy FRAKCJI · ZONE_POINTS_PER_SECOND
+//   • drużyna: Σ zestrzeleń drużyny · KILL_POINTS + Σ asyst drużyny · ASSIST_POINTS
+//              + Σ zniszczonych stanowisk drużyny · EMPLACEMENT_POINTS + sekundy strefy frakcji · ZONE_POINTS_PER_SECOND
 // Strefa jest własnością FRAKCJI (wspólna dla skrzydłowych). Świadoma decyzja:
 // w punktach pilota doliczamy ją KAŻDEMU członkowi drużyny (wspólny cel wpływa na
 // ranking pilotów), a w wyniku drużyny liczymy ją RAZ — więc suma punktów pilotów
@@ -23,6 +25,8 @@ export interface ScoreInput {
   kills: number;
   /** Asysty: trafienia WROGÓW, którzy zginęli później (bez dobitych przez siebie). */
   assists: number;
+  /** Zniszczone naziemne stanowiska ogniowe (po EMPLACEMENT_POINTS pkt każde). */
+  groundKills: number;
 }
 
 /** Wiersz pilota w tabeli (posortowany malejąco po punktach). */
@@ -33,6 +37,8 @@ export interface PilotScore {
   isPlayer: boolean;
   kills: number;
   assists: number;
+  /** Zniszczone naziemne stanowiska ogniowe. */
+  groundKills: number;
   /** Sekundy wyłącznej kontroli strefy frakcji pilota (wspólne dla drużyny). */
   zoneSeconds: number;
   points: number;
@@ -45,6 +51,8 @@ export interface TeamScore {
   faction: number;
   kills: number;
   assists: number;
+  /** Σ zniszczonych stanowisk ogniowych przez drużynę. */
+  groundKills: number;
   zoneSeconds: number;
   points: number;
   rank: number;
@@ -56,9 +64,17 @@ export interface Scoreboard {
   teams: TeamScore[];
 }
 
-/** Punkty = zestrzelenia · KILL_POINTS + asysty · ASSIST_POINTS + sekundy strefy · ZONE_POINTS_PER_SECOND. */
-export function scorePoints(kills: number, assists: number, zoneSeconds: number): number {
-  return kills * KILL_POINTS + assists * ASSIST_POINTS + zoneSeconds * ZONE_POINTS_PER_SECOND;
+/**
+ * Punkty = zestrzelenia · KILL_POINTS + asysty · ASSIST_POINTS + zniszczone stanowiska · EMPLACEMENT_POINTS
+ * + sekundy strefy · ZONE_POINTS_PER_SECOND. `groundKills` domyślnie 0 (zgodność wstecz wywołań).
+ */
+export function scorePoints(kills: number, assists: number, zoneSeconds: number, groundKills = 0): number {
+  return (
+    kills * KILL_POINTS +
+    assists * ASSIST_POINTS +
+    groundKills * EMPLACEMENT_POINTS +
+    zoneSeconds * ZONE_POINTS_PER_SECOND
+  );
 }
 
 /** Malejąco po punktach; remis → więcej zestrzeleń → asyst → strefy → gracz wyżej → niższy id. */
@@ -101,8 +117,9 @@ export function buildScoreboard(
       isPlayer: p.isPlayer,
       kills: p.kills,
       assists: p.assists,
+      groundKills: p.groundKills,
       zoneSeconds,
-      points: scorePoints(p.kills, p.assists, zoneSeconds),
+      points: scorePoints(p.kills, p.assists, zoneSeconds, p.groundKills),
       rank: 0,
     };
   });
@@ -118,6 +135,7 @@ export function buildScoreboard(
         faction: p.faction,
         kills: 0,
         assists: 0,
+        groundKills: 0,
         zoneSeconds: zoneSecondsByFaction.get(p.faction) ?? 0,
         points: 0,
         rank: 0,
@@ -127,9 +145,10 @@ export function buildScoreboard(
     }
     team.kills += p.kills;
     team.assists += p.assists;
+    team.groundKills += p.groundKills;
   }
   const teams = [...byFaction.values()];
-  for (const t of teams) t.points = scorePoints(t.kills, t.assists, t.zoneSeconds);
+  for (const t of teams) t.points = scorePoints(t.kills, t.assists, t.zoneSeconds, t.groundKills);
   teams.sort(compareTeams);
   teams.forEach((t, i) => (t.rank = i + 1));
 

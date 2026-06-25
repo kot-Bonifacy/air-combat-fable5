@@ -1,22 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { ASSIST_POINTS, KILL_POINTS, ZONE_POINTS_PER_SECOND } from '../constants';
+import { ASSIST_POINTS, EMPLACEMENT_POINTS, KILL_POINTS, ZONE_POINTS_PER_SECOND } from '../constants';
 import { buildScoreboard, scorePoints, type ScoreInput } from './scoreboard';
 
-const player = (kills: number, assists = 0): ScoreInput => ({
+const player = (kills: number, assists = 0, groundKills = 0): ScoreInput => ({
   id: 0,
   name: 'Ty',
   faction: 0,
   isPlayer: true,
   kills,
   assists,
+  groundKills,
 });
-const bot = (id: number, faction: number, kills: number, assists = 0): ScoreInput => ({
+const bot = (id: number, faction: number, kills: number, assists = 0, groundKills = 0): ScoreInput => ({
   id,
   name: `Bot ${id}`,
   faction,
   isPlayer: false,
   kills,
   assists,
+  groundKills,
 });
 
 describe('scorePoints', () => {
@@ -24,6 +26,21 @@ describe('scorePoints', () => {
     expect(scorePoints(2, 3, 60)).toBe(
       2 * KILL_POINTS + 3 * ASSIST_POINTS + 60 * ZONE_POINTS_PER_SECOND,
     );
+  });
+
+  it('dolicza EMPLACEMENT_POINTS za każde zniszczone stanowisko ogniowe', () => {
+    expect(scorePoints(0, 0, 0, 2)).toBe(2 * EMPLACEMENT_POINTS);
+    expect(scorePoints(1, 0, 0, 3)).toBe(KILL_POINTS + 3 * EMPLACEMENT_POINTS);
+  });
+});
+
+describe('buildScoreboard — stanowiska naziemne', () => {
+  it('dolicza groundKills do punktów pilota i agregatu drużyny', () => {
+    const inputs = [player(0, 0, 2), bot(1, 1, 0)];
+    const { pilots, teams } = buildScoreboard(inputs, new Map());
+    const me = pilots.find((p) => p.isPlayer);
+    expect(me).toMatchObject({ groundKills: 2, points: 2 * EMPLACEMENT_POINTS });
+    expect(teams.find((t) => t.isPlayerTeam)).toMatchObject({ groundKills: 2, points: 2 * EMPLACEMENT_POINTS });
   });
 });
 

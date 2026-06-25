@@ -1,4 +1,10 @@
-import type { MatchEndReason, MatchEndedMessage, MatchMode, StandingRow } from '@air-combat/shared';
+import {
+  scorePoints,
+  type MatchEndReason,
+  type MatchEndedMessage,
+  type MatchMode,
+  type StandingRow,
+} from '@air-combat/shared';
 
 // Nakładki pętli meczu (faza 13) jako vanilla DOM nad canvasem (jak lobby-ui — Preact
 // dopiero, gdy vanilla zaboli). Dwie nakładki:
@@ -47,11 +53,13 @@ function teamHeaderRow(faction: number, localFaction: number, rows: readonly Sta
   let kills = 0;
   let deaths = 0;
   let assists = 0;
+  let groundKills = 0;
   let zoneSeconds = 0;
   for (const r of rows) {
     kills += r.kills;
     deaths += r.deaths;
     assists += r.assists;
+    groundKills += r.groundKills;
     zoneSeconds = Math.max(zoneSeconds, r.zoneSeconds); // strefa wspólna dla drużyny → bierzemy raz
   }
   const killsCell = el('span', 'mui-cell mui-num');
@@ -62,8 +70,10 @@ function teamHeaderRow(faction: number, localFaction: number, rows: readonly Sta
   assistsCell.textContent = String(assists);
   const zoneCell = el('span', 'mui-cell mui-num');
   zoneCell.textContent = formatClock(zoneSeconds);
+  const pointsCell = el('span', 'mui-cell mui-num');
+  pointsCell.textContent = String(scorePoints(kills, assists, zoneSeconds, groundKills));
   const pingCell = el('span', 'mui-cell mui-num');
-  tr.append(rankCell, nameCell, killsCell, deathsCell, assistsCell, zoneCell, pingCell);
+  tr.append(rankCell, nameCell, killsCell, deathsCell, assistsCell, zoneCell, pointsCell, pingCell);
   return tr;
 }
 
@@ -114,10 +124,13 @@ function standingRow(row: StandingRow, rank: number, localId: number | null): HT
   assistsCell.textContent = String(row.assists);
   const zoneCell = el('span', 'mui-cell mui-num');
   zoneCell.textContent = formatClock(row.zoneSeconds); // czas wyłącznej kontroli strefy (faza 17)
+  const pointsCell = el('span', 'mui-cell mui-num');
+  // punkty = zestrzelenia·100 + asysty·50 + zniszczone stanowiska·20 + sekundy strefy·1 (scorePoints)
+  pointsCell.textContent = String(scorePoints(row.kills, row.assists, row.zoneSeconds, row.groundKills));
   const pingCell = el('span', 'mui-cell mui-num');
   pingCell.textContent = row.isBot ? 'BOT' : `${String(row.pingMs)}`;
 
-  tr.append(rankCell, nameCell, killsCell, deathsCell, assistsCell, zoneCell, pingCell);
+  tr.append(rankCell, nameCell, killsCell, deathsCell, assistsCell, zoneCell, pointsCell, pingCell);
   return tr;
 }
 
@@ -131,6 +144,7 @@ function headerRow(): HTMLDivElement {
     ['Ś', 'mui-num'],
     ['A', 'mui-num'],
     ['Strefa', 'mui-num'],
+    ['Pkt', 'mui-num'],
     ['ping', 'mui-num'],
   ];
   for (const [text, cls] of cells) {
@@ -325,7 +339,7 @@ const MATCH_UI_CSS = `
 }
 .mui-title { font: 700 18px monospace; letter-spacing: 1px; color: #ffd24a; text-align: center; }
 .mui-table { display: flex; flex-direction: column; gap: 2px; }
-.mui-row { display: grid; grid-template-columns: 32px 1fr 44px 44px 44px 56px 56px; align-items: center; padding: 4px 8px; border-radius: 4px; }
+.mui-row { display: grid; grid-template-columns: 32px 1fr 44px 44px 44px 56px 52px 56px; align-items: center; padding: 4px 8px; border-radius: 4px; }
 .mui-head { color: #9fc4e6; border-bottom: 1px solid #2a3f54; border-radius: 0; font-size: 13px; }
 .mui-row-self { background: rgba(200,88,31,0.28); }
 .mui-team { background: rgba(40,60,80,0.4); font-weight: 700; border-top: 1px solid #2a3f54; margin-top: 4px; }

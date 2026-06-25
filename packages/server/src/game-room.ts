@@ -23,6 +23,13 @@ import {
   createRng,
   createSimPlane,
   createTerrain,
+  createEmplacements,
+  applyDispersion,
+  AA_BALLISTICS,
+  EMPLACEMENT_BULLET_OWNER,
+  EMPLACEMENT_DISPERSION_MRAD,
+  EMPLACEMENT_HIT_RADIUS_M,
+  MRAD_TO_RAD,
   encodeEvents,
   encodeSnapshot,
   eventsByteLength,
@@ -49,6 +56,9 @@ import {
   validatePlaneState,
   wrapToArena,
   ZoneControl,
+  type AaFire,
+  type AaTarget,
+  type Emplacement,
   type ChatMessage,
   type ControlMessage,
   type DifficultyLevel,
@@ -122,6 +132,9 @@ const CHAT_HISTORY_MAX = 30;
 const scratchHitCenter = new Vector3();
 /** Bufor zawinięcia torusa dla kroku bota (caller `wrapToArena` go nie czyta). */
 const scratchBotWrap = new Vector3();
+/** Bufory kierunku/prędkości pocisku AA (zero alokacji per strzał stanowiska). */
+const scratchAaDir = new Vector3();
+const scratchAaVel = new Vector3();
 
 /**
  * Buduje pierścień slotów startowych: pozycja na obrzeżach areny, nos poziomo ku środkowi
@@ -188,6 +201,8 @@ interface ServerPlayer {
   kills: number;
   assists: number;
   deaths: number;
+  /** Zniszczone naziemne stanowiska ogniowe (po EMPLACEMENT_POINTS pkt; v6). */
+  groundKills: number;
   /** Czas pozostałej ochrony po (re)spawnie [s] — nietykalny i nie zadaje sam (faza 13). */
   protectionTimerS: number;
   /** Szacowany ping [ms] (EMA z echa ticku) — diagnostyka w standings; bot = 0. */
@@ -295,6 +310,18 @@ export class GameRoom {
   /** Bufor wyjściowy ramki EVENT (alokowany leniwie pod największą paczkę). */
   private eventScratch = new Uint8Array(0);
 
+  // --- naziemne stanowiska ogniowe (AA, v6): autorytatywne cele naziemne na zboczach góry ---
+  /** Stanowiska — pozycje deterministyczne z seeda terenu (klient liczy je sam, bez snapshotu). */
+  private readonly emplacements: Emplacement[];
+  /** Strumień RNG rozrzutu pocisków AA (osobny od strumieni graczy). */
+  private readonly aaRng = createRng(0xa1a1 >>> 0);
+  /** Scratch celów dla stanowisk (żywe, nietykalne samoloty) — zero alokacji wpisów per tick. */
+  private readonly aaTargetScratch: AaTarget[] = Array.from({ length: MAX_PLAYERS_PER_ROOM }, () => ({
+    id: 0,
+    position: new Vector3(),
+    velocity: new Vector3(),
+  }));
+
   // --- boty (faza 12): kontrolery AI dla encji bez połączenia ---
   private readonly botManager = new BotManager();
   /** Scratch listy celów bota (żywe stany innych uczestników) — zero alokacji per decyzja. */
@@ -310,6 +337,7 @@ export class GameRoom {
     private readonly onInfo?: (msg: string) => void,
   ) {
     this.terrain = createTerrain(seed);
+    this.emplacements = createEmplacements(this.terrain);
   }
 
   get playerCount(): number {
@@ -437,6 +465,7 @@ export class GameRoom {
       kills: 0,
       assists: 0,
       deaths: 0,
+      groundKills: 0,
       protectionTimerS: 0,
       pingMs: 0,
       damagedBy: new Set<number>(),
@@ -700,10 +729,13 @@ export class GameRoom {
     // przy przebudowie botów w poczekalni) i dwie encje mogły dostać ten sam slot → spawn w tym
     // samym punkcie → zderzenie po wygaśnięciu ochrony. Przydzielamy odrębne sloty na każdy start.
     this.assignStartSlots();
+    // odbudowane stanowiska ogniowe na nowy mecz (pełne taśmy, bez celu)
+    for (const e of this.emplacements) e.reset();
     for (const player of this.players.values()) {
       player.kills = 0;
       player.assists = 0;
       player.deaths = 0;
+      player.groundKills = 0;
       player.livesLeft = MATCH_LIVES; // pełna pula żyć na nowy mecz (drużynowy: 1/samolot jak SP)
       player.withdrawn = false; // wycofani z poprzedniego meczu wracają do gry przy starcie kolejnego
       this.spawn(player);
@@ -923,6 +955,9 @@ export class GameRoom {
     // 3) ogień autorytatywny (kadencja + amunicja serwerowo) → pociski na puli + event MUZZLE
     for (const player of this.players.values()) this.fireWeapon(player, dtS);
 
+    // 3b) ogień naziemnych stanowisk (AA, v6): pociski do tej samej puli + event AA_FIRE
+    this.stepEmplacements(dtS);
+
     // 4) ruch pocisków + 5) hit detection z cofnięciem celów (lag compensation)
     this.pool.update(dtS); // balistyka per pocisk (dragK/lifetime z grupy broni przy strzale)
     this.resolveHits();
@@ -1106,6 +1141,55 @@ export class GameRoom {
   }
 
   /**
+   * Krok naziemnych stanowisk ogniowych (AA, v6). Zbiera żywe, nietykalne samoloty jako cele
+   * (stanowisko jest neutralne — strzela do każdego: gracza i bota), po czym każde NIEzniszczone
+   * stanowisko decyduje o ogniu (zasięg + widoczność + wyprzedzenie z błędem + seria/taśma). Z wyniku
+   * spawnujemy pociski w puli (te same, co broń pokładowa) i emitujemy event AA_FIRE (tracery klienta).
+   */
+  private stepEmplacements(dtS: number): void {
+    let n = 0;
+    for (const p of this.players.values()) {
+      if (p.sim.state.life !== 'alive' || p.protectionTimerS > 0) continue;
+      const slot = this.aaTargetScratch[n];
+      if (!slot) break; // bufor = MAX_PLAYERS_PER_ROOM; nigdy nie przekroczone
+      slot.id = p.id;
+      slot.position.copy(p.sim.state.position);
+      slot.velocity.copy(p.sim.state.velocity);
+      n++;
+    }
+    const targets = this.aaTargetScratch.slice(0, n);
+    for (const e of this.emplacements) {
+      if (e.destroyed) continue;
+      const fire = e.update(dtS, targets, this.terrain);
+      if (fire) this.spawnAaBullets(e, fire);
+    }
+  }
+
+  /** Spawnuje pociski jednej salwy stanowiska (rozrzut per pocisk) i kolejkuje event AA_FIRE. */
+  private spawnAaBullets(e: Emplacement, fire: AaFire): void {
+    const dispersionRad = EMPLACEMENT_DISPERSION_MRAD * MRAD_TO_RAD;
+    for (let i = 0; i < fire.shots; i++) {
+      scratchAaDir.copy(fire.dir);
+      applyDispersion(scratchAaDir, dispersionRad, this.aaRng);
+      scratchAaVel.copy(scratchAaDir).multiplyScalar(AA_BALLISTICS.muzzleVelocityMs);
+      // ownerId = sentinel (nie samolot): pocisk AA trafia każdy samolot i nie niszczy stanowisk.
+      // rewindTicks=0 — „strzelcem" jest serwer, cele rażone w teraźniejszej pozycji (bez lag-comp).
+      this.pool.spawn(
+        e.muzzlePosition,
+        scratchAaVel,
+        AA_BALLISTICS.damagePerHit,
+        EMPLACEMENT_BULLET_OWNER,
+        i % 3 === 0,
+        AA_BALLISTICS.bulletDragK,
+        AA_BALLISTICS.bulletLifetimeS,
+        0,
+      );
+    }
+    const seed = ((((e.index + 1) * 0x85ebca6b) >>> 0) ^ this.tick) >>> 0;
+    this.queueEvent({ kind: 'aaFire', index: e.index, seed, shots: fire.shots, dir: fire.dir.clone() });
+  }
+
+  /**
    * Hit detection: każdy aktywny pocisk vs każdy żywy cel (poza właścicielem). Cel jest
    * cofany do ticku, który strzelec widział (b.rewindTicks); brak danych w oknie → pozycja
    * bieżąca (fallback). HP, kredyt i eventy — wyłącznie tu (niezmiennik nr 5). Friendly fire
@@ -1114,6 +1198,8 @@ export class GameRoom {
   private resolveHits(): void {
     for (const b of this.pool.bullets) {
       if (!b.active) continue;
+      const fromAa = b.ownerId === EMPLACEMENT_BULLET_OWNER;
+      let consumed = false;
       for (const target of this.players.values()) {
         const ts = target.sim.state;
         // cel pod ochroną respawnu jest nietykalny (faza 13) — pocisk go ignoruje
@@ -1125,15 +1211,33 @@ export class GameRoom {
         // promień sfery trafień per CEL (faza 19b: Bf 109 5,5 m < Spitfire 6 m)
         if (!segmentSphereHit(b.prevPosition, b.position, center, target.plane.hitRadiusM)) continue;
         b.active = false;
+        consumed = true;
         target.damagedBy.add(b.ownerId);
         if (applyDamage(target.health, b.damage) === 'destroyed') {
-          this.onAirKill(target, b.ownerId);
+          // pocisk AA → zestrzelenie z ziemi (flak, bez sprawcy-gracza); inaczej zwykłe zestrzelenie
+          if (fromAa) this.onAaKill(target);
+          else this.onAirKill(target, b.ownerId);
         } else {
-          this.queueEvent({ kind: 'hit', shooterId: b.ownerId, victimId: target.id });
+          // zwykłe trafienie niesie realnego strzelca (hit marker/ding). Trafienie z ziemi (AA) NIE
+          // ma sprawcy-gracza → bez eventu hit (feedback ofiary flaku dorobimy w części 2), ale bot
+          // i tak reaguje uskokiem.
+          if (!fromAa) this.queueEvent({ kind: 'hit', shooterId: b.ownerId, victimId: target.id });
           // bot trafiony, ale żywy → reakcja AI (zryw obronny na „trudnym"; niższe poziomy ignorują)
           if (target.isBot) this.botManager.notifyHit(target.id);
         }
         break; // jeden pocisk = najwyżej jedno trafienie
+      }
+      if (consumed || fromAa) continue; // pocisk AA NIE niszczy innych stanowisk
+      // pocisk SAMOLOTU może zniszczyć naziemne stanowisko ogniowe (jeden strzał wystarcza)
+      for (const e of this.emplacements) {
+        if (e.destroyed) continue;
+        if (!segmentSphereHit(b.prevPosition, b.position, e.muzzlePosition, EMPLACEMENT_HIT_RADIUS_M)) continue;
+        b.active = false;
+        e.destroyed = true;
+        const shooter = this.players.get(b.ownerId);
+        if (shooter) shooter.groundKills++; // +EMPLACEMENT_POINTS w tabeli (scorePoints)
+        this.queueEvent({ kind: 'aaDestroyed', index: e.index, killerId: b.ownerId & 0xff });
+        break;
       }
     }
   }
@@ -1211,6 +1315,16 @@ export class GameRoom {
   private onCollisionDeath(victim: ServerPlayer): void {
     this.enterWreck(victim);
     this.queueEvent({ kind: 'kill', killerId: NO_KILLER, victimId: victim.id, cause: 'collision' });
+    this.creditAssists(victim, null);
+  }
+
+  /**
+   * Zestrzelenie przez naziemne stanowisko ogniowe (flak, v6) → spadający wrak jak przy zestrzeleniu
+   * w powietrzu (parytet), ale BEZ sprawcy-gracza (kredytu nie ma). event KILL cause 'flak'.
+   */
+  private onAaKill(victim: ServerPlayer): void {
+    this.enterWreck(victim);
+    this.queueEvent({ kind: 'kill', killerId: NO_KILLER, victimId: victim.id, cause: 'flak' });
     this.creditAssists(victim, null);
   }
 
@@ -1478,6 +1592,7 @@ export class GameRoom {
       kills: p.kills,
       deaths: p.deaths,
       assists: p.assists,
+      groundKills: p.groundKills, // zniszczone stanowiska AA (po EMPLACEMENT_POINTS pkt; v6)
       pingMs: p.pingMs,
       isBot: p.isBot,
       // sekundy wyłącznej kontroli strefy przez frakcję gracza (drużynowy: wspólne dla drużyny); faza 17
@@ -1500,6 +1615,8 @@ export class GameRoom {
       rows: this.buildStandings(),
       // bieżąca okupacja strefy do statusu paska ZoneBar (faza 17); fronty z zoneSeconds wierszy
       zone: { controlling: this.zoneControlling, occupied: this.zoneOccupied },
+      // stan stanowisk AA (v6) — dla późno dołączających: które są już zniszczone (czarne, dymiące)
+      aaDestroyed: this.emplacements.map((e) => e.destroyed),
     });
   }
 

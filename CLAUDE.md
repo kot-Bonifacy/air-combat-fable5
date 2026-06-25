@@ -21,7 +21,7 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 | 10    | Lobby i pokoje                                                        | ✅ rejestr pokoi + reconnect (token, okno 60 s) |
 | 11    | Walka sieciowa: hit detection + lag‑comp                              | ✅ kod; ⏳ user: ping ~150 ms 2‑os. + CPU 8 graczy na VPS |
 | 12    | Boty na serwerze                                                      | ✅ bot = `ServerPlayer`, nieodróżnialny protokołowo |
-| 13    | Pętla meczu FFA + deploy MP (kamień milowy)                           | ✅ kod; ⏳ user: deploy/smoke wss:// + `docker stats`, tag `mp-1` |
+| 13    | Pętla meczu FFA + deploy MP (kamień milowy)                           | ✅ kod + **wdrożone** `https://dogfight.tatanga.eu` (8087, Websockets ON, tag `mp-1`, live 2026-06-25); ⏳ user: smoke wss:// + `docker stats` |
 | 14–18 | **Parytet MP↔SP**: wizualia → wrak → obserwator → strefa → drużyny    | ✅ → `docs/parytet-mp-sp.md` |
 | P1–P5 | **Domknięcie parytetu**: FFA eliminacja, CC-BY, onboarding, buffet, sprzątanie | ✅ zacommitowane (404 testy zielone) |
 | 19a   | **Drugi samolot (shared)**: Bf 109 E-3, uzbrojenie w grupach, balistyka per-pocisk, złote testy `describe.each` | ✅ 424 testy zielone (`bf109-e.json`, asymetria turn↔energy) |
@@ -111,7 +111,9 @@ na ekranie ROZBITY bez nakładki); `DownedOverlay.show(...,flyableWreck)` chowa 
 ma czym sterować. Akcja „ZAKOŃCZ MISJĘ" w `DownedOverlay` używa tej samej logiki kontekstowej. Te same akcje dostępne
 w menu Esc i w nakładce po zestrzeleniu. ⏳ user: smoke (Esc→koniec z botami; Esc→poczekalnia gdy 2 ludzi; obserwator po rozbiciu o teren).
 
-⏳ **Otwarte po stronie użytkownika:** publiczny deploy MP (po P1+P2) + smoke online (FFA bez respawnu
+**Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
+
+⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu
 → overlay obserwatora; drużynowy; v5 z wyborem samolotu + licznik 20 mm + ekran ładowania + zryw botów) +
 playtest poprawek 2026-06-21 (zryw botów „trudnych", nazwiska PL/DE) + playtest balansu 1v1 Spitfire↔Bf 109 +
 weryfikacja wzrokowa modelu Bf 109 (orientacja/śmigło/podwozie — fixEuler best-guess) + zaległe pomiary VPS —

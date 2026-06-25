@@ -30,6 +30,7 @@ export * from './world/team';
 export * from './world/spawn';
 export * from './world/zone';
 export * from './world/scoreboard';
+export * from './world/emplacement';
 export * from './combat/ballistics';
 export * from './combat/hit';
 export * from './combat/collision';

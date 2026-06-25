@@ -33,8 +33,13 @@ import { planeTypeFromCode, planeTypeToCode, type PlaneType } from '../planes/pl
  * = błąd handshake).
  * v5: snapshot encji dokłada bajt amunicji GRUPY WTÓRNEJ (działko 20 mm MG FF w Bf 109) — HUD
  * pokazuje osobny licznik dla działka. Spitfire (1 grupa) koduje 0 (klient pomija licznik).
+ * v6: naziemne stanowiska ogniowe (AA) — nowe binarne zdarzenia EV_AA_FIRE (klient odtwarza
+ * tracery ognia z ziemi, by dało się unikać wzrokowo) i EV_AA_DESTROYED; nowy rodzaj śmierci
+ * KILL `'flak'` (zestrzelenie przez stanowisko); StandingRow dokłada `groundKills`, StandingsMessage
+ * `aaDestroyed` (stan stanowisk dla późno dołączających). Pozycje stanowisk są deterministyczne z
+ * seeda terenu (klient liczy je sam) — nie ma ich w snapshocie.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 /** Tag pierwszego bajtu ramki binarnej: wejście gracza (klient → serwer). */
 export const MSG_INPUT = 1;
@@ -397,10 +402,14 @@ export function decodeSnapshot(view: DataView): Snapshot {
 export const EV_MUZZLE = 1;
 export const EV_HIT = 2;
 export const EV_KILL = 3;
+/** Salwa naziemnego stanowiska ogniowego (v6) — klient odtwarza tracery z ziemi. */
+export const EV_AA_FIRE = 4;
+/** Zniszczenie naziemnego stanowiska ogniowego (v6) — klient czerni je i dymi. */
+export const EV_AA_DESTROYED = 5;
 
-/** Rodzaj śmierci w zdarzeniu KILL. */
-export type KillCause = 'air' | 'ground' | 'collision';
-const KILL_CAUSES: readonly KillCause[] = ['air', 'ground', 'collision'];
+/** Rodzaj śmierci w zdarzeniu KILL (`'flak'` = zestrzelenie przez naziemne stanowisko, v6). */
+export type KillCause = 'air' | 'ground' | 'collision' | 'flak';
+const KILL_CAUSES: readonly KillCause[] = ['air', 'ground', 'collision', 'flak'];
 
 export interface MuzzleEvent {
   kind: 'muzzle';
@@ -420,15 +429,40 @@ export interface HitEvent {
 
 export interface KillEvent {
   kind: 'kill';
-  /** Strzelec (znaczący tylko dla cause='air'; dla ziemi/kolizji bez sprawcy). */
+  /** Strzelec (znaczący tylko dla cause='air'; dla ziemi/kolizji/flaku bez sprawcy). */
   killerId: number;
   victimId: number;
   cause: KillCause;
 }
 
-export type GameEvent = MuzzleEvent | HitEvent | KillEvent;
+/**
+ * Salwa naziemnego stanowiska ogniowego (v6). Pozycja stanowiska jest stała (klient zna ją z seeda
+ * terenu po `index`), więc niesiemy tylko kierunek bazowy salwy + liczbę pocisków + seed rozrzutu —
+ * klient odtwarza kosmetyczne tracery od wylotu danego stanowiska (jak MUZZLE dla samolotów).
+ */
+export interface AaFireEvent {
+  kind: 'aaFire';
+  /** Indeks stanowiska (0..EMPLACEMENT_COUNT−1). */
+  index: number;
+  /** Seed rozrzutu wizualnego (deterministyczny strumień tracerów u klienta). */
+  seed: number;
+  /** Liczba pocisków w tej salwie. */
+  shots: number;
+  /** Jednostkowy kierunek bazowy salwy (klient dokłada własny rozrzut). */
+  dir: Vector3;
+}
 
-// rozmiary z bajtem podtypu: muzzle 7, hit 3, kill 4
+/** Zniszczenie stanowiska ogniowego (v6) — klient czerni mesh i włącza dym; `killerId` do feedu. */
+export interface AaDestroyedEvent {
+  kind: 'aaDestroyed';
+  index: number;
+  killerId: number;
+}
+
+export type GameEvent = MuzzleEvent | HitEvent | KillEvent | AaFireEvent | AaDestroyedEvent;
+
+// rozmiary z bajtem podtypu: muzzle 7, hit 3, kill 4, aaFire 13 (u8 idx + u8 shots + u32 seed +
+// i16×3 dir), aaDestroyed 3
 function eventByteLength(ev: GameEvent): number {
   switch (ev.kind) {
     case 'muzzle':
@@ -437,6 +471,10 @@ function eventByteLength(ev: GameEvent): number {
       return 3;
     case 'kill':
       return 4;
+    case 'aaFire':
+      return 13;
+    case 'aaDestroyed':
+      return 3;
   }
 }
 
@@ -483,6 +521,22 @@ export function encodeEvents(view: DataView, events: readonly GameEvent[]): numb
         view.setUint8(o + 3, KILL_CAUSES.indexOf(ev.cause));
         o += 4;
         break;
+      case 'aaFire':
+        view.setUint8(o, EV_AA_FIRE);
+        view.setUint8(o + 1, ev.index & 0xff);
+        view.setUint8(o + 2, clamp(ev.shots, 0, 255));
+        view.setUint32(o + 3, ev.seed >>> 0, true);
+        view.setInt16(o + 7, quantizeUnit(ev.dir.x), true);
+        view.setInt16(o + 9, quantizeUnit(ev.dir.y), true);
+        view.setInt16(o + 11, quantizeUnit(ev.dir.z), true);
+        o += 13;
+        break;
+      case 'aaDestroyed':
+        view.setUint8(o, EV_AA_DESTROYED);
+        view.setUint8(o + 1, ev.index & 0xff);
+        view.setUint8(o + 2, ev.killerId & 0xff);
+        o += 3;
+        break;
     }
   }
   return o;
@@ -522,6 +576,28 @@ export function decodeEvents(view: DataView): GameEvent[] {
         o += 4;
         break;
       }
+      case EV_AA_FIRE: {
+        if (o + 13 > view.byteLength) throw new NetError('EVENT: AA_FIRE obcięty');
+        const dir = new Vector3(
+          dequantizeUnit(view.getInt16(o + 7, true)),
+          dequantizeUnit(view.getInt16(o + 9, true)),
+          dequantizeUnit(view.getInt16(o + 11, true)),
+        ).normalize();
+        events.push({
+          kind: 'aaFire',
+          index: view.getUint8(o + 1),
+          shots: view.getUint8(o + 2),
+          seed: view.getUint32(o + 3, true),
+          dir,
+        });
+        o += 13;
+        break;
+      }
+      case EV_AA_DESTROYED:
+        if (o + 3 > view.byteLength) throw new NetError('EVENT: AA_DESTROYED obcięty');
+        events.push({ kind: 'aaDestroyed', index: view.getUint8(o + 1), killerId: view.getUint8(o + 2) });
+        o += 3;
+        break;
       default:
         throw new NetError(`EVENT: nieznany podtyp ${String(evType)}`);
     }
@@ -796,6 +872,8 @@ export interface StandingRow {
   kills: number;
   deaths: number;
   assists: number;
+  /** Zniszczone naziemne stanowiska ogniowe (po EMPLACEMENT_POINTS pkt; v6). */
+  groundKills: number;
   /** Szacowany ping [ms] (serwer liczy z echa ticku, bez synchronizacji zegarów); bot = 0. */
   pingMs: number;
   isBot: boolean;
@@ -825,6 +903,9 @@ export interface StandingsMessage {
   rows: StandingRow[];
   /** Bieżąca okupacja strefy kontroli (faza 17) — status paska ZoneBar. Frakcja = drużyna w team. */
   zone: ZoneStatus;
+  /** Stan naziemnych stanowisk ogniowych (v6): true = zniszczone. Indeks = EMPLACEMENT index. Dla
+   *  późno dołączających, by od razu pokazać już zniszczone stanowiska (czarne, dymiące). */
+  aaDestroyed: boolean[];
 }
 
 /** Serwer → klient: koniec meczu — zwycięzca + finalna tabela (ekran wyników, rewanż). */

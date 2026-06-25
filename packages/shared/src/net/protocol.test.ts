@@ -276,6 +276,33 @@ describe('protokół EVENT round-trip', () => {
   });
 });
 
+describe('protokół EVENT — stanowiska naziemne (AA, v6)', () => {
+  it('round-trip AA_FIRE: indeks/seed/shots zachowane, kierunek w granicach kwantyzacji', () => {
+    const dir = new Vector3(0.2, 0.8, -0.5).normalize();
+    const ev: GameEvent = { kind: 'aaFire', index: 2, seed: 0xabad1dea, shots: 4, dir: dir.clone() };
+    const buf = new Uint8Array(eventsByteLength([ev]));
+    encodeEvents(new DataView(buf.buffer), [ev]);
+    const [out] = decodeEvents(new DataView(buf.buffer));
+    expect(out?.kind).toBe('aaFire');
+    if (out?.kind === 'aaFire') {
+      expect(out.index).toBe(2);
+      expect(out.seed).toBe(0xabad1dea);
+      expect(out.shots).toBe(4);
+      expect(out.dir.angleTo(dir)).toBeLessThan(1e-3);
+    }
+  });
+
+  it('round-trip AA_DESTROYED i KILL cause flak (zestrzelenie z ziemi)', () => {
+    const evs: GameEvent[] = [
+      { kind: 'aaDestroyed', index: 1, killerId: 4 },
+      { kind: 'kill', killerId: 0, victimId: 6, cause: 'flak' },
+    ];
+    const buf = new Uint8Array(eventsByteLength(evs));
+    encodeEvents(new DataView(buf.buffer), evs);
+    expect(decodeEvents(new DataView(buf.buffer))).toEqual(evs);
+  });
+});
+
 describe('kody fazy życia', () => {
   it('round-trip wszystkich faz', () => {
     for (const phase of ['alive', 'dying', 'dead', 'respawning'] as const) {
