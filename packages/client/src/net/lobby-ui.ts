@@ -4,6 +4,7 @@ import {
   MAX_NICK_LENGTH,
   MAX_PLAYERS_PER_ROOM,
   PLANE_TYPES,
+  TEAM_COUNT,
   ZONE_CAPTURE_SECONDS,
   planeLabelOf,
   sanitizeNick,
@@ -31,6 +32,17 @@ const MODE_OPTIONS: readonly { value: MatchMode; label: string }[] = [
   { value: 'ffa', label: 'FFA (każdy na każdego)' },
   { value: 'team', label: 'Drużynowy (2 drużyny)' },
 ];
+
+/** Nazwy drużyn w poczekalni (rozdzielenie drużyna↔samolot 2026-06-25: drużyny nie są już
+ *  narodowościami — dowolny samolot w dowolnej drużynie). Indeks = frakcja (0..TEAM_COUNT−1). */
+const TEAM_LABELS: readonly string[] = ['Drużyna A', 'Drużyna B'];
+/** Klasa CSS koloru drużyny per frakcja (stały kolor w poczekalni; w locie wróg/sojusznik jest
+ *  względny do gracza, więc tu używamy własnej, bezwzględnej palety). */
+const TEAM_COLOR_CLASS: readonly string[] = ['lobby-team-a', 'lobby-team-b'];
+
+function teamLabel(faction: number): string {
+  return TEAM_LABELS[faction] ?? `Drużyna ${String(faction + 1)}`;
+}
 
 // Sterowanie w wersji ONLINE (onboarding, parytet z ekranem „JAK GRAĆ" w menu.ts SP).
 // Źródło prawdy = input.ts + obsługa klawiszy w online-main.ts. Różnice względem SP: BEZ
@@ -62,9 +74,12 @@ export interface LobbyCallbacks {
   onJoinRoom(code: string): void;
   onStartMatch(): void;
   onLeaveRoom(): void;
-  /** Wybór samolotu w poczekalni (faza 19b). FFA: płatowiec; drużynowy: wybór samolotu = wybór
-   *  strony (Spitfire→Alianci, Bf 109→Oś — klimat zachowany). */
+  /** Wybór samolotu w poczekalni (faza 19b). W obu trybach wprost wybór płatowca (od 2026-06-25
+   *  drużyna i samolot są rozdzielone — dowolny samolot w dowolnej drużynie). */
   onSelectPlane(plane: PlaneType): void;
+  /** Wybór drużyny w poczekalni (tryb drużynowy; rozdzielenie drużyna↔samolot 2026-06-25). Pozwala
+   *  dwóm graczom celowo grać po tej samej stronie. */
+  onSelectTeam(team: number): void;
   /** Host zmienia ustawienia pokoju w poczekalni (tryb / liczba botów / poziom trudności). */
   onUpdateRoom(opts: { mode: MatchMode; bots: number; difficulty: DifficultyLevel }): void;
   /** Wyślij wiadomość na czat pokoju (poczekalnia). */
@@ -102,9 +117,14 @@ export class LobbyUI {
   private readonly errorEl: HTMLDivElement;
   private readonly waitingCodeEl: HTMLDivElement;
   private readonly waitingPlayersEl: HTMLDivElement;
+  // kolumny drużyn (tryb drużynowy): gracze pogrupowani po frakcji + kolory drużyn (2026-06-25)
+  private readonly teamsEl: HTMLDivElement;
+  // wybór drużyny (tryb drużynowy): każdy gracz wybiera swoją stronę niezależnie od samolotu
+  private readonly teamRow: HTMLDivElement;
+  private readonly teamSelect: HTMLSelectElement;
   private readonly startBtn: HTMLButtonElement;
   private readonly waitingHintEl: HTMLDivElement;
-  // wybór samolotu w poczekalni (faza 19b): select w obu trybach — w drużynowym = wybór strony
+  // wybór samolotu w poczekalni (faza 19b): select w obu trybach — niezależny od drużyny (2026-06-25)
   private readonly planeRow: HTMLDivElement;
   private readonly planeLabel: HTMLLabelElement;
   private readonly planeSelect: HTMLSelectElement;
@@ -187,7 +207,22 @@ export class LobbyUI {
     codeCaption.textContent = 'Kod pokoju (podaj znajomym)';
     this.waitingCodeEl = el('div', 'lobby-code');
     this.waitingPlayersEl = el('div', 'lobby-players');
-    // wybór samolotu (faza 19b): w FFA wybór płatowca; w drużynowym wybór samolotu = wybór strony
+    // kolumny drużyn (tryb drużynowy): gracze pogrupowani po frakcji, dwie kolumny obok siebie
+    this.teamsEl = el('div', 'lobby-teams');
+    // selektor drużyny (tryb drużynowy): każdy wybiera swoją stronę — dwóch ludzi może grać razem
+    this.teamRow = el('div', 'lobby-row lobby-bot-row');
+    const teamLabelEl = el('label', 'lobby-label');
+    teamLabelEl.textContent = 'Twoja drużyna';
+    this.teamSelect = selectEl(
+      'lobby-select lobby-select-mode',
+      Array.from({ length: TEAM_COUNT }, (_, i) => ({ value: String(i), label: teamLabel(i) })),
+      '0',
+    );
+    this.teamSelect.addEventListener('change', () => {
+      this.cb.onSelectTeam(Number(this.teamSelect.value) || 0);
+    });
+    this.teamRow.append(teamLabelEl, this.teamSelect);
+    // wybór samolotu (faza 19b): w obu trybach wybór płatowca, niezależny od drużyny (2026-06-25)
     this.planeRow = el('div', 'lobby-row lobby-bot-row');
     this.planeLabel = el('label', 'lobby-label');
     this.planeLabel.textContent = 'Twój samolot';
@@ -252,6 +287,8 @@ export class LobbyUI {
       codeCaption,
       this.waitingCodeEl,
       this.waitingPlayersEl,
+      this.teamsEl,
+      this.teamRow,
       this.planeRow,
       settingsCaption,
       this.settingsRow,
@@ -357,29 +394,52 @@ export class LobbyUI {
     this.updateWaiting(view);
   }
 
+  /** Buduje wiersz gracza (tag TY/HOST/BOT + nick + typ samolotu). textContent → XSS-safe. */
+  private buildPlayerRow(p: RoomPlayer, view: WaitingView): HTMLDivElement {
+    const row = el('div', 'lobby-player-row');
+    const tag = el('span', 'lobby-player-tag');
+    tag.textContent = p.isBot ? 'BOT' : p.id === view.hostId ? 'HOST' : p.id === view.youId ? 'TY' : '';
+    const name = el('span', 'lobby-player-name');
+    name.textContent = p.nick; // textContent → bez interpretacji HTML (XSS)
+    // typ samolotu przy nicku (faza 19b: widać, kto czym leci — niezależnie od drużyny)
+    const plane = el('span', 'lobby-player-plane');
+    plane.textContent = planeLabelOf(p.planeType);
+    row.append(tag, name, plane);
+    return row;
+  }
+
   updateWaiting(view: WaitingView): void {
     this.localId = view.youId;
     this.waitingCodeEl.textContent = view.code;
-    this.waitingPlayersEl.replaceChildren();
-    for (const p of view.players) {
-      const row = el('div', 'lobby-player-row');
-      const tag = el('span', 'lobby-player-tag');
-      tag.textContent = p.isBot ? 'BOT' : p.id === view.hostId ? 'HOST' : p.id === view.youId ? 'TY' : '';
-      const name = el('span', 'lobby-player-name');
-      name.textContent = p.nick; // textContent → bez interpretacji HTML (XSS)
-      // typ samolotu przy nicku (faza 19b: widać, kto czym leci)
-      const plane = el('span', 'lobby-player-plane');
-      plane.textContent = planeLabelOf(p.planeType);
-      row.append(tag, name, plane);
-      this.waitingPlayersEl.append(row);
+    const isTeam = view.mode === 'team';
+    // FFA → płaska lista graczy; drużynowy → dwie kolumny drużyn (grupowanie + kolory, 2026-06-25)
+    this.waitingPlayersEl.style.display = isTeam ? 'none' : '';
+    this.teamsEl.style.display = isTeam ? '' : 'none';
+    this.teamRow.style.display = isTeam ? '' : 'none';
+    if (isTeam) {
+      this.teamsEl.replaceChildren();
+      for (let faction = 0; faction < TEAM_COUNT; faction++) {
+        const col = el('div', `lobby-team-col ${TEAM_COLOR_CLASS[faction] ?? ''}`);
+        const members = view.players.filter((p) => p.faction === faction);
+        const head = el('div', 'lobby-team-head');
+        head.textContent = `${teamLabel(faction)} (${String(members.length)})`;
+        const body = el('div', 'lobby-team-body');
+        for (const p of members) body.append(this.buildPlayerRow(p, view));
+        col.append(head, body);
+        this.teamsEl.append(col);
+      }
+    } else {
+      this.waitingPlayersEl.replaceChildren();
+      for (const p of view.players) this.waitingPlayersEl.append(this.buildPlayerRow(p, view));
     }
-    // wybór samolotu w OBU trybach: select ustawiony na MÓJ typ z serwera (efektywny typ z roster).
-    // W drużynowym (2026-06-23) wybór samolotu = wybór STRONY (Spitfire→Alianci, Bf 109→Oś) —
-    // etykieta to sygnalizuje; w FFA to po prostu wybór płatowca.
-    this.planeLabel.textContent =
-      view.mode === 'team' ? 'Twój samolot (wybór = strona)' : 'Twój samolot';
+    // wybór samolotu w OBU trybach niezależny od drużyny (2026-06-25); select ustawiony na MÓJ typ z serwera
+    this.planeLabel.textContent = 'Twój samolot';
     const mine = view.players.find((p) => p.id === view.youId);
     if (mine && this.planeSelect.value !== mine.planeType) this.planeSelect.value = mine.planeType;
+    // selektor drużyny: ustawiony na MOJĄ frakcję z serwera (drużynowy); każdy gracz wybiera niezależnie
+    if (mine && isTeam && this.teamSelect.value !== String(mine.faction)) {
+      this.teamSelect.value = String(mine.faction);
+    }
     const isHost = view.youId === view.hostId;
     // wycofany gracz ogląda poczekalnię, choć mecz wciąż TRWA (state≠'waiting', leaveMatch 2026-06-23):
     // nie ma czego startować ani ustawiać — chowamy Start/ustawienia i mówimy, że mecz w toku.
@@ -620,6 +680,19 @@ const LOBBY_CSS = `
 .lobby-player-tag { width: 44px; font-size: 12px; font-weight: 700; color: #ffd24a; }
 .lobby-player-name { color: #eaf3ff; }
 .lobby-player-plane { margin-left: auto; padding-left: 12px; font-size: 12px; color: #9fc4e6; }
+/* kolumny drużyn (tryb drużynowy): dwie strony obok siebie, każda z własnym kolorem (2026-06-25) */
+.lobby-teams { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+.lobby-team-col {
+  display: flex; flex-direction: column; gap: 6px; min-width: 220px;
+  padding: 10px 12px; border-radius: 8px;
+  background: rgba(12,22,34,0.7); border: 1px solid #2a3f54; border-top: 3px solid #5a7a96;
+}
+.lobby-team-head { font: 700 15px monospace; letter-spacing: 1px; }
+.lobby-team-body { display: flex; flex-direction: column; gap: 4px; min-height: 24px; }
+.lobby-team-a { border-top-color: #4aa3ff; }
+.lobby-team-a .lobby-team-head { color: #7cc0ff; }
+.lobby-team-b { border-top-color: #ff8c42; }
+.lobby-team-b .lobby-team-head { color: #ffac72; }
 .lobby-settings-row { flex-wrap: wrap; justify-content: center; }
 .lobby-settings-summary { font-size: 13px; color: #cde; }
 .lobby-chat-log {

@@ -688,8 +688,12 @@ export interface RoomSummary {
 export interface RoomPlayer {
   id: number;
   nick: string;
-  /** Wybrany/efektywny typ samolotu (faza 19b) — FFA: wybór gracza; drużynowy: wg strony. */
+  /** Wybrany typ samolotu (faza 19b) — w OBU trybach wprost wybór gracza (od 2026-06-25 drużyna
+   *  i samolot są rozdzielone: dowolny samolot w dowolnej drużynie). */
   planeType: PlaneType;
+  /** Frakcja/drużyna (faza 18): FFA → = id (każdy osobno); drużynowy → 0..TEAM_COUNT−1. Poczekalnia
+   *  grupuje graczy po drużynach i koloruje wg tej wartości (rozdzielenie drużyna↔samolot 2026-06-25). */
+  faction: number;
   /** Czy to bot (poczekalnia: tag [BOT] + ustalanie liczby botów po stronie hosta). */
   isBot: boolean;
 }
@@ -729,12 +733,21 @@ export interface JoinRoomMessage {
   code: string;
 }
 
-/** Klient → serwer: wybór typu samolotu (faza 19b). FFA: wybór płatowca; drużynowy (2026-06-23):
- *  wybór samolotu = wybór STRONY (Spitfire→Alianci, Bf 109→Oś). Serwer klampuje (clampPlaneType,
- *  niezm. nr 11) i stosuje przy najbliższym (re)spawnie. */
+/** Klient → serwer: wybór typu samolotu (faza 19b). W OBU trybach wprost wybór płatowca (od
+ *  2026-06-25 drużyna i samolot są rozdzielone — dowolny samolot w dowolnej drużynie). Serwer
+ *  klampuje (clampPlaneType, niezm. nr 11) i stosuje przy najbliższym (re)spawnie. */
 export interface SelectPlaneMessage {
   t: 'selectPlane';
   plane: PlaneType;
+}
+
+/** Klient → serwer: wybór drużyny w trybie drużynowym (rozdzielenie drużyna↔samolot 2026-06-25).
+ *  Pozwala dwóm graczom celowo grać po tej samej stronie. Serwer klampuje `team` do [0,TEAM_COUNT)
+ *  (niezm. nr 11) i przydziela frakcję od razu (wolny wybór — bez wymuszania balansu; boty wyrównują).
+ *  Poza trybem drużynowym / poza pokojem ignorowany. Wartość addytywna JSON — bez bumpu protokołu. */
+export interface SelectTeamMessage {
+  t: 'selectTeam';
+  team: number;
 }
 
 /**
@@ -817,8 +830,8 @@ export interface RoomJoinedMessage {
   youId: number;
   hostId: number;
   state: RoomState;
-  /** Tryb meczu pokoju (faza 18) — render drużyn + sens selektora samolotu (drużynowy: wybór
-   *  samolotu = wybór strony Alianci/Spitfire ↔ Oś/Bf 109). */
+  /** Tryb meczu pokoju (faza 18) — render poczekalni: drużynowy pokazuje dodatkowo selektor
+   *  drużyny (rozdzielenie drużyna↔samolot 2026-06-25); samolot wybierany niezależnie w obu trybach. */
   mode: MatchMode;
   /** Poziom trudności botów pokoju — poczekalnia odświeża selektor hosta (ustawienia na żywo). */
   difficulty: DifficultyLevel;
@@ -830,7 +843,8 @@ export interface RoomUpdateMessage {
   t: 'roomUpdate';
   hostId: number;
   state: RoomState;
-  /** Tryb meczu pokoju (faza 19b) — jak w RoomJoinedMessage (wybór samolotu w poczekalni). */
+  /** Tryb meczu pokoju (faza 19b) — jak w RoomJoinedMessage (poczekalnia pokazuje selektor
+   *  drużyny w trybie drużynowym; samolot wybierany niezależnie). */
   mode: MatchMode;
   /** Poziom trudności botów pokoju — poczekalnia odświeża selektor hosta (ustawienia na żywo). */
   difficulty: DifficultyLevel;
@@ -940,6 +954,7 @@ export type ControlMessage =
   | CreateRoomMessage
   | JoinRoomMessage
   | SelectPlaneMessage
+  | SelectTeamMessage
   | UpdateRoomMessage
   | ChatSendMessage
   | QuickPlayMessage
@@ -964,6 +979,7 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'createRoom',
   'joinRoom',
   'selectPlane',
+  'selectTeam',
   'updateRoom',
   'chatSend',
   'quickPlay',

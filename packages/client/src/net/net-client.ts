@@ -232,6 +232,12 @@ export class NetClient {
     this.sendControl({ t: 'selectPlane', plane });
   }
 
+  /** Wybór drużyny w poczekalni (tryb drużynowy; rozdzielenie drużyna↔samolot 2026-06-25). Serwer
+   *  klampuje team i przydziela frakcję od razu (wolny wybór — dwóch ludzi może grać razem). */
+  selectTeam(team: number): void {
+    this.sendControl({ t: 'selectTeam', team });
+  }
+
   /** Host zmienia ustawienia pokoju w poczekalni (tryb/boty/poziom). Serwer egzekwuje host+waiting. */
   updateRoom(opts: { mode?: MatchMode; bots?: number; difficulty?: DifficultyLevel }): void {
     this.sendControl({ t: 'updateRoom', ...opts });

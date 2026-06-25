@@ -40,8 +40,6 @@ import {
   pilotStep,
   PLANE_TYPES,
   planeConfigOf,
-  planeTypeForTeam,
-  teamForPlaneType,
   planesCollide,
   resetFireControl,
   resetHealth,
@@ -191,13 +189,15 @@ interface ServerPlayer {
   /** Pozostałe życia w trybie eliminacyjnym (drużynowy, faza 18): MATCH_LIVES na samolot, jak SP.
    *  0 = brak respawnu (gracz przechodzi w obserwatora). W FFA bez znaczenia (respawn nieskończony). */
   livesLeft: number;
-  /** Wybór samolotu gracza z poczekalni (faza 19b; FFA). Bot: losowany przy dodaniu. Stosowany
-   *  przy (re)spawnie; w drużynowym ignorowany (sprzęt wg strony — planeTypeForTeam). */
+  /** Wybór samolotu gracza z poczekalni (faza 19b). Bot: losowany przy dodaniu. Stosowany przy
+   *  (re)spawnie w OBU trybach — od 2026-06-25 drużyna i samolot są rozdzielone (dowolny samolot
+   *  w dowolnej drużynie), więc także w drużynowym leci się wybranym płatowcem. */
   selectedType: PlaneType;
-  /** Preferowana STRONA w trybie drużynowym (2026-06-23): wybór samolotu w poczekalni = wybór
-   *  strony (Spitfire→0/Alianci, Bf 109→1/Oś). null = bez wyboru → auto-balans. Choosery są
-   *  utrwalani w assignFactions, resztę (boty, niewybierający) balansuje serwer. */
-  sidePref: number | null;
+  /** Preferowana DRUŻYNA w trybie drużynowym (rozdzielenie drużyna↔samolot 2026-06-25): gracz
+   *  wybiera ją niezależnie od samolotu (selectTeam), by dwóch ludzi mogło grać razem. null = bez
+   *  wyboru → auto-balans. Choosery są utrwalani w assignFactions, resztę (boty, niewybierający)
+   *  balansuje serwer. W FFA bez znaczenia (frakcja = id). */
+  teamPref: number | null;
   /** Typ samolotu, którym encja LATA w bieżącym życiu (faza 19b) — ustawiany w spawn(); kodowany
    *  do snapshotu (v4) i do roster. */
   planeType: PlaneType;
@@ -395,12 +395,13 @@ export class GameRoom {
   }
 
   roomPlayers(): RoomPlayer[] {
-    // planeType = typ EFEKTYWNY (FFA: wybór gracza; drużynowy: wg strony) — poczekalnia pokazuje,
-    // czym gracz poleci, zanim mecz wystartuje (faza 19b).
+    // planeType = wybór gracza (effectiveType = selectedType w obu trybach od 2026-06-25); faction =
+    // drużyna do grupowania/kolorowania w poczekalni. Pokazuje, czym i po której stronie gracz poleci.
     return [...this.players.values()].map((p) => ({
       id: p.id,
       nick: p.nick,
       planeType: this.effectiveType(p),
+      faction: p.faction,
       isBot: p.isBot,
     }));
   }
@@ -469,7 +470,7 @@ export class GameRoom {
       faction: id, // FFA domyślnie; tryb drużynowy nadpisze w assignFaction (auto-balans)
       livesLeft: MATCH_LIVES,
       selectedType: initType,
-      sidePref: null, // brak wyboru strony → auto-balans (drużynowy); ustawiany przez selectPlane
+      teamPref: null, // brak wyboru drużyny → auto-balans (drużynowy); ustawiany przez selectTeam
       planeType: initType,
       plane: initPlane,
       sim: createSimPlane(id + 1),
@@ -525,9 +526,9 @@ export class GameRoom {
       player.faction = player.id;
       return;
     }
-    // gracz, który wybrał stronę (przez samolot), trafia na nią; reszta do mniejszej drużyny
-    if (player.sidePref !== null && player.sidePref >= 0 && player.sidePref < TEAM_COUNT) {
-      player.faction = player.sidePref;
+    // gracz, który wybrał drużynę (selectTeam), trafia na nią; reszta do mniejszej drużyny
+    if (player.teamPref !== null && player.teamPref >= 0 && player.teamPref < TEAM_COUNT) {
+      player.faction = player.teamPref;
       return;
     }
     const counts = new Array<number>(TEAM_COUNT).fill(0);
@@ -539,9 +540,10 @@ export class GameRoom {
 
   /**
    * Przydziela frakcje WSZYSTKIM uczestnikom (start/rewanż meczu). FFA: frakcja = id. Drużynowy:
-   * najpierw UTRWALA wybrane strony (gracze, którzy wybrali samolot = stronę, 2026-06-23), potem
-   * resztę (boty, niewybierający) dobiera do mniejszej drużyny — równy podział wokół wyborów,
-   * deterministyczny w kolejności id. Bez wyborów = czysty auto-balans (host→0, kolejny→1, …).
+   * najpierw UTRWALA wybrane drużyny (gracze, którzy użyli selectTeam — rozdzielenie drużyna↔samolot
+   * 2026-06-25), potem resztę (boty, niewybierający) dobiera do mniejszej drużyny — równy podział
+   * wokół wyborów, deterministyczny w kolejności id. Wolny wybór: dwóch ludzi może wybrać tę samą
+   * drużynę (nie wymuszamy balansu między ludźmi — boty wyrównują). Bez wyborów = czysty auto-balans.
    */
   private assignFactions(): void {
     if (this.mode !== 'team') {
@@ -549,16 +551,16 @@ export class GameRoom {
       return;
     }
     const counts = new Array<number>(TEAM_COUNT).fill(0);
-    // 1) utrwal wybrane strony — gracz wybrał samolot, więc gra po jego stronie
+    // 1) utrwal wybrane drużyny — gracz świadomie wybrał stronę (selectTeam)
     for (const p of this.players.values()) {
-      if (p.sidePref !== null && p.sidePref >= 0 && p.sidePref < TEAM_COUNT) {
-        p.faction = p.sidePref;
+      if (p.teamPref !== null && p.teamPref >= 0 && p.teamPref < TEAM_COUNT) {
+        p.faction = p.teamPref;
         counts[p.faction] = (counts[p.faction] ?? 0) + 1;
       }
     }
     // 2) resztę (boty + gracze bez wyboru) wyrównaj do mniejszej drużyny
     for (const p of this.players.values()) {
-      if (p.sidePref === null) {
+      if (p.teamPref === null) {
         const t = smallerTeamIndex(counts);
         p.faction = t;
         counts[t] = (counts[t] ?? 0) + 1;
@@ -566,10 +568,10 @@ export class GameRoom {
     }
   }
 
-  /** Efektywny typ samolotu gracza (faza 19b): drużynowy — sprzęt wg strony (planeTypeForTeam);
-   *  FFA — wybór gracza (selectedType). Jedno źródło dla roster i (re)spawnu. */
+  /** Typ samolotu, którym gracz poleci (faza 19b): od 2026-06-25 w OBU trybach = wybór gracza
+   *  (selectedType) — drużyna i samolot są rozdzielone. Jedno źródło dla roster i (re)spawnu. */
   private effectiveType(player: ServerPlayer): PlaneType {
-    return this.mode === 'team' ? planeTypeForTeam(player.faction) : player.selectedType;
+    return player.selectedType;
   }
 
   /**
@@ -591,26 +593,35 @@ export class GameRoom {
   }
 
   /**
-   * Wybór samolotu gracza w poczekalni (faza 19b). FFA: wprost wybór płatowca (selectedType).
-   * Drużynowy (2026-06-23): wybór samolotu = wybór STRONY (Spitfire→Alianci, Bf 109→Oś) — klimat
-   * zachowany, więc zapamiętujemy preferencję strony (sidePref) i od razu przenosimy gracza na nią;
-   * efektywny typ i tak wynika ze strony (planeTypeForTeam). Stosowane przy najbliższym (re)spawnie
-   * (start meczu). Boty i nieznani gracze ignorowani (niezm. nr 11: clampPlaneType w connection).
+   * Wybór samolotu gracza w poczekalni (faza 19b). Od 2026-06-25 w OBU trybach wprost wybór płatowca
+   * (selectedType) — drużyna i samolot są rozdzielone (dowolny samolot w dowolnej drużynie), więc
+   * wybór samolotu NIE zmienia już frakcji. Drużynę gracz wybiera osobno (selectTeam). Stosowane
+   * przy najbliższym (re)spawnie (start meczu). Boty/nieznani ignorowani (niezm. nr 11: clamp w connection).
    */
   selectPlane(id: number, type: PlaneType): void {
     const player = this.players.get(id);
     if (!player || player.isBot) return;
-    if (this.mode === 'team') {
-      const side = teamForPlaneType(type);
-      if (player.sidePref === side) return;
-      player.sidePref = side;
-      player.faction = side; // natychmiast widoczne w roster/kolorach poczekalni
-      this.broadcastRoomUpdate();
-      return;
-    }
     if (player.selectedType === type) return;
     player.selectedType = type;
-    this.broadcastRoomUpdate(); // roster pokazuje nowy (efektywny) typ w poczekalni
+    this.broadcastRoomUpdate(); // roster pokazuje nowy typ w poczekalni
+  }
+
+  /**
+   * Wybór DRUŻYNY gracza w poczekalni (rozdzielenie drużyna↔samolot 2026-06-25): pozwala dwóm ludziom
+   * celowo grać po tej samej stronie. Zapamiętuje preferencję (teamPref) i od razu przenosi gracza na
+   * tę frakcję — natychmiast widoczne w roster/kolorach poczekalni. WOLNY WYBÓR: nie wymuszamy balansu
+   * między ludźmi (boty wyrównują w assignFactions). Tylko tryb drużynowy; poza nim / dla bota / nieznanego
+   * gracza = no-op. `team` jest już zwalidowany/zklampowany w connection (niezm. nr 11).
+   */
+  selectTeam(id: number, team: number): void {
+    if (this.mode !== 'team') return;
+    const player = this.players.get(id);
+    if (!player || player.isBot) return;
+    if (team < 0 || team >= TEAM_COUNT) return; // obrona — connection klampuje wcześniej
+    if (player.teamPref === team) return;
+    player.teamPref = team;
+    player.faction = team;
+    this.broadcastRoomUpdate();
   }
 
   /**
@@ -625,11 +636,11 @@ export class GameRoom {
     let changed = false;
     if (opts.mode !== undefined && opts.mode !== this.mode) {
       this.mode = opts.mode;
-      // tryb wpływa na efektywny typ (drużynowy → sprzęt wg strony) i frakcje. Frakcje i tak
-      // przydziela assignFactions() przy start(), ale przydzielamy je już teraz, żeby roster
-      // poczekalni pokazywał poprawny podgląd samolotu drużynowego (planeTypeForTeam).
+      // tryb wpływa na frakcje (drużynowy → auto-balans / utrwalone wybory drużyn). Frakcje i tak
+      // przydziela assignFactions() przy start(), ale przydzielamy je już teraz, żeby poczekalnia
+      // od razu pokazała poprawny podział na drużyny (kolumny + kolory).
       this.assignFactions();
-      // strona botów mogła się zmienić → odśwież nicki wg nowego efektywnego typu (bez respawnu)
+      // narodowość nicku bota zależy od jego samolotu → odśwież nicki (bez respawnu)
       for (const p of this.players.values()) this.refreshBotName(p);
       changed = true;
     }

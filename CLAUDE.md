@@ -129,6 +129,26 @@ krótkim blipie może NIE wygenerować `close` (TCP przeżyje) — wtedy reconne
 przypadków. Auto-reconnect tylko z `phase==='playing'` (poczekalnia → nakładka ręczna). ⏳ user: smoke (zerwij sieć
 na ~5 s w trakcie meczu → powrót do swojego samolotu bez reloadu; >12 s → nakładka ręczna). **NIEZACOMMITOWANE.**
 
+**Rozdzielenie drużyna↔samolot 2026-06-25 (życzenie usera „dwóch graczy w jednej drużynie", 495 testów zielone,
+BEZ bumpu protokołu — v6, addytywne JSON):** do tej pory tryb drużynowy WIĄZAŁ samolot ze stroną (Spitfire→Alianci,
+Bf 109→Oś), więc dwóch ludzi mogło być razem tylko lecąc tym samym płatowcem, a wybór różnych samolotów rozrzucał ich
+na przeciwne drużyny. Teraz **drużyna i samolot są niezależne** (decyzja usera: dowolny samolot w dowolnej drużynie;
+drużyny przestają być narodowościami → „Drużyna A/B"). (1) **Shared:** usunięte `planeTypeForTeam`/`teamForPlaneType`
+(sprzężenie zniknęło) + ich testy; `RoomPlayer` dostaje `faction` (addytywne, do grupowania/kolorów poczekalni); nowa
+wiadomość `selectTeam{team}` (+tag w `CONTROL_TAGS`). (2) **Serwer (`game-room.ts`):** `sidePref`→`teamPref`
+(preferowana drużyna, niezależna od samolotu); `effectiveType` = `selectedType` w OBU trybach; `selectPlane` już NIE
+zmienia frakcji; nowa `selectTeam(id,team)` ustawia `teamPref`+`faction` (WOLNY WYBÓR — bez wymuszania balansu między
+ludźmi); `assignFactions` utrwala wybory drużyn, boty wyrównują resztę; `roomPlayers()` niesie `faction`. Connection:
+`case 'selectTeam'` klampuje team do `[0,TEAM_COUNT)` (niezm. nr 11). (3) **Klient:** `net.selectTeam`; poczekalnia
+(`lobby-ui.ts`) w trybie drużynowym pokazuje **dwie kolumny drużyn** (gracze pogrupowani po frakcji + kolory A=niebieski/
+B=pomarańczowy) i **selektor „Twoja drużyna"** (każdy wybiera niezależnie); selektor samolotu zostaje, ale bez „=strona".
+FFA bez zmian (płaska lista). Rozpoznanie wróg/sojusznik w locie nadal po FRAKCJI (marker zielony/czerwony, `setFoe`/
+`factionById` z standings) — niezależne od typu samolotu, więc bezpieczne. **Deploy front+back RAZEM** (protokół v6
+niezmieniony, ale semantyka poczekalni rozjechana między wersjami). ⏳ user: smoke (2 ludzi → ta sama drużyna; wybór
+różnych samolotów po tej samej stronie; boty wyrównują). **Uwaga UX:** skoro obie drużyny mogą mieć ten sam samolot,
+jedynym wizualnym znacznikiem strony jest kolor markera (sylwetka już nie zdradza drużyny) — ewentualne mocniejsze
+oznaczenie (tint kadłuba/znaki) to osobny temat. **NIEZACOMMITOWANE.**
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu

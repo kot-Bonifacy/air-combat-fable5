@@ -8,6 +8,7 @@ import {
   SNAPSHOT_HZ,
   clampMatchMode,
   clampPlaneType,
+  TEAM_COUNT,
   decodeInput,
   parseControlMessage,
   sanitizeChat,
@@ -221,6 +222,15 @@ export class Connection implements RoomMember {
         this.room.selectPlane(this.playerId, clampPlaneType(msg.plane));
         return;
       }
+      case 'selectTeam': {
+        // wybór drużyny w poczekalni (rozdzielenie drużyna↔samolot 2026-06-25). Klampujemy team do
+        // [0,TEAM_COUNT) (niezm. nr 11: brak zaufania do klienta); spoza zakresu / nie-liczba → ignoruj.
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        const team = typeof msg.team === 'number' && Number.isInteger(msg.team) ? msg.team : -1;
+        if (team < 0 || team >= TEAM_COUNT) return;
+        this.room.selectTeam(this.playerId, team);
+        return;
+      }
       case 'updateRoom': {
         // host zmienia ustawienia pokoju w poczekalni (tryb/boty/poziom). Tylko host; serwer
         // klampuje wartości (niezm. nr 11), a GameRoom egzekwuje stan 'waiting'. Pola opcjonalne:
@@ -320,7 +330,7 @@ export class Connection implements RoomMember {
       youId: playerId,
       hostId: room.hostId ?? playerId,
       state: room.state,
-      mode: room.mode, // klient: render trybu + sens selektora samolotu (drużynowy = wybór strony)
+      mode: room.mode, // klient: render trybu (drużynowy pokazuje selektor drużyny; samolot niezależnie)
       difficulty: room.difficulty, // poczekalnia: selektor poziomu botów (host)
       players: room.roomPlayers(),
     };

@@ -3,9 +3,9 @@ import { BF109_E, SPITFIRE_MK2, totalAmmo, type ControlMessage } from '@air-comb
 import { GameRoom } from './game-room';
 
 // Per-player plane (faza 19b): serwer trzyma konfigurację samolotu NA GRACZA (nie na pokój).
-// FFA — gracz wybiera typ (selectPlane); drużynowy — klimat Alianci/Spitfire ↔ Oś/Bf 109, a
-// wybór samolotu = wybór STRONY (2026-06-23): selectPlane przenosi gracza na stronę płatowca.
-// HP/amunicja/typ w snapshocie muszą iść za faktycznym samolotem encji.
+// W OBU trybach gracz wybiera typ płatowca (selectPlane). Od 2026-06-25 DRUŻYNA i SAMOLOT są
+// ROZDZIELONE: w trybie drużynowym gracz wybiera drużynę osobno (selectTeam), niezależnie od
+// samolotu (dowolny samolot w dowolnej drużynie). HP/amunicja/typ w snapshocie idą za samolotem encji.
 
 const SPIT_AMMO = totalAmmo(SPITFIRE_MK2.armament);
 const BF109_AMMO = totalAmmo(BF109_E.armament);
@@ -65,40 +65,79 @@ describe('FFA — wybór samolotu per gracz', () => {
   });
 });
 
-describe('drużynowy — klimat stron + wybór strony przez samolot', () => {
-  it('bez wyboru: auto-balans → drużyna 0 = Spitfire, drużyna 1 = Bf 109 (klimat)', () => {
+describe('drużynowy — drużyna i samolot rozdzielone (2026-06-25)', () => {
+  it('bez wyboru: auto-balans frakcji; samolot domyślnie Spitfire po obu stronach', () => {
     const room = new GameRoom('TEAM');
     room.mode = 'team';
     const a = add(room, 'alfa');
     const b = add(room, 'bravo');
     expect(room.factionOf(a)).toBe(0);
     expect(room.factionOf(b)).toBe(1);
-    // efektywny typ widoczny już w poczekalni (roster) — sprzęt wg strony
+    // samolot NIE wynika już z drużyny — domyślnie Spitfire dla obu (to wybór gracza, nie narodowość)
     expect(room.roomPlayers().find((p) => p.id === a)?.planeType).toBe('spitfire');
-    expect(room.roomPlayers().find((p) => p.id === b)?.planeType).toBe('bf109');
+    expect(room.roomPlayers().find((p) => p.id === b)?.planeType).toBe('spitfire');
     room.start();
     expect(planeTypeInSnapshot(room, a)).toBe('spitfire');
-    expect(planeTypeInSnapshot(room, b)).toBe('bf109');
-    expect(room.healthOf(a)).toBe(SPITFIRE_MK2.hpPool);
-    expect(room.healthOf(b)).toBe(BF109_E.hpPool);
+    expect(planeTypeInSnapshot(room, b)).toBe('spitfire');
   });
 
-  it('wybór samolotu = wybór strony (gracz przechodzi na stronę swojego płatowca)', () => {
+  it('selectTeam zmienia drużynę, nie rusza samolotu', () => {
     const room = new GameRoom('TEM2');
     room.mode = 'team';
-    const a = add(room, 'alfa'); // auto-balans → drużyna 0 (Spitfire/Alianci)
-    const b = add(room, 'bravo'); // auto-balans → drużyna 1 (Bf 109/Oś)
+    const a = add(room, 'alfa'); // auto-balans → drużyna 0
     expect(room.factionOf(a)).toBe(0);
-    room.selectPlane(a, 'bf109'); // wybór Bf 109 = przejście na stronę Osi (drużyna 1)
+    room.selectPlane(a, 'bf109'); // samolot
+    room.selectTeam(a, 1); // drużyna — niezależnie od samolotu
     expect(room.factionOf(a)).toBe(1);
     expect(room.roomPlayers().find((p) => p.id === a)?.planeType).toBe('bf109');
-    room.start(); // wybór strony przeżywa start (assignFactions utrwala preferencję gracza)
+    room.start(); // wybór drużyny przeżywa start (assignFactions utrwala teamPref)
     expect(room.factionOf(a)).toBe(1);
     expect(planeTypeInSnapshot(room, a)).toBe('bf109');
     expect(room.healthOf(a)).toBe(BF109_E.hpPool);
-    // b nie wybierał → auto-balans wokół wyboru a (trafia na pustą stronę 0/Alianci)
+  });
+
+  it('selectPlane NIE zmienia drużyny (rozdzielenie)', () => {
+    const room = new GameRoom('TEM3');
+    room.mode = 'team';
+    const a = add(room, 'alfa'); // auto-balans → drużyna 0
+    room.selectPlane(a, 'bf109');
+    expect(room.factionOf(a)).toBe(0); // Bf 109, ale wciąż drużyna 0
+    expect(room.roomPlayers().find((p) => p.id === a)?.planeType).toBe('bf109');
+  });
+
+  it('wolny wybór: dwóch graczy może wybrać TĘ SAMĄ drużynę (cel: znajomi razem)', () => {
+    const room = new GameRoom('TEM4');
+    room.mode = 'team';
+    const a = add(room, 'alfa');
+    const b = add(room, 'bravo');
+    room.selectTeam(a, 0);
+    room.selectTeam(b, 0);
+    room.start();
+    // wybór przeżywa start — obaj po tej samej stronie (nie wymuszamy balansu między ludźmi)
+    expect(room.factionOf(a)).toBe(0);
     expect(room.factionOf(b)).toBe(0);
-    expect(planeTypeInSnapshot(room, b)).toBe('spitfire');
+  });
+
+  it('boty wyrównują wokół wyborów ludzi (2 ludzi na drużynie 0 + 2 boty → boty na 1)', () => {
+    const room = new GameRoom('TEM5');
+    room.mode = 'team';
+    const a = add(room, 'alfa');
+    const b = add(room, 'bravo');
+    const bots = [room.addBot('normalny'), room.addBot('normalny')];
+    room.selectTeam(a, 0);
+    room.selectTeam(b, 0);
+    room.start();
+    expect(room.factionOf(a)).toBe(0);
+    expect(room.factionOf(b)).toBe(0);
+    for (const bot of bots) expect(room.factionOf(bot)).toBe(1);
+  });
+
+  it('selectTeam ignorowany w FFA (frakcja = id)', () => {
+    const room = new GameRoom('FFAT');
+    const a = add(room, 'alfa');
+    room.selectTeam(a, 1); // brak trybu drużynowego → no-op
+    room.start();
+    expect(room.factionOf(a)).toBe(a);
   });
 });
 

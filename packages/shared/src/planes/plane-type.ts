@@ -58,21 +58,7 @@ export function clampPlaneType(raw: unknown): PlaneType {
   return PLANE_TYPES.includes(raw as PlaneType) ? (raw as PlaneType) : DEFAULT_PLANE_TYPE;
 }
 
-/**
- * Sprzęt drużyny w trybie drużynowym (faza 19b, decyzja użytkownika 2026-06-20): drużyna 0 =
- * Spitfire (Alianci), drużyna 1 = Bf 109 (Oś) — klimat Alianci↔Oś. FFA NIE używa tej funkcji
- * (wolny wybór per gracz). Frakcje spoza {0,1} (nie powinny wystąpić: TEAM_COUNT=2) → Spitfire.
- */
-export function planeTypeForTeam(faction: number): PlaneType {
-  return faction === 1 ? 'bf109' : 'spitfire';
-}
-
-/**
- * Strona drużyny dla wybranego samolotu — ODWROTNOŚĆ planeTypeForTeam (Spitfire → drużyna 0
- * Alianci, Bf 109 → drużyna 1 Oś). W trybie drużynowym wybór samolotu w poczekalni = wybór
- * STRONY (decyzja użytkownika 2026-06-23): klimat Alianci↔Oś zostaje (każda strona ma swój
- * samolot), a gracz steruje tym, po której stronie gra, wybierając płatowiec.
- */
-export function teamForPlaneType(type: PlaneType): number {
-  return type === 'bf109' ? 1 : 0;
-}
+// Uwaga: do 2026-06-25 istniały tu planeTypeForTeam/teamForPlaneType, które wiązały typ samolotu
+// ze stroną w trybie drużynowym (Spitfire↔Alianci, Bf 109↔Oś). Decyzja użytkownika 2026-06-25:
+// drużyna i samolot są ROZDZIELONE (gracz wybiera jedno i drugie niezależnie, dowolny samolot w
+// dowolnej drużynie), więc to sprzężenie zostało usunięte. Drużynę wybiera gracz osobno (selectTeam).

@@ -923,6 +923,7 @@ const lobby = new LobbyUI({
     enterLobby();
   },
   onSelectPlane: (plane) => net?.selectPlane(plane), // faza 19b: wybór samolotu w poczekalni
+  onSelectTeam: (team) => net?.selectTeam(team), // wybór drużyny (rozdzielenie drużyna↔samolot 2026-06-25)
   onUpdateRoom: (opts) => net?.updateRoom(opts), // host: zmiana trybu/botów/poziomu w poczekalni
   onSendChat: (text) => net?.sendChat(text), // czat poczekalni
 });
@@ -1259,7 +1260,7 @@ function onRoomJoined(msg: RoomJoinedMessage): void {
   roomView = {
     code: msg.code,
     state: msg.state,
-    mode: msg.mode, // render drużyn + sens selektora (drużynowy: wybór samolotu = wybór strony)
+    mode: msg.mode, // render poczekalni: drużynowy pokazuje selektor drużyny (samolot wybierany niezależnie)
     difficulty: msg.difficulty,
     botCount: countBots(msg.players),
     players: msg.players,
