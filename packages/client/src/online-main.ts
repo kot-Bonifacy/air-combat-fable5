@@ -115,6 +115,11 @@ let localAmmoMax = totalAmmo(localPlane.armament);
 let localSecondaryMax = secondaryAmmoMaxOf(localPlane);
 const INPUT_DT_S = 1 / INPUT_HZ;
 const TOKEN_STORAGE_KEY = 'air-combat:token';
+/** Okno automatycznego ponawiania powrotu do meczu po zerwaniu sieci [ms] — w tym czasie serwer
+ *  trzyma slot (okno 60 s), a samolot leci w auto-stabilizacji. Po wyczerpaniu → nakładka ręczna. */
+const AUTO_RECONNECT_WINDOW_MS = 12_000;
+/** Odstęp kolejnych prób wznowienia w oknie [ms]. */
+const RECONNECT_RETRY_MS = 1_500;
 
 // Kolory (parytet z SP): gracz złoty; w FFA każdy inny pilot z palety FFA (unikatowo per id);
 // w trybie drużynowym (faza 18) sojusznik zielony, wróg czerwony — względem frakcji gracza.
@@ -423,6 +428,15 @@ let net: NetClient | null = null;
 let phase: Phase = 'lobby';
 let attemptingResume = false;
 let roomView: WaitingView | null = null;
+
+// --- auto-reconnect po krótkim zerwaniu sieci (powrót do swojego samolotu bez przeładowania strony) ---
+/** Trwa automatyczne ponawianie wznowienia sesji (banner „Wznawianie połączenia…"). */
+let reconnecting = false;
+/** Moment [performance.now ms], po którym rezygnujemy z auto-ponawiania → nakładka ręczna. */
+let reconnectDeadlineMs = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+/** Serwer zgłosił zamknięcie (serverShutdown) — nie ma do czego wracać, pomiń auto-reconnect. */
+let serverWentAway = false;
 
 // --- predykcja + interpolacja (odtwarzane przy wejściu do nowego meczu) ---
 let predictor = new Predictor(localPlane, terrain);
@@ -1154,13 +1168,75 @@ function createNet(nick: string, token: string | null): NetClient {
   };
   c.onMatchEnded = (msg) => onMatchEnded(msg);
   c.onServerShutdown = () => {
+    // serwer się zamyka — auto-reconnect nie ma do czego wracać; pokaż komunikat (nie banner wznawiania)
+    serverWentAway = true;
+    stopAutoReconnect();
     // status 'error' (ustawiony w NetClient) wyświetli komunikat zamiast spinnera;
     // chowamy nakładki meczu, żeby nie zasłaniały
     scoreboard.hide();
     results.hide();
   };
   c.onLobbyError = (_code, message) => lobby.setError(message);
+  c.onClose = () => handleUnexpectedClose(); // niezamierzone zerwanie → spróbuj wznowić w trakcie meczu
   return c;
+}
+
+// --- auto-reconnect: po niezamierzonym zerwaniu w trakcie meczu wznawiamy sesję tokenem BEZ
+// przeładowania strony (świat/modele zostają w pamięci). Serwer trzyma slot (okno 60 s) i leci
+// samolotem w auto-stabilizacji, więc gracz wraca do TEJ SAMEJ maszyny. Ponawiamy przez
+// AUTO_RECONNECT_WINDOW_MS; potem zostaje nakładka ręczna („Połącz ponownie" = reload). ---
+
+/** Wywoływane przez NetClient przy niezamierzonym `close`. Startuje auto-ponawianie tylko w trakcie
+ *  meczu (poczekalnia/lobby → istniejąca nakładka ręczna). Próby reconnectu, które padają, NIE
+ *  retriggerują tego — pętlę napędza watchdog (reconnectTimer). */
+function handleUnexpectedClose(): void {
+  if (serverWentAway) return; // serwer zgłosił zamknięcie — nie ma do czego wracać
+  if (reconnecting) return; // próba w toku — watchdog ponowi
+  if (phase !== 'playing') return; // auto-powrót tylko z trwającego meczu
+  if (!loadToken()) return; // bez tokenu reconnect i tak nie zadziała → nakładka ręczna
+  startAutoReconnect();
+}
+
+function startAutoReconnect(): void {
+  if (reconnecting) return;
+  reconnecting = true;
+  reconnectDeadlineMs = performance.now() + AUTO_RECONNECT_WINDOW_MS;
+  tryReconnectOnce();
+}
+
+function tryReconnectOnce(): void {
+  clearReconnectTimer();
+  if (!reconnecting) return;
+  if (performance.now() >= reconnectDeadlineMs) {
+    // wyczerpane okno: zostaw ostatnią (nieudaną) próbę domkniętą → updateConnOverlay pokaże „Rozłączono"
+    reconnecting = false;
+    attemptingResume = false;
+    if (net && net.status !== 'connected') net.close();
+    return;
+  }
+  attemptingResume = true; // onWelcome nie wciągnie do lobby; czekamy na roomJoined ze slotem
+  if (net) net.close(); // zamknij poprzednią próbę (deliberate → bez onClose) przed nową
+  net = createNet(connectedNick, loadToken());
+  reconnectTimer = setTimeout(tryReconnectOnce, RECONNECT_RETRY_MS);
+}
+
+/** Sukces wznowienia — wołane z onRoomJoined, gdy wróciliśmy do pokoju w trakcie auto-reconnectu. */
+function finishAutoReconnect(): void {
+  reconnecting = false;
+  clearReconnectTimer();
+}
+
+/** Przerywa auto-ponawianie (serwer odpadł / sprzątanie) bez zamykania bieżącego połączenia. */
+function stopAutoReconnect(): void {
+  reconnecting = false;
+  clearReconnectTimer();
+}
+
+function clearReconnectTimer(): void {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
 }
 
 function onMatchEnded(msg: MatchEndedMessage): void {
@@ -1192,8 +1268,17 @@ function onRoomJoined(msg: RoomJoinedMessage): void {
   };
   scoreboard.setLocalId(msg.youId);
   lobby.clearChat(); // świeży pokój — czyść log PRZED historią z serwera (przychodzi tuż po roomJoined)
-  if (msg.state === 'playing') enterPlaying();
-  else enterWaiting(roomView);
+  const wasReconnecting = reconnecting;
+  if (wasReconnecting) finishAutoReconnect(); // wróciliśmy do swojego slotu — koniec ponawiania
+  if (msg.state === 'playing') {
+    // wznowienie w trakcie meczu: phase jest już 'playing' (nigdy nie wyszliśmy), więc enterPlaying
+    // miałby early-return. Wymuś pełne wejście (świeży predyktor/interpolator/meshe), by stan po
+    // przerwie zsynchronizował się od zera — modele są w cache, ekran ładowania mignie krótko.
+    if (wasReconnecting) phase = 'lobby';
+    enterPlaying();
+  } else {
+    enterWaiting(roomView);
+  }
 }
 
 /** Liczba botów w roster (do selektora hosta + podsumowania w poczekalni). */
@@ -1253,6 +1338,7 @@ function enterPlaying(): void {
   if (phase === 'playing') return;
   phase = 'playing';
   matchResultsShown = false;
+  serverWentAway = false; // świeże wejście do meczu — pozwól na auto-reconnect przy ewentualnym zerwaniu
   stopRoomPolling();
   // Parytet z SP (P5.1): spawnCombatant resetuje gaz do 0.8 przy każdym wejściu do gry —
   // bez tego rewanż dziedziczyłby ostatni gaz gracza zamiast startować na połowie mocy.
@@ -1380,6 +1466,13 @@ function hudExtraLines(): string[] {
 }
 
 function updateConnOverlay(): void {
+  if (reconnecting) {
+    // auto-powrót do meczu w toku: banner z odliczaniem zamiast twardej nakładki „Rozłączono"
+    const leftS = Math.max(0, Math.ceil((reconnectDeadlineMs - performance.now()) / 1000));
+    connEl.classList.add('show');
+    connEl.innerHTML = `<div class="head">Wznawianie połączenia…</div><div class="msg">powrót do gry (${String(leftS)} s)</div>`;
+    return;
+  }
   if (!net) {
     connEl.classList.remove('show');
     return;

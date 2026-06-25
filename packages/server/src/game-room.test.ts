@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Vector3 } from 'three';
-import { FIXED_DT_S, getForward, validatePlaneState, type InputFrame } from '@air-combat/shared';
+import { FIXED_DT_S, getForward, getUp, validatePlaneState, type InputFrame } from '@air-combat/shared';
 import { GameRoom } from './game-room';
 
 function input(over: Partial<InputFrame> = {}): InputFrame {
@@ -88,6 +88,45 @@ describe('GameRoom — autorytatywna symulacja', () => {
     room.removePlayer(id);
     expect(room.playerCount).toBe(1);
     expect(room.snapshotEntities()).toHaveLength(1);
+  });
+});
+
+describe('GameRoom — samolot bez pilota (okno reconnectu)', () => {
+  it('rozłączony samolot auto-stabilizuje skrzydła i przeżywa 10 s bez pilota', () => {
+    const room = new GameRoom('ABCD');
+    const id = add(room);
+    room.start();
+    // wprowadź maszynę w przechył: trzymany input lotek (nextInput podtrzymuje ostatni input)
+    room.applyInput(id, input({ rollRight: 1, throttle: 0.9 }));
+    for (let i = 0; i < 60; i++) room.step(FIXED_DT_S); // ~1 s rolowania → wyraźny przechył
+    const up = new Vector3();
+    getUp(room.snapshotEntities()[0]!.state.orientation, up);
+    expect(up.y).toBeLessThan(0.8); // faktycznie przechylony
+
+    // utrata pilota: slot trzymany na reconnect, samolot leci dalej (auto-stabilizacja zamiast trzymania inputu)
+    room.detachMember(id, Date.now());
+    for (let i = 0; i < 600; i++) room.step(FIXED_DT_S); // 10 s bez pilota
+
+    const state = room.snapshotEntities()[0]!.state;
+    getUp(state.orientation, up);
+    expect(up.y).toBeGreaterThan(0.9); // skrzydła wyrównane (mini-autopilot)
+    expect(state.life).toBe('alive'); // nie rozbił się przed powrotem gracza
+    validatePlaneState(state, 'autopilot');
+  });
+
+  it('rozłączony samolot nie strzela, nawet gdy spust był wciśnięty w chwili zerwania', () => {
+    const room = new GameRoom('ABCD');
+    const id = add(room);
+    room.start();
+    const ammoFull = room.ammoOf(id);
+    room.applyInput(id, input({ fire: true, throttle: 0.9 }));
+    for (let i = 0; i < 30; i++) room.step(FIXED_DT_S); // strzela podłączony (spust trzymany)
+    const ammoConnected = room.ammoOf(id);
+    expect(ammoConnected).toBeLessThan(ammoFull); // faktycznie oddał strzały
+
+    room.detachMember(id, Date.now());
+    for (let i = 0; i < 120; i++) room.step(FIXED_DT_S); // 2 s bez pilota
+    expect(room.ammoOf(id)).toBe(ammoConnected); // zero dalszego ognia bez pilota
   });
 });
 

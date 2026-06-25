@@ -34,6 +34,7 @@ import {
   encodeSnapshot,
   eventsByteLength,
   factionsInPlay,
+  getForward,
   MATCH_LIVES,
   nearestToroidalImage,
   pilotStep,
@@ -69,6 +70,7 @@ import {
   type MatchEndReason,
   type MatchMember,
   type MatchMode,
+  type PilotCommand,
   type PilotDemands,
   type PlaneConfig,
   type PlaneState,
@@ -98,6 +100,8 @@ import { BOT_THINK_INTERVAL, BotManager, MAX_BOTS_PER_ROOM } from './bot-manager
 const SPAWN_ALTITUDE_M = 800;
 const SPAWN_SPEED_MS = 120;
 const SPAWN_THROTTLE = 0.8;
+/** Gaz krążenia samolotu bez pilota (rozłączony gracz) — podtrzymuje energię w locie auto-poziomym. */
+const DISCONNECT_CRUISE_THROTTLE = 0.7;
 /** Promień pierścienia spawnów [m] (jak w kliencie: start na obrzeżach, nosem do środka). */
 const SPAWN_RING_RADIUS_M = 8000;
 /** Liczba slotów na pierścieniu = budżet snapshotu (do MAX_PLAYERS_PER_ROOM encji). */
@@ -135,6 +139,18 @@ const scratchBotWrap = new Vector3();
 /** Bufory kierunku/prędkości pocisku AA (zero alokacji per strzał stanowiska). */
 const scratchAaDir = new Vector3();
 const scratchAaVel = new Vector3();
+/** Bufor kierunku auto-poziomowania samolotu bez pilota (zero alokacji per tick). */
+const scratchAutopilotDir = new Vector3();
+/** Reużywalna komenda auto-stabilizacji (jeden wątek, sekwencyjnie) — pola aim nadpisywane per tick. */
+const autopilotCommand: PilotCommand = {
+  throttle: DISCONNECT_CRUISE_THROTTLE,
+  pitchUp: 0,
+  rollRight: 0,
+  yawRight: 0,
+  aimX: 0,
+  aimY: 0,
+  aimZ: 1,
+};
 
 /**
  * Buduje pierścień slotów startowych: pozycja na obrzeżach areny, nos poziomo ku środkowi
@@ -980,13 +996,47 @@ export class GameRoom {
     this.endMatch(e.winnerId, e.winningFaction, e.reason);
   }
 
+  /** Samolot bez pilota: żywy gracz-człowiek z zerwanym połączeniem (slot trzymany na reconnect).
+   *  Boty mają member=null, ale isBot je wyklucza; wycofani/martwi nie wchodzą w gałąź 'alive'. */
+  private isPilotless(player: ServerPlayer): boolean {
+    return !player.isBot && player.member === null;
+  }
+
+  /**
+   * Komenda auto-stabilizacji dla samolotu bez pilota (życzenie usera: po utracie pilota maszyna ma
+   * własny, możliwy do odzyskania tor lotu — nie spada w spirali). Instruktor prowadzi nos na POZIOMY
+   * kierunek na wprost (rzut nosa na płaszczyznę poziomą) → wyrównuje skrzydła i lot poziomy; gaz
+   * krążenia podtrzymuje energię. Przy nosie niemal pionowym rzut się degeneruje → bierzemy poziomą
+   * prędkość, a w ostateczności kierunek startowy. Stery klawiatury zerowe, więc stepPilotedPlane
+   * wybiera ścieżkę instruktora (jak mysz). Zachowanie WYŁĄCZNIE serwerowe (klient rozłączony nie
+   * predykuje) — bez wpływu na reconciliation.
+   */
+  private autopilotCommandFor(player: ServerPlayer): PilotCommand {
+    const dir = getForward(player.sim.state.orientation, scratchAutopilotDir);
+    dir.y = 0;
+    if (dir.lengthSq() < 1e-6) {
+      const vel = player.sim.state.velocity;
+      dir.set(vel.x, 0, vel.z);
+      if (dir.lengthSq() < 1e-6) dir.copy(player.spawnDir);
+    }
+    dir.normalize();
+    autopilotCommand.throttle = DISCONNECT_CRUISE_THROTTLE;
+    autopilotCommand.aimX = dir.x;
+    autopilotCommand.aimY = dir.y;
+    autopilotCommand.aimZ = dir.z;
+    return autopilotCommand;
+  }
+
   private stepPlayer(player: ServerPlayer, dtS: number): void {
     const state = player.sim.state;
     player.prevPos.copy(state.position); // początek zamiatanego odcinka kolizji (faza 15)
 
     if (state.life === 'alive') {
       if (player.protectionTimerS > 0) player.protectionTimerS = Math.max(0, player.protectionTimerS - dtS);
-      const input = this.nextInput(player); // jeden input = jeden krok (niezmiennik reconciliation)
+      // bez pilota (rozłączony gracz, slot trzymany na reconnect): auto-stabilizacja zamiast trzymania
+      // ostatniego inputu — inaczej manewr sprzed zerwania (zakręt/nurkowanie) rozbiłby maszynę, zanim
+      // gracz wróci. Z pilotem: jeden input = jeden krok (niezmiennik reconciliation).
+      const input = this.isPilotless(player) ? this.autopilotCommandFor(player) : this.nextInput(player);
       // ta sama autorytatywna ścieżka co predykcja klienta (shared/world/piloted-plane).
       const event = stepPilotedPlane(
         player.sim,
@@ -1106,7 +1156,10 @@ export class GameRoom {
     // pomijają), ale broń wciąż działa z bieżącej pozy.
     const wreckCanFire = state.life === 'dying' && !player.isBot;
     if (state.life !== 'alive' && !wreckCanFire) return;
-    const triggerHeld = player.isBot ? this.botManager.fireOf(player.id) : (player.lastInput?.fire ?? false);
+    // samolot bez pilota (rozłączony) nie strzela, nawet jeśli spust był wciśnięty w chwili zerwania
+    const triggerHeld = player.isBot
+      ? this.botManager.fireOf(player.id)
+      : !this.isPilotless(player) && (player.lastInput?.fire ?? false);
     // otwarcie ognia oddaje ochronę respawnu (nietykalny nie może też zadawać — faza 13)
     if (triggerHeld && player.protectionTimerS > 0) player.protectionTimerS = 0;
     const rewindTicks = this.computeRewindTicks(player);

@@ -111,6 +111,24 @@ na ekranie ROZBITY bez nakładki); `DownedOverlay.show(...,flyableWreck)` chowa 
 ma czym sterować. Akcja „ZAKOŃCZ MISJĘ" w `DownedOverlay` używa tej samej logiki kontekstowej. Te same akcje dostępne
 w menu Esc i w nakładce po zestrzeleniu. ⏳ user: smoke (Esc→koniec z botami; Esc→poczekalnia gdy 2 ludzi; obserwator po rozbiciu o teren).
 
+**Sesja poprawek 2026-06-25 (auto-powrót po zerwaniu sieci, 492 testy zielone, BEZ bumpu protokołu — v6):**
+życzenie usera: powrót do gry i SWOJEGO samolotu po krótkim zerwaniu (≤10 s), gdzie „samolot po utracie pilota
+ma swój tor lotu". (1) **Serwer (`game-room.ts`):** żywy gracz-człowiek z `member===null` = bez pilota
+(`isPilotless`; boty wyklucza `isBot`) — zamiast trzymać OSTATNI input (rozbijał maszynę w zakręcie/nurkowaniu
+przed powrotem) leci w **auto-stabilizacji**: `autopilotCommandFor` daje instruktorowi aim = poziomy rzut nosa
+(`getForward`, `y=0`, fallback pozioma prędkość→`spawnDir`), stery zerowe → bank-and-pull do poziomu = wyrównanie
+skrzydeł + lot poziomy; gaz `DISCONNECT_CRUISE_THROTTLE=0.7`; **nie strzela** bez pilota. Slot trzymany 60 s jak
+było; samolot wciąż wrażliwy (wróg może zestrzelić). Wyłącznie serwerowe → bez wpływu na reconciliation. (2)
+**Klient:** `NetClient.onClose` (deliberate-aware — `close()` tłumi auto-reconnect) → watchdog `tryReconnectOnce`
+co `RECONNECT_RETRY_MS=1500` przez `AUTO_RECONNECT_WINDOW_MS=12000`, wznawia sesję tokenem **BEZ przeładowania
+strony** (świat/modele w pamięci); sukces=`onRoomJoined` (gdy `reconnecting`) wymusza pełne wejście (`phase='lobby'`
+przed `enterPlaying`, bo ma early-return przy 'playing') → świeży predyktor/interpolator/meshe, snap od zera, ekran
+ładowania mignie (modele z cache). Banner „Wznawianie połączenia… (N s)" w `updateConnOverlay`; po wyczerpaniu okna
+→ istniejąca nakładka „Rozłączono"/reload. `serverShutdown`→`serverWentAway` pomija auto-reconnect. Pułapka: WS przy
+krótkim blipie może NIE wygenerować `close` (TCP przeżyje) — wtedy reconnect zbędny, ale auto-stabilizacja dotyczy obu
+przypadków. Auto-reconnect tylko z `phase==='playing'` (poczekalnia → nakładka ręczna). ⏳ user: smoke (zerwij sieć
+na ~5 s w trakcie meczu → powrót do swojego samolotu bez reloadu; >12 s → nakładka ręczna). **NIEZACOMMITOWANE.**
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu

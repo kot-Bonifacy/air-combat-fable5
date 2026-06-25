@@ -65,8 +65,13 @@ export class NetClient {
   onServerShutdown: ((msg: ServerShutdownMessage) => void) | undefined;
   /** Błąd lobby (badCode/full/notHost/…) — NIE zamyka połączenia, klient zostaje w lobby. */
   onLobbyError: ((code: string, message: string) => void) | undefined;
+  /** Niezamierzone zamknięcie połączenia (zerwanie sieci). Wyższa warstwa może spróbować wznowić
+   *  sesję tokenem (auto-reconnect). NIE wywoływane przy close() inicjowanym przez klienta. */
+  onClose: (() => void) | undefined;
 
   private readonly ws: WebSocket;
+  /** close() zainicjowany przez klienta (zmiana nicku / sprzątanie przy reconnect) — tłumi onClose. */
+  private deliberate = false;
   private readonly inputBuf = new Uint8Array(INPUT_BYTES);
   private readonly inputView = new DataView(this.inputBuf.buffer);
   /** seq → moment wysłania [performance.now ms] — do pomiaru RTT po acku. */
@@ -98,6 +103,7 @@ export class NetClient {
         this.status = 'closed';
         if (!this.statusMessage) this.statusMessage = 'połączenie zamknięte';
       }
+      if (!this.deliberate) this.onClose?.(); // niezamierzone zerwanie → wyższa warstwa może wznowić sesję
     });
   }
 
@@ -279,6 +285,7 @@ export class NetClient {
   }
 
   close(): void {
+    this.deliberate = true; // zamierzone zamknięcie — nie odpalaj onClose (brak auto-reconnectu)
     this.ws.close();
   }
 }
