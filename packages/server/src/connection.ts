@@ -238,6 +238,13 @@ export class Connection implements RoomMember {
         this.room.selectTeam(this.playerId, team);
         return;
       }
+      case 'setReady': {
+        // gracz oznacza gotowość do startu (system „Gotów" 2026-06-26). Tylko w pokoju; serwer
+        // zeruje gotowość przy zmianie samolotu/drużyny i na starcie. Wartość bool — bez klampu zakresu.
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        this.room.setReady(this.playerId, msg.ready === true);
+        return;
+      }
       case 'updateRoom': {
         // host zmienia ustawienia pokoju w poczekalni (tryb/boty/poziom). Tylko host; serwer
         // klampuje wartości (niezm. nr 11), a GameRoom egzekwuje stan 'waiting'. Pola opcjonalne:

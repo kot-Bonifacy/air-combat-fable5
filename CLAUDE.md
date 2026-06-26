@@ -173,6 +173,26 @@ w snapshocie, ale klient go nie używa (silnik gra, póki żyją) — wpięcie d
 front+back RAZEM** (v6↔v7 handshake). ⏳ user: smoke (zerwij sieć ~5 s → powrót do swojego samolotu bez pętli +
 realne paliwo; >12 s → nakładka ręczna).
 
+**Przebudowa wyboru samolotu + fix drużyn + system „Gotów" 2026-06-26 (życzenie usera, 504 testy zielone, BEZ bumpu
+protokołu — v7, addytywne JSON):** user: „zmień wybór samolotu wzorem popularnych gier; zrezygnuj z historycznego
+dobierania sojuszniczych maszyn; sprawdzaj kto leci dopiero przed grą (podejrzenie buga przy wielokrotnej zmianie
+samolotu/drużyny)". (1) **REALNY BUG drużyn (potwierdzony):** poczekalnia pokazywała `faction` (auto-balans przy
+wejściu), ale start liczył `assignFactions()` honorujący TYLKO jawny `teamPref`, a resztę (w tym ludzi auto-przydzielonych
+do widocznej drużyny) wyrównywał OD NOWA → gdy jeden gracz wybrał drużynę jawnie, a drugi tylko „wylądował" na tej samej,
+start przerzucał drugiego na przeciwną stronę „dla balansu", choć poczekalnia pokazywała ich razem (znajomi startowali
+osobno). Fix — zasada **WYSIWYG** („co widać w poczekalni, to startuje"): `assignFactions()` honoruje bieżącą, prawidłową
+frakcję KAŻDEGO człowieka (jawny wybór ALBO auto-przydział), a boty są wypełniaczem (równoważą wokół ludzi); `selectTeam`
+woła teraz `assignFactions()` (rebalans botów NA ŻYWO → poczekalnia == start także dla botów). (2) **Karty samolotów**
+(zamiast dropdownu): klikalne kafelki Spitfire/Bf 109 z nazwą, rolą (Zwrotny/Energia), uzbrojeniem i opisem; dane w
+`planeCardInfoOf` (shared, obok `planeLabelOf` — etykiety UI, nie strojenie). Podświetlenie „wybranej" idzie za stanem
+serwera. (3) **System „Gotów"**: `RoomPlayer.ready` (addytywne JSON) + wiadomość `setReady` (klient→serwer); przycisk dla
+nie-hosta, wskaźniki ✔/⏳ w roster, Start hosta pokazuje „X/Y gotowych" (host startuje świadomie — AFK NIE blokuje). Boty
+zawsze gotowe; gotowość zerują zmiana samolotu/drużyny i start meczu (potwierdzasz AKTUALNY skład). (4) **Neutralne nazwy
+botów**: koniec dobierania narodowości do płatowca (PL/Spitfire, DE/Bf 109) — jedna pula callsignów (`BOT_NAMES`,
+`nextName()`/`hasBotName()` zamiast `nextName(type)`/`nickMatchesType`). **Deploy front+back RAZEM** (v7 niezmieniony,
+ale semantyka poczekalni/roster rozjechana między wersjami). ⏳ user: smoke (2 ludzi → ta sama drużyna trzyma się po
+starcie; karty wyboru; „Gotów" + licznik u hosta; neutralne nicki botów). **NIEZACOMMITOWANE.**
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu

@@ -6,6 +6,7 @@ import {
   PLANE_TYPES,
   TEAM_COUNT,
   ZONE_CAPTURE_SECONDS,
+  planeCardInfoOf,
   planeLabelOf,
   sanitizeNick,
   type ChatMessage,
@@ -80,6 +81,8 @@ export interface LobbyCallbacks {
   /** Wybór drużyny w poczekalni (tryb drużynowy; rozdzielenie drużyna↔samolot 2026-06-25). Pozwala
    *  dwóm graczom celowo grać po tej samej stronie. */
   onSelectTeam(team: number): void;
+  /** Gracz oznacza gotowość do startu (system „Gotów" 2026-06-26). */
+  onSetReady(ready: boolean): void;
   /** Host zmienia ustawienia pokoju w poczekalni (tryb / liczba botów / poziom trudności). */
   onUpdateRoom(opts: { mode: MatchMode; bots: number; difficulty: DifficultyLevel }): void;
   /** Wyślij wiadomość na czat pokoju (poczekalnia). */
@@ -124,10 +127,16 @@ export class LobbyUI {
   private readonly teamSelect: HTMLSelectElement;
   private readonly startBtn: HTMLButtonElement;
   private readonly waitingHintEl: HTMLDivElement;
-  // wybór samolotu w poczekalni (faza 19b): select w obu trybach — niezależny od drużyny (2026-06-25)
+  // wybór samolotu w poczekalni: KARTY samolotów (2026-06-26) — niezależne od drużyny, klik = wybór
   private readonly planeRow: HTMLDivElement;
-  private readonly planeLabel: HTMLLabelElement;
-  private readonly planeSelect: HTMLSelectElement;
+  private readonly planeCardsEl: HTMLDivElement;
+  /** Karty per typ samolotu — do podświetlenia wybranej wg stanu z serwera. */
+  private readonly planeCards = new Map<PlaneType, HTMLDivElement>();
+  // gotowość gracza (system „Gotów" 2026-06-26): przycisk dla nie-hosta + wskaźniki w roster
+  private readonly readyRow: HTMLDivElement;
+  private readonly readyBtn: HTMLButtonElement;
+  /** Bieżąca gotowość lokalnego gracza (z WaitingView) — do etykiety przycisku i toggle. */
+  private myReady = false;
   // ustawienia pokoju w poczekalni: host steruje selektorami; reszta widzi podsumowanie tekstowe
   private readonly settingsRow: HTMLDivElement;
   private readonly settingsSummary: HTMLDivElement;
@@ -222,19 +231,25 @@ export class LobbyUI {
       this.cb.onSelectTeam(Number(this.teamSelect.value) || 0);
     });
     this.teamRow.append(teamLabelEl, this.teamSelect);
-    // wybór samolotu (faza 19b): w obu trybach wybór płatowca, niezależny od drużyny (2026-06-25)
-    this.planeRow = el('div', 'lobby-row lobby-bot-row');
-    this.planeLabel = el('label', 'lobby-label');
-    this.planeLabel.textContent = 'Twój samolot';
-    this.planeSelect = selectEl(
-      'lobby-select lobby-select-mode',
-      PLANE_TYPES.map((t) => ({ value: t, label: planeLabelOf(t) })),
-      PLANE_TYPES[0] ?? 'spitfire',
-    );
-    this.planeSelect.addEventListener('change', () => {
-      this.cb.onSelectPlane(this.planeSelect.value as PlaneType);
+    // wybór samolotu: KARTY (2026-06-26) — w obu trybach wybór płatowca, niezależny od drużyny.
+    // Klik w kartę = onSelectPlane; podświetlenie wybranej idzie za stanem z serwera (updateWaiting).
+    this.planeRow = el('div', 'lobby-plane-section');
+    const planeCaption = el('div', 'lobby-label');
+    planeCaption.textContent = 'Twój samolot';
+    this.planeCardsEl = el('div', 'lobby-plane-cards');
+    for (const type of PLANE_TYPES) {
+      const card = this.buildPlaneCard(type);
+      this.planeCards.set(type, card);
+      this.planeCardsEl.append(card);
+    }
+    this.planeRow.append(planeCaption, this.planeCardsEl);
+
+    // gotowość (system „Gotów" 2026-06-26): przycisk dla nie-hosta; host startuje, widząc licznik gotowych
+    this.readyRow = el('div', 'lobby-row lobby-ready-row');
+    this.readyBtn = button('✔ Gotów', 'lobby-btn lobby-btn-ready', () => {
+      this.cb.onSetReady(!this.myReady);
     });
-    this.planeRow.append(this.planeLabel, this.planeSelect);
+    this.readyRow.append(this.readyBtn);
 
     // --- ustawienia pokoju w poczekalni (host steruje, reszta widzi podsumowanie) ---
     const settingsCaption = el('div', 'lobby-label');
@@ -290,6 +305,7 @@ export class LobbyUI {
       this.teamsEl,
       this.teamRow,
       this.planeRow,
+      this.readyRow,
       settingsCaption,
       this.settingsRow,
       this.settingsSummary,
@@ -394,7 +410,31 @@ export class LobbyUI {
     this.updateWaiting(view);
   }
 
-  /** Buduje wiersz gracza (tag TY/HOST/BOT + nick + typ samolotu). textContent → XSS-safe. */
+  /** Buduje klikalną kartę wyboru samolotu (nazwa, rola, uzbrojenie, opis). Klik = onSelectPlane;
+   *  podświetlenie „wybrana" ustawia updateWaiting wg stanu z serwera (a nie od razu po kliknięciu). */
+  private buildPlaneCard(type: PlaneType): HTMLDivElement {
+    const info = planeCardInfoOf(type);
+    const card = el('div', 'lobby-plane-card');
+    const glyph = el('div', 'lobby-plane-glyph');
+    glyph.textContent = '✈';
+    const name = el('div', 'lobby-plane-name');
+    name.textContent = info.label;
+    const variant = el('div', 'lobby-plane-variant');
+    variant.textContent = info.fullName;
+    const trait = el('div', 'lobby-plane-trait');
+    trait.textContent = `${info.traitIcon} ${info.trait}`;
+    const weapons = el('div', 'lobby-plane-weapons');
+    weapons.textContent = info.weapons;
+    const blurb = el('div', 'lobby-plane-blurb');
+    blurb.textContent = info.blurb;
+    const pick = el('div', 'lobby-plane-pick');
+    pick.textContent = 'wybierz';
+    card.append(glyph, name, variant, trait, weapons, blurb, pick);
+    card.addEventListener('click', () => this.cb.onSelectPlane(type));
+    return card;
+  }
+
+  /** Buduje wiersz gracza (tag TY/HOST/BOT + nick + typ samolotu + gotowość). textContent → XSS-safe. */
   private buildPlayerRow(p: RoomPlayer, view: WaitingView): HTMLDivElement {
     const row = el('div', 'lobby-player-row');
     const tag = el('span', 'lobby-player-tag');
@@ -404,7 +444,14 @@ export class LobbyUI {
     // typ samolotu przy nicku (faza 19b: widać, kto czym leci — niezależnie od drużyny)
     const plane = el('span', 'lobby-player-plane');
     plane.textContent = planeLabelOf(p.planeType);
-    row.append(tag, name, plane);
+    // wskaźnik gotowości (system „Gotów" 2026-06-26) — tylko dla ludzi poza hostem (host steruje startem)
+    const ready = el('span', 'lobby-player-ready');
+    if (!p.isBot && p.id !== view.hostId) {
+      ready.textContent = p.ready ? '✔' : '⏳';
+      ready.classList.add(p.ready ? 'is-ready' : 'is-waiting');
+      ready.title = p.ready ? 'gotów' : 'czeka';
+    }
+    row.append(tag, name, plane, ready);
     return row;
   }
 
@@ -432,18 +479,32 @@ export class LobbyUI {
       this.waitingPlayersEl.replaceChildren();
       for (const p of view.players) this.waitingPlayersEl.append(this.buildPlayerRow(p, view));
     }
-    // wybór samolotu w OBU trybach niezależny od drużyny (2026-06-25); select ustawiony na MÓJ typ z serwera
-    this.planeLabel.textContent = 'Twój samolot';
     const mine = view.players.find((p) => p.id === view.youId);
-    if (mine && this.planeSelect.value !== mine.planeType) this.planeSelect.value = mine.planeType;
+    const isHost = view.youId === view.hostId;
+    // wycofany gracz ogląda poczekalnię, choć mecz wciąż TRWA (state≠'waiting', leaveMatch 2026-06-23):
+    // nie ma czego startować ani ustawiać — chowamy Start/ustawienia/karty/gotowość, mówiąc, że mecz w toku.
+    const matchInProgress = view.state !== 'waiting';
+
+    // KARTY samolotu (2026-06-26): podświetl wybraną wg stanu z serwera (niezależną od drużyny).
+    this.planeRow.style.display = matchInProgress ? 'none' : '';
+    const myPlane = mine?.planeType ?? null;
+    for (const [type, card] of this.planeCards) {
+      const selected = type === myPlane;
+      card.classList.toggle('selected', selected);
+      const pick = card.querySelector('.lobby-plane-pick');
+      if (pick) pick.textContent = selected ? '✔ WYBRANY' : 'wybierz';
+    }
     // selektor drużyny: ustawiony na MOJĄ frakcję z serwera (drużynowy); każdy gracz wybiera niezależnie
     if (mine && isTeam && this.teamSelect.value !== String(mine.faction)) {
       this.teamSelect.value = String(mine.faction);
     }
-    const isHost = view.youId === view.hostId;
-    // wycofany gracz ogląda poczekalnię, choć mecz wciąż TRWA (state≠'waiting', leaveMatch 2026-06-23):
-    // nie ma czego startować ani ustawiać — chowamy Start/ustawienia i mówimy, że mecz w toku.
-    const matchInProgress = view.state !== 'waiting';
+
+    // gotowość (system „Gotów" 2026-06-26): przycisk dla NIE-hosta w poczekalni (host startuje sam)
+    this.myReady = mine?.ready ?? false;
+    this.readyRow.style.display = !isHost && !matchInProgress ? '' : 'none';
+    this.readyBtn.textContent = this.myReady ? '✔ Gotów — kliknij, by cofnąć' : '✔ Oznacz: jestem gotów';
+    this.readyBtn.classList.toggle('is-ready', this.myReady);
+
     // ustawienia pokoju: host edytuje (selektory), reszta widzi podsumowanie tekstowe (oba tylko w 'waiting')
     this.settingsRow.style.display = isHost && !matchInProgress ? '' : 'none';
     this.settingsSummary.style.display = !isHost && !matchInProgress ? '' : 'none';
@@ -456,12 +517,20 @@ export class LobbyUI {
       this.settingsSummary.textContent =
         `Tryb: ${modeLabel}  ·  Boty: ${String(view.botCount)} (${DIFFICULTY_LABELS[view.difficulty]})`;
     }
+
+    // Start (host): licznik gotowości innych ludzi. Host startuje świadomie — AFK nie blokuje (nie wymuszamy).
     this.startBtn.style.display = isHost && !matchInProgress ? '' : 'none';
+    const others = view.players.filter((p) => !p.isBot && p.id !== view.hostId);
+    const readyCount = others.filter((p) => p.ready).length;
+    this.startBtn.textContent =
+      others.length > 0 ? `Start meczu (${String(readyCount)}/${String(others.length)} gotowych)` : 'Start meczu';
+    this.startBtn.classList.toggle('lobby-btn-wait', others.length > 0 && readyCount < others.length);
+
     this.waitingHintEl.textContent = matchInProgress
       ? 'Mecz w toku — dołączysz, gdy host wystartuje kolejny.'
       : isHost
-        ? 'Jesteś hostem — ustaw tryb/boty i wystartuj, gdy zbierze się ekipa.'
-        : 'Czekaj, aż host wystartuje mecz…';
+        ? 'Jesteś hostem — wybierz samolot/drużynę i wystartuj, gdy ekipa będzie gotowa.'
+        : 'Wybierz samolot i drużynę, a potem kliknij „Gotów". Host wystartuje mecz.';
   }
 
   /** Host wysłał zmianę ustawień (tryb/boty/poziom) — wszystkie naraz, serwer klampuje. */
@@ -693,6 +762,42 @@ const LOBBY_CSS = `
 .lobby-team-a .lobby-team-head { color: #7cc0ff; }
 .lobby-team-b { border-top-color: #ff8c42; }
 .lobby-team-b .lobby-team-head { color: #ffac72; }
+.lobby-player-ready { width: 20px; text-align: center; font-size: 13px; }
+.lobby-player-ready.is-ready { color: #6ee08a; }
+.lobby-player-ready.is-waiting { color: #c9a14a; }
+/* wybór samolotu — KARTY (2026-06-26): klikalne kafelki, podświetlenie wybranej idzie za serwerem */
+.lobby-plane-section { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.lobby-plane-cards { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+.lobby-plane-card {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  width: 190px; box-sizing: border-box; padding: 12px 14px; cursor: pointer;
+  background: rgba(12,22,34,0.85); border: 1px solid #345; border-radius: 10px;
+  transition: border-color 0.12s, background 0.12s, transform 0.08s;
+}
+.lobby-plane-card:hover { border-color: #6aa8da; background: rgba(18,32,48,0.92); }
+.lobby-plane-card.selected {
+  border-color: #e2772f; background: rgba(46,28,16,0.92);
+  box-shadow: 0 0 0 1px #e2772f, 0 6px 20px rgba(0,0,0,0.45);
+}
+.lobby-plane-glyph { font-size: 30px; line-height: 1; color: #cfe3f6; transform: rotate(-45deg); }
+.lobby-plane-card.selected .lobby-plane-glyph { color: #ffd24a; }
+.lobby-plane-name { font: 700 18px monospace; letter-spacing: 1px; color: #eaf3ff; }
+.lobby-plane-variant { font-size: 12px; color: #9fc4e6; }
+.lobby-plane-trait { font-size: 13px; color: #7fd49a; font-weight: 700; }
+.lobby-plane-weapons { font-size: 12px; color: #cdd9e6; }
+.lobby-plane-blurb { font-size: 11px; line-height: 1.35; color: #8aa6c0; text-align: center; min-height: 30px; }
+.lobby-plane-pick {
+  margin-top: 4px; font-size: 12px; font-weight: 700; letter-spacing: 1px;
+  color: #9fc4e6; text-transform: uppercase;
+}
+.lobby-plane-card.selected .lobby-plane-pick { color: #ffb060; }
+/* gotowość — przycisk dla nie-hosta; po potwierdzeniu zielony */
+.lobby-ready-row { justify-content: center; }
+.lobby-btn-ready { background: rgba(40,60,80,0.92); border-color: #4a6c8c; }
+.lobby-btn-ready.is-ready { background: #2f7d46; border-color: #46a35f; color: #fff; }
+.lobby-btn-ready.is-ready:hover { background: #36904f; }
+/* host: Start z niepełną gotowością — lekko przygaszony, ale wciąż klikalny (AFK nie blokuje) */
+.lobby-btn-wait { opacity: 0.85; }
 .lobby-settings-row { flex-wrap: wrap; justify-content: center; }
 .lobby-settings-summary { font-size: 13px; color: #cde; }
 .lobby-chat-log {

@@ -22,11 +22,40 @@ interface PlaneTypeInfo {
   config: PlaneConfig;
   /** Krótka etykieta do HUD przy markerze wroga i do lobby (np. „Spitfire", „Bf 109"). */
   label: string;
+  /** Pełna nazwa wariantu do karty wyboru w poczekalni (np. „Spitfire Mk IIa"). */
+  fullName: string;
+  /** Jednowyrazowa charakterystyka roli (karta wyboru): „Zwrotny" / „Energia". */
+  trait: string;
+  /** Glif roli przy charakterystyce na karcie (czysto wizualny). */
+  traitIcon: string;
+  /** Skrót uzbrojenia do karty (np. „8× .303 (7,7 mm)"). */
+  weapons: string;
+  /** Jedno zdanie charakterystyki/roli do karty wyboru. */
+  blurb: string;
 }
 
+// Dane KART wyboru w poczekalni (faza: przebudowa wyboru samolotu 2026-06-26). To etykiety UI,
+// nie strojenie fizyki (liczby żyją w JSON — niezmiennik nr 3), więc opisy roli stoją obok `label`.
+// Asymetria turn↔energy jest celowa (memory faza 19a): Spitfire = wirażówka, Bf 109 = energia/pion.
 const PLANE_INFO: Record<PlaneType, PlaneTypeInfo> = {
-  spitfire: { config: SPITFIRE_MK2, label: 'Spitfire' },
-  bf109: { config: BF109_E, label: 'Bf 109' },
+  spitfire: {
+    config: SPITFIRE_MK2,
+    label: 'Spitfire',
+    fullName: 'Spitfire Mk IIa',
+    trait: 'Zwrotny',
+    traitIcon: '⟳',
+    weapons: '8× .303 (7,7 mm)',
+    blurb: 'Duże skrzydło — ciasny zakręt, król wirażówki.',
+  },
+  bf109: {
+    config: BF109_E,
+    label: 'Bf 109',
+    fullName: 'Bf 109 E-3',
+    trait: 'Energia',
+    traitIcon: '⚡',
+    weapons: '2× MG 17 + 2× 20 mm',
+    blurb: 'Mocne działka i przewaga w pionie — boom & zoom.',
+  },
 };
 
 /** Konfiguracja fizyki/uzbrojenia danego typu (JSON walidowany przy imporcie loadera). */
@@ -37,6 +66,31 @@ export function planeConfigOf(type: PlaneType): PlaneConfig {
 /** Krótka etykieta typu do UI (HUD przy markerze, lobby). */
 export function planeLabelOf(type: PlaneType): string {
   return PLANE_INFO[type].label;
+}
+
+/** Dane karty wyboru samolotu w poczekalni (nazwa, rola, uzbrojenie, opis). Czysto UI. */
+export interface PlaneCardInfo {
+  type: PlaneType;
+  label: string;
+  fullName: string;
+  trait: string;
+  traitIcon: string;
+  weapons: string;
+  blurb: string;
+}
+
+/** Pełny opis typu do karty wyboru w poczekalni (faza: karty samolotów 2026-06-26). */
+export function planeCardInfoOf(type: PlaneType): PlaneCardInfo {
+  const i = PLANE_INFO[type];
+  return {
+    type,
+    label: i.label,
+    fullName: i.fullName,
+    trait: i.trait,
+    traitIcon: i.traitIcon,
+    weapons: i.weapons,
+    blurb: i.blurb,
+  };
 }
 
 /** Typ → kod bajtowy (snapshot v4). Rzuca NetError dla nieznanego typu (programistyczny błąd). */

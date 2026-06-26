@@ -25,6 +25,10 @@ function planeTypeInSnapshot(room: GameRoom, id: number): string | undefined {
 function ammoMaxInSnapshot(room: GameRoom, id: number): number | undefined {
   return room.snapshotEntities().find((e) => e.id === id)?.ammoMax;
 }
+/** Gotowość gracza z roster (system „Gotów" 2026-06-26) — nie ma getterа, czytamy z roomPlayers(). */
+function readyOf(room: GameRoom, id: number): boolean | undefined {
+  return room.roomPlayers().find((p) => p.id === id)?.ready;
+}
 
 describe('FFA — wybór samolotu per gracz', () => {
   it('domyślnie Spitfire; HP/amunicja/typ snapshotu za Spitfire', () => {
@@ -149,5 +153,88 @@ describe('boty', () => {
     expect(planeTypeInSnapshot(room, botId)).toBe('bf109');
     expect(room.healthOf(botId)).toBe(BF109_E.hpPool);
     expect(room.ammoOf(botId)).toBe(BF109_AMMO);
+  });
+});
+
+describe('drużyny — „co widać w poczekalni, to startuje" (WYSIWYG, fix 2026-06-26)', () => {
+  it('REGRESJA: gracz auto-przydzielony + drugi wybiera TĘ SAMĄ drużynę → obaj startują razem', () => {
+    // Bug: poprzednio assignFactions honorował tylko jawne selectTeam, a auto-przydzielonego (teamPref=null)
+    // wyrównywał od nowa → start przerzucał go na przeciwną drużynę mimo wspólnej kolumny w poczekalni.
+    const room = new GameRoom('WYS1');
+    room.mode = 'team';
+    const a = add(room, 'alfa'); // auto-balans → drużyna 0, BEZ jawnego wyboru (teamPref=null)
+    const b = add(room, 'bravo'); // auto-balans → drużyna 1
+    expect(room.factionOf(a)).toBe(0);
+    expect(room.factionOf(b)).toBe(1);
+    room.selectTeam(b, 0); // b jawnie dołącza do drużyny a → poczekalnia pokazuje obu na 0
+    expect(room.factionOf(a)).toBe(0);
+    expect(room.factionOf(b)).toBe(0);
+    room.start(); // KLUCZ: a (teamPref=null) NIE jest przerzucany „dla balansu"
+    expect(room.factionOf(a)).toBe(0);
+    expect(room.factionOf(b)).toBe(0);
+  });
+
+  it('frakcja widoczna w poczekalni = frakcja na starcie (żaden człowiek się nie przesuwa)', () => {
+    const room = new GameRoom('WYS2');
+    room.mode = 'team';
+    const ids = [add(room, 'a'), add(room, 'b'), add(room, 'c'), add(room, 'd')];
+    const before = ids.map((id) => room.factionOf(id));
+    room.start();
+    const after = ids.map((id) => room.factionOf(id));
+    expect(after).toEqual(before);
+  });
+
+  it('boty wyrównują drużyny wokół wyborów ludzi (3 ludzi na 0 → boty lecą na 1)', () => {
+    const room = new GameRoom('WYS3');
+    room.mode = 'team';
+    const humans = [add(room, 'a'), add(room, 'b'), add(room, 'c')];
+    for (const id of humans) room.selectTeam(id, 0);
+    const bots = [room.addBot('normalny'), room.addBot('normalny'), room.addBot('normalny')];
+    room.start();
+    for (const id of humans) expect(room.factionOf(id)).toBe(0);
+    for (const id of bots) expect(room.factionOf(id)).toBe(1);
+  });
+});
+
+describe('gotowość — system „Gotów" (2026-06-26)', () => {
+  it('człowiek domyślnie NIE gotów; setReady przełącza; bot zawsze gotowy', () => {
+    const room = new GameRoom('RDY1');
+    const a = add(room, 'alfa');
+    const bot = room.addBot('normalny');
+    expect(readyOf(room, a)).toBe(false);
+    expect(readyOf(room, bot)).toBe(true);
+    room.setReady(a, true);
+    expect(readyOf(room, a)).toBe(true);
+    room.setReady(a, false);
+    expect(readyOf(room, a)).toBe(false);
+  });
+
+  it('zmiana samolotu albo drużyny ZERUJE gotowość (potwierdzasz aktualny skład)', () => {
+    const room = new GameRoom('RDY2');
+    room.mode = 'team';
+    const a = add(room, 'alfa');
+    room.setReady(a, true);
+    room.selectPlane(a, 'bf109');
+    expect(readyOf(room, a)).toBe(false); // zmiana samolotu cofnęła gotowość
+    room.setReady(a, true);
+    room.selectTeam(a, 1);
+    expect(readyOf(room, a)).toBe(false); // zmiana drużyny też
+  });
+
+  it('start meczu „konsumuje" gotowość — po powrocie do poczekalni człowiek potwierdza od nowa', () => {
+    const room = new GameRoom('RDY3');
+    const a = add(room, 'alfa');
+    const bot = room.addBot('normalny');
+    room.setReady(a, true);
+    room.start();
+    expect(readyOf(room, a)).toBe(false); // człowiek zresetowany
+    expect(readyOf(room, bot)).toBe(true); // bot dalej gotowy
+  });
+
+  it('setReady ignorowany dla bota (boty są gotowe z definicji)', () => {
+    const room = new GameRoom('RDY4');
+    const bot = room.addBot('normalny');
+    room.setReady(bot, false);
+    expect(readyOf(room, bot)).toBe(true);
   });
 });

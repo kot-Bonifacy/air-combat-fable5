@@ -707,6 +707,10 @@ export interface RoomPlayer {
   faction: number;
   /** Czy to bot (poczekalnia: tag [BOT] + ustalanie liczby botów po stronie hosta). */
   isBot: boolean;
+  /** Gotowość gracza do startu (system „Gotów" 2026-06-26): host widzi, kto potwierdził skład, i
+   *  startuje świadomie. Boty zawsze gotowe (true). Zmiana samolotu/drużyny zeruje gotowość — gracz
+   *  potwierdza AKTUALNY wybór tuż przed grą. Pole addytywne JSON — bez bumpu protokołu. */
+  ready: boolean;
 }
 
 // --- klient → serwer ---
@@ -759,6 +763,14 @@ export interface SelectPlaneMessage {
 export interface SelectTeamMessage {
   t: 'selectTeam';
   team: number;
+}
+
+/** Klient → serwer: gracz oznacza GOTOWOŚĆ do startu (system „Gotów" 2026-06-26). Host widzi licznik
+ *  gotowych i startuje świadomie (nie czeka na wszystkich — uniknięcie zakleszczenia przez AFK).
+ *  Serwer zeruje gotowość przy zmianie samolotu/drużyny i na starcie meczu. Pole addytywne JSON. */
+export interface SetReadyMessage {
+  t: 'setReady';
+  ready: boolean;
 }
 
 /**
@@ -966,6 +978,7 @@ export type ControlMessage =
   | JoinRoomMessage
   | SelectPlaneMessage
   | SelectTeamMessage
+  | SetReadyMessage
   | UpdateRoomMessage
   | ChatSendMessage
   | QuickPlayMessage
@@ -991,6 +1004,7 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'joinRoom',
   'selectPlane',
   'selectTeam',
+  'setReady',
   'updateRoom',
   'chatSend',
   'quickPlay',

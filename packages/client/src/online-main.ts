@@ -924,6 +924,7 @@ const lobby = new LobbyUI({
   },
   onSelectPlane: (plane) => net?.selectPlane(plane), // faza 19b: wybór samolotu w poczekalni
   onSelectTeam: (team) => net?.selectTeam(team), // wybór drużyny (rozdzielenie drużyna↔samolot 2026-06-25)
+  onSetReady: (ready) => net?.setReady(ready), // gotowość do startu (system „Gotów" 2026-06-26)
   onUpdateRoom: (opts) => net?.updateRoom(opts), // host: zmiana trybu/botów/poziomu w poczekalni
   onSendChat: (text) => net?.sendChat(text), // czat poczekalni
 });

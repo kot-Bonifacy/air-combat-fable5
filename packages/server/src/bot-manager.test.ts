@@ -1,31 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { BotManager } from './bot-manager';
 
-// Nazwiska botów wg samolotu (decyzja użytkownika 2026-06-21): polskie na Spitfire, niemieckie
-// na Bf 109 — skład pasuje narodowością do strony. Pule nie są eksportowane, więc weryfikujemy
-// przez publiczne `nextName` + `nickMatchesType` (to samo, czego używa GameRoom.refreshBotName).
-describe('BotManager — nazwiska wg samolotu', () => {
-  it('nadaje polskie nazwiska na Spitfire, niemieckie na Bf 109 (z prefiksem [BOT])', () => {
+// Neutralne nazwy botów (2026-06-26: koniec historycznego dobierania narodowości do samolotu —
+// drużyna i samolot są rozdzielone). Pula nie jest eksportowana, więc weryfikujemy przez publiczne
+// `nextName` + `hasBotName` (to samo, czego używa GameRoom.refreshBotName).
+describe('BotManager — neutralne nazwy', () => {
+  it('nadaje callsigny z prefiksem [BOT], rozpoznawane przez hasBotName', () => {
     const bm = new BotManager();
-    const spitNick = bm.nextName('spitfire');
-    const bfNick = bm.nextName('bf109');
+    const a = bm.nextName();
+    const b = bm.nextName();
 
-    expect(spitNick.startsWith('[BOT] ')).toBe(true);
-    expect(bfNick.startsWith('[BOT] ')).toBe(true);
+    expect(a.startsWith('[BOT] ')).toBe(true);
+    expect(b.startsWith('[BOT] ')).toBe(true);
+    expect(a).not.toBe(b); // kolejne nicki są różne (kursor po puli)
 
-    expect(bm.nickMatchesType(spitNick, 'spitfire')).toBe(true);
-    expect(bm.nickMatchesType(spitNick, 'bf109')).toBe(false);
-    expect(bm.nickMatchesType(bfNick, 'bf109')).toBe(true);
-    expect(bm.nickMatchesType(bfNick, 'spitfire')).toBe(false);
+    expect(bm.hasBotName(a)).toBe(true);
+    expect(bm.hasBotName(b)).toBe(true);
+    expect(bm.hasBotName('Pilot123')).toBe(false); // nick gracza nie należy do puli botów
   });
 
-  it('rozpoznaje narodowość także w numerowanej nadwyżce puli', () => {
+  it('rozpoznaje nick także w numerowanej nadwyżce puli', () => {
     const bm = new BotManager();
     let last = '';
-    for (let i = 0; i < 12; i++) last = bm.nextName('bf109'); // przekrocz rozmiar puli → numeracja
+    for (let i = 0; i < 14; i++) last = bm.nextName(); // przekrocz rozmiar puli → numeracja
     expect(/\s\d+$/.test(last)).toBe(true);
-    expect(bm.nickMatchesType(last, 'bf109')).toBe(true);
-    expect(bm.nickMatchesType(last, 'spitfire')).toBe(false);
+    expect(bm.hasBotName(last)).toBe(true);
   });
 
   it('notifyHit dla nieznanego id jest no-op (nie rzuca)', () => {

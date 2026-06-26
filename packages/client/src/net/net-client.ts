@@ -238,6 +238,11 @@ export class NetClient {
     this.sendControl({ t: 'selectTeam', team });
   }
 
+  /** Oznacz gotowość do startu (system „Gotów" 2026-06-26). Serwer zeruje ją przy zmianie składu i na starcie. */
+  setReady(ready: boolean): void {
+    this.sendControl({ t: 'setReady', ready });
+  }
+
   /** Host zmienia ustawienia pokoju w poczekalni (tryb/boty/poziom). Serwer egzekwuje host+waiting. */
   updateRoom(opts: { mode?: MatchMode; bots?: number; difficulty?: DifficultyLevel }): void {
     this.sendControl({ t: 'updateRoom', ...opts });

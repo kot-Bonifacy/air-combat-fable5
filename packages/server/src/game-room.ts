@@ -258,6 +258,9 @@ interface ServerPlayer {
   /** Gracz wycofał się z BIEŻĄCEGO meczu, zostając w pokoju (powrót do poczekalni bez kończenia gry
    *  innym — leaveMatch). Samolot martwy i bez respawnu; flaga znika przy starcie kolejnego meczu. */
   withdrawn: boolean;
+  /** Gotowość do startu (system „Gotów" 2026-06-26): host widzi licznik gotowych. Boty zawsze true.
+   *  Zerowana przy zmianie samolotu/drużyny i na starcie meczu (gracz potwierdza AKTUALNY skład). */
+  ready: boolean;
 }
 
 export class GameRoom {
@@ -406,6 +409,7 @@ export class GameRoom {
       planeType: this.effectiveType(p),
       faction: p.faction,
       isBot: p.isBot,
+      ready: p.ready,
     }));
   }
 
@@ -427,8 +431,8 @@ export class GameRoom {
    * `planeType` wymusza samolot (sesje balansowe/testy); bez niego bot losuje typ (faza 19b).
    */
   addBot(difficulty: DifficultyLevel, planeType?: PlaneType): number {
-    // nick nadaje refreshBotName() w spawn(), gdy znany jest już efektywny typ samolotu (po
-    // przydziale frakcji w enterWorld) — żeby pasował narodowością do strony (PL/Spitfire, DE/Bf 109).
+    // neutralny nick nadaje refreshBotName() w spawn() (2026-06-26: nazwy botów nie zależą już od
+    // samolotu/strony); pusty startowy nick zostaje zastąpiony pierwszym callsignem z puli.
     const player = this.createPlayer('', '', null, true, planeType);
     // strumień RNG bota osobny od strumienia rozrzutu ognia (inna stała mieszająca)
     this.botManager.add(player.id, difficulty, (player.id + 1) ^ 0x0b07);
@@ -436,14 +440,13 @@ export class GameRoom {
     return player.id;
   }
 
-  /** Nadaje/odświeża nick bota wg efektywnego typu samolotu (PL na Spitfire, DE na Bf 109).
-   *  No-op, gdy bieżący nick już pasuje narodowością — nick jest stabilny między respawnami i
-   *  zmienia się tylko, gdy bot zmienia stronę (np. przełączenie trybu FFA↔drużynowy). */
+  /** Nadaje botowi neutralny nick (callsign), jeśli jeszcze go nie ma. Nazwy NIE zależą już od
+   *  samolotu/strony (2026-06-26: koniec historycznego dobierania narodowości do płatowca) — nick
+   *  jest stabilny między respawnami i zmianami trybu (no-op, gdy bot ma już nick z puli). */
   private refreshBotName(player: ServerPlayer): void {
     if (!player.isBot) return;
-    const type = this.effectiveType(player);
-    if (!this.botManager.nickMatchesType(player.nick, type)) {
-      player.nick = this.botManager.nextName(type);
+    if (!this.botManager.hasBotName(player.nick)) {
+      player.nick = this.botManager.nextName();
     }
   }
 
@@ -503,6 +506,7 @@ export class GameRoom {
       prevPos: new Vector3(),
       isBot,
       withdrawn: false,
+      ready: isBot, // boty zawsze gotowe; człowiek potwierdza przyciskiem „Gotów"
     };
     this.players.set(id, player);
     return player;
@@ -543,10 +547,17 @@ export class GameRoom {
 
   /**
    * Przydziela frakcje WSZYSTKIM uczestnikom (start/rewanż meczu). FFA: frakcja = id. Drużynowy:
-   * najpierw UTRWALA wybrane drużyny (gracze, którzy użyli selectTeam — rozdzielenie drużyna↔samolot
-   * 2026-06-25), potem resztę (boty, niewybierający) dobiera do mniejszej drużyny — równy podział
-   * wokół wyborów, deterministyczny w kolejności id. Wolny wybór: dwóch ludzi może wybrać tę samą
-   * drużynę (nie wymuszamy balansu między ludźmi — boty wyrównują). Bez wyborów = czysty auto-balans.
+   * honoruje drużynę, którą KAŻDY CZŁOWIEK JUŻ WIDZI w poczekalni (jawny wybór selectTeam ALBO bieżąca,
+   * prawidłowa frakcja z auto-przydziału przy wejściu), a boty dokłada do mniejszej drużyny.
+   *
+   * Zasada „co widać w poczekalni, to startuje" (WYSIWYG) — fix buga 2026-06-26: poprzednia wersja
+   * honorowała TYLKO jawne `teamPref`, a wszystkich bez wyboru (w tym ludzi auto-przydzielonych do
+   * drużyny widocznej w poczekalni) wyrównywała od nowa. Gdy jeden gracz wybrał drużynę jawnie, a drugi
+   * tylko „wylądował" na tej samej stronie (teamPref=null), start przerzucał tego drugiego na przeciwną
+   * drużynę „dla balansu" — choć poczekalnia pokazywała ich razem. Efekt: znajomi startowali po przeciwnych
+   * stronach. Teraz frakcja widoczna w poczekalni = frakcja na starcie; balansują tylko boty i świeżo
+   * dołączający bez przydziału (np. po zmianie trybu FFA→drużynowy, gdy frakcja=id jest poza zakresem).
+   * Wolny wybór: dwóch ludzi może być w tej samej drużynie (nie wymuszamy balansu między ludźmi).
    */
   private assignFactions(): void {
     if (this.mode !== 'team') {
@@ -554,20 +565,32 @@ export class GameRoom {
       return;
     }
     const counts = new Array<number>(TEAM_COUNT).fill(0);
-    // 1) utrwal wybrane drużyny — gracz świadomie wybrał stronę (selectTeam)
+    // 1) LUDZIE: zachowaj drużynę z poczekalni (teamPref albo bieżąca, prawidłowa frakcja).
+    const unassignedHumans: ServerPlayer[] = [];
     for (const p of this.players.values()) {
-      if (p.teamPref !== null && p.teamPref >= 0 && p.teamPref < TEAM_COUNT) {
-        p.faction = p.teamPref;
-        counts[p.faction] = (counts[p.faction] ?? 0) + 1;
+      if (p.isBot) continue;
+      let team: number | null = null;
+      if (p.teamPref !== null && p.teamPref >= 0 && p.teamPref < TEAM_COUNT) team = p.teamPref;
+      else if (p.faction >= 0 && p.faction < TEAM_COUNT) team = p.faction;
+      if (team !== null) {
+        p.faction = team;
+        counts[team] = (counts[team] ?? 0) + 1;
+      } else {
+        unassignedHumans.push(p); // brak prawidłowej drużyny (np. świeże przejście z FFA: frakcja = id)
       }
     }
-    // 2) resztę (boty + gracze bez wyboru) wyrównaj do mniejszej drużyny
+    // 2) ludzie bez prawidłowej drużyny → do mniejszej (pierwszy przydział po zmianie trybu)
+    for (const p of unassignedHumans) {
+      const t = smallerTeamIndex(counts);
+      p.faction = t;
+      counts[t] = (counts[t] ?? 0) + 1;
+    }
+    // 3) BOTY: wypełniacz — równoważą drużyny wokół wyborów ludzi (deterministycznie w kolejności id)
     for (const p of this.players.values()) {
-      if (p.teamPref === null) {
-        const t = smallerTeamIndex(counts);
-        p.faction = t;
-        counts[t] = (counts[t] ?? 0) + 1;
-      }
+      if (!p.isBot) continue;
+      const t = smallerTeamIndex(counts);
+      p.faction = t;
+      counts[t] = (counts[t] ?? 0) + 1;
     }
   }
 
@@ -606,6 +629,7 @@ export class GameRoom {
     if (!player || player.isBot) return;
     if (player.selectedType === type) return;
     player.selectedType = type;
+    player.ready = false; // zmiana składu → ponowne potwierdzenie gotowości (system „Gotów")
     this.broadcastRoomUpdate(); // roster pokazuje nowy typ w poczekalni
   }
 
@@ -623,7 +647,24 @@ export class GameRoom {
     if (team < 0 || team >= TEAM_COUNT) return; // obrona — connection klampuje wcześniej
     if (player.teamPref === team) return;
     player.teamPref = team;
-    player.faction = team;
+    player.ready = false; // zmiana składu → ponowne potwierdzenie gotowości (system „Gotów")
+    // utrwal wybór i rebalansuj boty na żywo: poczekalnia pokazuje DOKŁADNIE skład, który wystartuje
+    // (WYSIWYG) — ludzie zostają tam, gdzie ich widać, boty wyrównują wokół nich. assignFactions ustawia
+    // faction tego gracza z teamPref; przy starcie jest wołane ponownie (idempotentnie).
+    this.assignFactions();
+    this.broadcastRoomUpdate();
+  }
+
+  /**
+   * Gracz oznacza GOTOWOŚĆ do startu (system „Gotów" 2026-06-26). Host widzi licznik gotowych i
+   * startuje świadomie (nie czeka na wszystkich — AFK nie blokuje gry). Tylko człowiek; bot/nieznany
+   * gracz = no-op (boty są gotowe z definicji). Zerowane przy zmianie samolotu/drużyny i na starcie.
+   */
+  setReady(id: number, ready: boolean): void {
+    const player = this.players.get(id);
+    if (!player || player.isBot) return;
+    if (player.ready === ready) return;
+    player.ready = ready;
     this.broadcastRoomUpdate();
   }
 
@@ -643,8 +684,8 @@ export class GameRoom {
       // przydziela assignFactions() przy start(), ale przydzielamy je już teraz, żeby poczekalnia
       // od razu pokazała poprawny podział na drużyny (kolumny + kolory).
       this.assignFactions();
-      // narodowość nicku bota zależy od jego samolotu → odśwież nicki (bez respawnu)
-      for (const p of this.players.values()) this.refreshBotName(p);
+      // zmiana trybu = istotna zmiana składu (FFA↔drużyny) → ludzie potwierdzają gotowość od nowa
+      for (const p of this.players.values()) if (!p.isBot) p.ready = false;
       changed = true;
     }
     let diffChanged = false;
@@ -768,6 +809,7 @@ export class GameRoom {
       player.groundKills = 0;
       player.livesLeft = MATCH_LIVES; // pełna pula żyć na nowy mecz (drużynowy: 1/samolot jak SP)
       player.withdrawn = false; // wycofani z poprzedniego meczu wracają do gry przy starcie kolejnego
+      player.ready = player.isBot; // gotowość „skonsumowana" — po powrocie do poczekalni człowiek potwierdza od nowa
       this.spawn(player);
     }
     this.broadcastControl({ t: 'matchStarted' });
