@@ -38,8 +38,13 @@ import { planeTypeFromCode, planeTypeToCode, type PlaneType } from '../planes/pl
  * KILL `'flak'` (zestrzelenie przez stanowisko); StandingRow dokłada `groundKills`, StandingsMessage
  * `aaDestroyed` (stan stanowisk dla późno dołączających). Pozycje stanowisk są deterministyczne z
  * seeda terenu (klient liczy je sam) — nie ma ich w snapshocie.
+ * v7: snapshot encji dokłada bajt PALIWA (ułamek 0..1). Paliwo było ukrytym stanem fizyki — klient
+ * predykował je lokalnie, a reconcile resetował do 1 tylko przy świeżym spawnie. Po wznowieniu sesji
+ * (auto-reconnect bez przeładowania) stan klienta rozjeżdżał się z serwerem (pokazywany pusty bak).
+ * Teraz paliwo jest autorytatywne jak HP/amunicja: klient predykuje między snapshotami i KORYGUJE do
+ * wartości serwera. Deploy front+back RAZEM (niespójna wersja = błąd handshake).
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 /** Tag pierwszego bajtu ramki binarnej: wejście gracza (klient → serwer). */
 export const MSG_INPUT = 1;
@@ -235,6 +240,9 @@ export interface EntitySnapshot {
   /** Ułamek amunicji GRUPY WTÓRNEJ 0..1 (protokół v5; działko 20 mm Bf 109). 0 dla samolotów
    *  z jedną grupą broni (Spitfire) — klient pomija osobny licznik wg konfiguracji typu. */
   ammoSecondaryFrac: number;
+  /** Ułamek paliwa 0..1 (protokół v7) — autorytet serwera; klient predykuje lokalnie i koryguje do
+   *  tej wartości w reconcile (wcześniej paliwo było ukryte i rozjeżdżało się po auto-reconnekcie). */
+  fuelFrac: number;
   /** Typ samolotu encji (faza 19b) — klient dobiera mesh i etykietę HUD; lokalnie też predykcję. */
   planeType: PlaneType;
 }
@@ -268,7 +276,7 @@ export interface SnapshotEntitySource {
 }
 
 export const SNAPSHOT_HEADER_BYTES = 10; // u8 type | u32 tick | u32 ack | u8 count
-export const SNAPSHOT_ENTITY_BYTES = 33; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp | u8 ammo | u8 ammoSecondary | u8 planeType
+export const SNAPSHOT_ENTITY_BYTES = 34; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp | u8 ammo | u8 ammoSecondary | u8 planeType | u8 fuel
 
 /** Rozmiar snapshotu [bajty] dla zadanej liczby encji — do budżetu pasma. */
 export function snapshotByteLength(entityCount: number): number {
@@ -321,6 +329,7 @@ export function encodeSnapshot(
       e.fireSecondary && e.ammoSecondaryMax > 0 ? e.fireSecondary.ammoRemaining / e.ammoSecondaryMax : 0;
     view.setUint8(o + 31, Math.round(clamp(ammoSecFrac, 0, 1) * 255));
     view.setUint8(o + 32, planeTypeToCode(e.planeType));
+    view.setUint8(o + 33, Math.round(clamp(s.fuelFrac, 0, 1) * 255)); // paliwo (v7) — autorytet serwera
     o += SNAPSHOT_ENTITY_BYTES;
   }
   return o;
@@ -366,6 +375,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
     const ammoFrac = view.getUint8(o + 30) / 255;
     const ammoSecondaryFrac = view.getUint8(o + 31) / 255;
     const planeType = planeTypeFromCode(view.getUint8(o + 32));
+    const fuelFrac = view.getUint8(o + 33) / 255;
     entities.push({
       id,
       life: lifePhaseFromCode(flags),
@@ -378,6 +388,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
       healthFrac,
       ammoFrac,
       ammoSecondaryFrac,
+      fuelFrac,
       planeType,
     });
     o += SNAPSHOT_ENTITY_BYTES;

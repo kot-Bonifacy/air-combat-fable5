@@ -1118,9 +1118,12 @@ function createNet(nick: string, token: string | null): NetClient {
   c.onSnapshot = handleSnapshot;
   c.onEvents = handleEvents;
   c.onWelcome = (msg) => {
-    saveToken(msg.sessionToken);
-    // świeże połączenie (nie reconnect) → pokaż lobby i pobierz listę pokoi
+    // świeże połączenie (nie reconnect) → zapisz token i pokaż lobby. Podczas wznawiania sesji NIE
+    // nadpisujemy zapisanego tokenu: udany resume zwraca ten sam token (więc zapis zbędny), a gdyby
+    // serwer wyjątkowo zepchnął nas do lobby ze ŚWIEŻYM tokenem, zapisanie go „zatrułoby" kolejne
+    // próby (token lobby nie wskazuje już slotu w pokoju) → pętla wznawiania.
     if (!attemptingResume) {
+      saveToken(msg.sessionToken);
       enterLobby();
       c.requestRoomList();
     }

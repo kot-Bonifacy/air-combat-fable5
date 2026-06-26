@@ -176,6 +176,10 @@ export class Predictor {
     state.throttle = server.throttle;
     state.life = server.life;
     state.stalled = server.stalled;
+    // paliwo jest autorytatywne od protokołu v7 (wcześniej ukryty stan resetowany do 1 przy spawnie,
+    // co po auto-reconnekcie pokazywało rozjechany/pusty bak): przyjmij wartość serwera jak HP/prędkość;
+    // replay nowszych niż ack inputów (niżej) dopali ją lokalnie spójnie z dopredykowaną pozycją.
+    state.fuelFrac = server.fuelFrac;
     // iasMs nie jest w snapshocie — odtwórz z prędkości i wysokości (zgodnie z serwerem),
     // bo koperta (maxRollRate) czyta state.iasMs już w PIERWSZYM kroku replay
     state.iasMs = tasToIasMs(server.velocity.length(), airDensityKgM3(server.position.y));
@@ -189,9 +193,8 @@ export class Predictor {
       this.sim.gLoadMachine.reset();
       this.sim.gLoadEffects.reserve = 1;
       this.sim.gLoadEffects.blackoutFactor = 0;
-      // paliwo nie jest w snapshocie (ukryty stan fizyki) — przy świeżym spawnie (dead/respawning
-      // → alive) mirror serwerowego resetu do pełnego baku; w locie predykcja sama je integruje.
-      if (serverAlive) state.fuelFrac = 1;
+      // paliwo przyjęte już wyżej z autorytetu (server.fuelFrac, v7) — przy świeżym spawnie serwer
+      // wysyła 1 (pełny bak), więc nie ma tu osobnego resetu.
     }
 
     // replay inputów nowszych niż ack TĄ SAMĄ ścieżką co predict: żywy → stepPilotedPlane,

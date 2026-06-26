@@ -107,6 +107,13 @@ export class Connection implements RoomMember {
     if (this.socket.readyState === this.socket.OPEN) this.socket.send(bytes);
   }
 
+  /** RoomMember.close: serwer zamyka to połączenie (np. świeży reconnect przejął slot i domyka
+   *  stare „zombie"). 'close' socketu odpali cleanup → detachMember(…, this), które strażnik
+   *  pominie, bo slot trzyma już nowe połączenie. */
+  close(): void {
+    this.socket.close();
+  }
+
   // --- tekst: handshake + wiadomości lobby ---
 
   private onText(data: RawData): void {
@@ -414,7 +421,9 @@ export class Connection implements RoomMember {
     // NIE usuwamy gracza od razu — trzymamy slot na reconnect (okno 60 s, lobby.maintain
     // posprząta po wygaśnięciu). Połączenie znika z pokoju jako RoomMember.
     if (this.room && this.playerId !== null) {
-      this.room.detachMember(this.playerId, Date.now());
+      // przekaż `this` — detachMember odpina slot tylko, jeśli to wciąż TO połączenie go trzyma
+      // (świeży reconnect mógł już przejąć slot; spóźniony close zombie nie może go wtedy kopnąć)
+      this.room.detachMember(this.playerId, Date.now(), this);
       this.log.info({ remote: this.remote, code: this.room.code, playerId: this.playerId }, 'gracz rozłączony (slot trzymany na reconnect)');
     }
   }

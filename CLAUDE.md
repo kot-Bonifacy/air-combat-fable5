@@ -29,9 +29,12 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 | 20    | **Teren v2 (timebox)**: złota godzina+lens flare, chmury billboardowe (krycie się), woda v2 (waternormals+odbicie nieba, bez planar), teren 2-poziomowy | ✅ 460 testów zielone; podpunkt 5 → backlog; **doszlif 2026-06-21**: tekstury v3 2K + anti-tiling (koniec „kraty"), fix migotania brzegu (`logarithmicDepthBuffer`), drzewa próbowane→odrzucone; ⏳ user: pomiar fps RTX + weryfikacja wzrokowa (patrz `docs/phases/faza-20.md`) |
 | 21    | **Dźwięk i efekty (audio)**: Web Audio (Three.js listener), silniki dobrane do modeli (Merlin→Spitfire, **DB 601→Bf 109**), broń 7,7 mm vs działko 20 mm, eksplozje/trafienia (sample freesound CC0/CC-BY), świst∝IAS²+buffet+ding/UI proceduralne, master vol+mute (localStorage, menu pauzy/klawisz M) | ✅ 474 testy zielone; **wizualia (smugi kondensacyjne/szczątki/ślad 20 mm) → backlog** (nieweryfikowalne wzrokowo z sesji, fps to kryterium); ⏳ user: odsłuch/playtest miksu + brak błędów autoplay (Chrome/FF/Edge) + fps RTX (patrz `docs/phases/faza-21.md`) |
 
-**Protokół: `PROTOCOL_VERSION = 5`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
-w sesji poprawek 2026-06-21 +1 bajt amunicji GRUPY WTÓRNEJ = działko 20 mm Bf 109; fazy 15–18, P1–P5
-i czat poczekalni bez bumpu — addytywne JSON albo usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
+**Protokół: `PROTOCOL_VERSION = 7`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
+w sesji poprawek 2026-06-21 +1 bajt amunicji GRUPY WTÓRNEJ = działko 20 mm Bf 109 → v5; v6 = naziemne
+stanowiska ogniowe AA (nowe zdarzenia binarne EV_AA_FIRE/EV_AA_DESTROYED, cause `'flak'`); v7 = +1 bajt
+PALIWA w snapshocie encji (paliwo przestało być ukrytym stanem — autorytatywne jak HP/amunicja, fix pustego
+baku po auto-reconnekcie, 2026-06-26); fazy 15–18, P1–P5 i czat poczekalni bez bumpu — addytywne JSON albo
+usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
 
 **Sesja poprawek 2026-06-21 (poza fazami, 7 zgłoszeń usera — 460 testów zielone):** (1) pole nicku/czatu
 — `KeyboardInput` nie przechwytuje WSADQE, gdy fokus w polu tekstowym (`isEditingText`); (2) ekran ładowania
@@ -148,6 +151,27 @@ niezmieniony, ale semantyka poczekalni rozjechana między wersjami). ⏳ user: s
 różnych samolotów po tej samej stronie; boty wyrównują). **Uwaga UX:** skoro obie drużyny mogą mieć ten sam samolot,
 jedynym wizualnym znacznikiem strony jest kolor markera (sylwetka już nie zdradza drużyny) — ewentualne mocniejsze
 oznaczenie (tint kadłuba/znaki) to osobny temat. **Zacommitowane `b81f89a` + push.**
+
+**Fix pętli reconnectu + paliwo w snapshocie 2026-06-26 (2 objawy usera, 497 testów zielone, BUMP protokołu
+v6→v7):** user: po krótkim braku internetu (1) **pusty bak za każdym razem** + (2) **wznawianie nieskuteczne
+i ciągle się powtarza**. (A) **Pętla wznawiania — wyścig serwer↔klient:** gdy sieć pada PO STRONIE KLIENTA,
+przeglądarka wykrywa zerwanie szybko, ale serwer NIE (jego TCP czeka na timeout — sekundy/minuty), więc stary
+„zombie" wciąż trzyma slot (`member≠null`) → `reconnectByToken` (wymagał `member===null`) zwracał null →
+connection traktował to jak NOWE wejście: świeży token + lobby → klient `onWelcome` `saveToken(nowy)` **zatruwał
+zapisany token** (nie wskazuje już slotu) → pętla do wygaśnięcia okna 12 s. Fix (3 zmiany, poza hot pathem):
+`reconnectByToken` **przejmuje slot także gdy `member≠null`** (token = sekret sesji → okaziciel JEST graczem;
+zamyka zombie przez nowy opcjonalny `RoomMember.close?()`); `detachMember(id,nowMs,member?)` **strażnik
+tożsamości** (spóźniony `close` zombie nie odpina świeżo wróconego — `connection.ts` przekazuje `this`, dodana
+`close()`); klient `onWelcome` **nie nadpisuje tokenu podczas `attemptingResume`**. (B) **Pusty bak (decyzja
+usera: REALNE paliwo, nie „pełny bak"):** paliwo było UKRYTYM stanem fizyki (klient predykował lokalnie,
+`reconcile` resetował do 1 tylko przy spawnie), więc po wznowieniu rozjeżdżał się z serwerem. Teraz **+1 bajt
+paliwa w snapshocie (v7)** — autorytatywne jak HP/amunicja: `prediction.ts` `reconcile` przyjmuje
+`state.fuelFrac = server.fuelFrac` (replay nowszych inputów dopala spójnie z pozycją), USUNIĘTY stary reset do
+1; serwer paliwa NIE resetuje na reconnect (realizm). Uwaga: dokładnego mechanizmu „0% za każdym razem" nie dało
+się wyprowadzić z kodu (deplecja ~1%/12 s), ale fix jest odporny niezależnie. **Znana luka:** paliwo OBCYCH jest
+w snapshocie, ale klient go nie używa (silnik gra, póki żyją) — wpięcie do interpolatora to osobny temat. **Deploy
+front+back RAZEM** (v6↔v7 handshake). ⏳ user: smoke (zerwij sieć ~5 s → powrót do swojego samolotu bez pętli +
+realne paliwo; >12 s → nakładka ręczna).
 
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 

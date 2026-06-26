@@ -24,6 +24,7 @@ function ent(x: number, vx = V): EntitySnapshot {
     healthFrac: 1,
     ammoFrac: 1,
     ammoSecondaryFrac: 1,
+    fuelFrac: 1,
     planeType: 'spitfire',
   };
 }

@@ -204,6 +204,14 @@ describe('protokół SNAPSHOT round-trip', () => {
     expect(snap.entities[1]?.ammoSecondaryFrac).toBe(0); // Spitfire: brak grupy wtórnej
   });
 
+  it('koduje ułamek paliwa encji (trzy czwarte baku ≈ 0.75; protokół v7)', () => {
+    const lowFuel = makeEntity(2, { fuelFrac: 0.75 });
+    const buf = new Uint8Array(snapshotByteLength(1));
+    encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, [lowFuel]);
+    const snap = decodeSnapshot(new DataView(buf.buffer));
+    expect(snap.entities[0]?.fuelFrac).toBeCloseTo(0.75, 2);
+  });
+
   it('zachowuje typ samolotu każdej encji (protokół v4)', () => {
     const entities = [
       makeEntity(0, {}, { hp: 120, maxHp: 120 }, { ammoRemaining: 2400 }, 2400, 'spitfire'),

@@ -178,6 +178,9 @@ export interface RoomMember {
   sendControl(msg: ControlMessage): void;
   /** Wysyła ramkę binarną (snapshot lub paczka EVENT — klient rozróżnia po pierwszym bajcie). */
   sendSnapshotBytes(bytes: Uint8Array): void;
+  /** Zamknięcie połączenia z inicjatywy serwera (przejęcie slotu przez świeży reconnect zamyka
+   *  stare „zombie"-połączenie). Opcjonalne — mocki testowe go nie implementują. */
+  close?(): void;
 }
 
 /** Stan gracza po stronie serwera: symulacja + filtr instruktora + ostatni input + tożsamość lobby. */
@@ -819,26 +822,39 @@ export class GameRoom {
     player.damagedBy.clear();
   }
 
-  /** Odłącza połączenie gracza, trzymając slot na reconnect (okno RECONNECT_WINDOW_MS). */
-  detachMember(id: number, nowMs: number): void {
+  /** Odłącza połączenie gracza, trzymając slot na reconnect (okno RECONNECT_WINDOW_MS). `member`
+   *  (opcjonalny) = połączenie zgłaszające rozłączenie: odpinamy TYLKO gdy to wciąż ono trzyma slot.
+   *  Bez tego strażnika spóźniony `close` STAREGO (zombie) połączenia wyzerowałby member świeżo
+   *  wróconego gracza (reconnect podmienił już member) → kopnięcie tuż po powrocie. */
+  detachMember(id: number, nowMs: number, member?: RoomMember): void {
     const player = this.players.get(id);
     if (!player) return;
+    if (member !== undefined && player.member !== member) return; // slot przejęło już nowe połączenie
     player.member = null;
     player.disconnectedAtMs = nowMs;
     if (this.hostId === id) this.reassignHost();
     this.broadcastRoomUpdate();
   }
 
-  /** Próbuje wznowić sesję po tokenie: ponownie podpina połączenie do istniejącego gracza. */
+  /**
+   * Próbuje wznowić sesję po tokenie: ponownie podpina połączenie do istniejącego gracza. Token to
+   * sekret sesji — jego okaziciel JEST tym graczem, więc przejmujemy slot TAKŻE gdy stare połączenie
+   * wciąż wisi (`member !== null`). Przy zerwaniu PO STRONIE KLIENTA serwer nie zauważa go od razu
+   * (jego TCP czeka na timeout — sekundy/minuty), więc świeża próba wznowienia trafiałaby na „zajęty"
+   * slot, dostawała `null` → klient lądował w lobby ze ŚWIEŻYM tokenem (zatruwał zapisany) i pętlił
+   * wznawianie. Zombie-połączenie zamykamy (jeśli umie), a strażnik w detachMember broni przed jego
+   * spóźnionym `close`.
+   */
   reconnectByToken(token: string, member: RoomMember): ServerPlayer | null {
     for (const player of this.players.values()) {
-      if (player.sessionToken === token && player.member === null) {
-        player.member = member;
-        player.disconnectedAtMs = null;
-        if (this.hostId === null) this.hostId = player.id;
-        this.broadcastRoomUpdate();
-        return player;
-      }
+      if (player.sessionToken !== token) continue;
+      const stale = player.member;
+      if (stale && stale !== member) stale.close?.(); // domknij stare „zombie"-połączenie tego slotu
+      player.member = member;
+      player.disconnectedAtMs = null;
+      if (this.hostId === null) this.hostId = player.id;
+      this.broadcastRoomUpdate();
+      return player;
     }
     return null;
   }

@@ -249,6 +249,22 @@ describe('GameRoom — maszyna stanów lobby', () => {
     expect(room.reconnectByToken('inny', member)).toBeNull();
   });
 
+  it('reconnect PRZEJMUJE slot, gdy stare połączenie wciąż wisi (klient zerwał, serwer nie zauważył)', () => {
+    const room = new GameRoom('ABCD');
+    const id = room.addPlayer('as', 'tok-x', null);
+    let staleClosed = false;
+    const stale = { sendControl() {}, sendSnapshotBytes() {}, close() { staleClosed = true; } };
+    // „stare" połączenie podpięte BEZ rozłączenia (member !== null) — symuluje zombie po blipie sieci
+    expect(room.reconnectByToken('tok-x', stale)?.id).toBe(id);
+    // świeży reconnect tym samym tokenem przejmuje slot i domyka zombie (wcześniej zwracał null → pętla)
+    const fresh = { sendControl() {}, sendSnapshotBytes() {} };
+    expect(room.reconnectByToken('tok-x', fresh)?.id).toBe(id);
+    expect(staleClosed).toBe(true);
+    // spóźniony close STAREGO połączenia nie odpina świeżego (strażnik tożsamości w detachMember)
+    room.detachMember(id, 2000, stale);
+    expect(room.reconnectByToken('tok-x', fresh)?.id).toBe(id); // slot wciąż żyje przy fresh
+  });
+
   it('pruneExpiredReconnects zwalnia slot po wygaśnięciu okna', () => {
     const room = new GameRoom('ABCD');
     const id = room.addPlayer('as', 'tok-x', null);
