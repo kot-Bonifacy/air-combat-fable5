@@ -236,8 +236,8 @@ liczą identycznie z JSON, reconcile spójny, protokół v7 niezmieniony. **Wari
 klienckie):** lek na złudzenie „trzymam energię" — nowy wiersz „wznosz." (`hud.ts` `verticalSpeedMs` + ▲/▼/·, martwa
 strefa 0,5 m/s; `online-main.ts` EMA `varioSmoothedMs` z `velocity.y`, τ=0,4 s). W ostrym zakręcie na suficie G-LOC duże
 ▼ uwidacznia wymianę wysokość→IAS (gracz widzi, że zniża się, nie „trzyma energię"). 514 testów/typecheck/lint/build
-zielone. **NIEZACOMMITOWANE.** ⏳ user: playtest czy bleed adekwatny + czy wariometr rozwiewa wrażenie (knoby
-`dragHighClK`/`dragStallK` strojalne bez kodu).
+zielone. **Zacommitowane `893ab3c` + push** (deploy front+back razem — jeszcze NIEWDROŻONE). ⏳ user: playtest czy bleed
+adekwatny + czy wariometr rozwiewa wrażenie (knoby `dragHighClK`/`dragStallK` strojalne bez kodu).
 
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
