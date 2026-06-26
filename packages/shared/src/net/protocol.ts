@@ -711,6 +711,10 @@ export interface RoomPlayer {
    *  startuje świadomie. Boty zawsze gotowe (true). Zmiana samolotu/drużyny zeruje gotowość — gracz
    *  potwierdza AKTUALNY wybór tuż przed grą. Pole addytywne JSON — bez bumpu protokołu. */
   ready: boolean;
+  /** Poziom trudności TEGO bota (lobby slotowe RTS 2026-06-26): host edytuje go per slot, więc każdy
+   *  bot może mieć inny poziom (np. 1 trudny + 5 łatwych). Obecne TYLKO dla botów (isBot=true);
+   *  dla ludzi nieobecne/ignorowane. Pole addytywne JSON — bez bumpu protokołu. */
+  botDifficulty?: DifficultyLevel;
 }
 
 // --- klient → serwer ---
@@ -783,6 +787,39 @@ export interface UpdateRoomMessage {
   t: 'updateRoom';
   mode?: MatchMode;
   bots?: number;
+  difficulty?: DifficultyLevel;
+}
+
+/**
+ * Klient → serwer: HOST dodaje pojedynczego bota (lobby slotowe RTS 2026-06-26). W trybie drużynowym
+ * trafia do wskazanej `team` (dowolne konfiguracje drużyn, np. „2 ludzi vs 6 botów"); w FFA `team`
+ * pomijane. `difficulty` ustala poziom nowego bota (brak → serwerowy domyślny). Serwer egzekwuje:
+ * tylko host, tylko w 'waiting', klampuje wartości i pojemność pokoju (niezm. nr 11). Addytywne JSON.
+ */
+export interface AddBotMessage {
+  t: 'addBot';
+  /** Drużyna dla nowego bota (tryb drużynowy): 0..TEAM_COUNT−1; poza zakresem/brak → auto-balans. */
+  team?: number;
+  /** Poziom nowego bota; brak/nieznany → serwerowy domyślny. */
+  difficulty?: DifficultyLevel;
+}
+
+/** Klient → serwer: HOST usuwa konkretnego bota ze slotu (lobby slotowe RTS 2026-06-26). Tylko host
+ *  i tylko w 'waiting'; serwer ignoruje, gdy `botId` nie wskazuje bota. Addytywne JSON. */
+export interface RemoveBotMessage {
+  t: 'removeBot';
+  botId: number;
+}
+
+/**
+ * Klient → serwer: HOST edytuje slot bota (lobby slotowe RTS 2026-06-26) — przenosi go do innej
+ * drużyny (`team`, tylko tryb drużynowy) i/lub zmienia poziom (`difficulty`). Oba pola opcjonalne —
+ * zmieniane tylko podane. Tylko host, tylko 'waiting'; serwer klampuje (niezm. nr 11). Addytywne JSON.
+ */
+export interface EditBotMessage {
+  t: 'editBot';
+  botId: number;
+  team?: number;
   difficulty?: DifficultyLevel;
 }
 
@@ -980,6 +1017,9 @@ export type ControlMessage =
   | SelectTeamMessage
   | SetReadyMessage
   | UpdateRoomMessage
+  | AddBotMessage
+  | RemoveBotMessage
+  | EditBotMessage
   | ChatSendMessage
   | QuickPlayMessage
   | StartMatchMessage
@@ -1006,6 +1046,9 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'selectTeam',
   'setReady',
   'updateRoom',
+  'addBot',
+  'removeBot',
+  'editBot',
   'chatSend',
   'quickPlay',
   'startMatch',

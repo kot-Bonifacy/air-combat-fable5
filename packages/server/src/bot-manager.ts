@@ -127,6 +127,15 @@ export class BotManager {
     this.runtimes.delete(id);
   }
 
+  /** Zmienia poziom trudności istniejącego bota (lobby slotowe RTS 2026-06-26): poziom jest „zapieczony"
+   *  w kontrolerze AI (BOT_CONFIG.levels[difficulty]), więc odtwarzamy runtime z tym samym seedem (caller
+   *  podaje deterministyczny seed jak przy add). No-op, gdy bota nie ma. Wołane tylko w poczekalni. */
+  setDifficulty(id: number, difficulty: DifficultyLevel, seed: number): void {
+    if (!this.runtimes.has(id)) return;
+    const bot = new Bot(BOT_CONFIG.tuning, BOT_CONFIG.levels[difficulty], seed, PATROL_WAYPOINTS);
+    this.runtimes.set(id, { bot, control: { throttle: BOT_CONFIG.tuning.cruiseThrottle, fire: false } });
+  }
+
   /** Po (re)spawnie: zeruje filtry kontrolera i celownik na bieżący nos, gasi spust. */
   reset(id: number, state: PlaneState): void {
     const rt = this.runtimes.get(id);

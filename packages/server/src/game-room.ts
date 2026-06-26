@@ -261,6 +261,10 @@ interface ServerPlayer {
   /** Gotowość do startu (system „Gotów" 2026-06-26): host widzi licznik gotowych. Boty zawsze true.
    *  Zerowana przy zmianie samolotu/drużyny i na starcie meczu (gracz potwierdza AKTUALNY skład). */
   ready: boolean;
+  /** Poziom trudności bota (lobby slotowe RTS 2026-06-26): host edytuje per slot, więc boty mogą mieć
+   *  różne poziomy. Tylko dla botów; dla ludzi pole istnieje, ale jest nieużywane. Kodowane do roster
+   *  (RoomPlayer.botDifficulty) i używane przy odtworzeniu kontrolera AI (BotManager.setDifficulty). */
+  botDifficulty: DifficultyLevel;
 }
 
 export class GameRoom {
@@ -410,6 +414,8 @@ export class GameRoom {
       faction: p.faction,
       isBot: p.isBot,
       ready: p.ready,
+      // poziom bota tylko dla botów (lobby slotowe RTS): host edytuje go per slot w poczekalni
+      ...(p.isBot ? { botDifficulty: p.botDifficulty } : {}),
     }));
   }
 
@@ -430,14 +436,27 @@ export class GameRoom {
    * nie zostaje hostem ani nie trzyma pokoju przy życiu (patrz humanCount). Nick z puli [BOT].
    * `planeType` wymusza samolot (sesje balansowe/testy); bez niego bot losuje typ (faza 19b).
    */
-  addBot(difficulty: DifficultyLevel, planeType?: PlaneType): number {
+  addBot(difficulty: DifficultyLevel, planeType?: PlaneType, team?: number): number {
     // neutralny nick nadaje refreshBotName() w spawn() (2026-06-26: nazwy botów nie zależą już od
     // samolotu/strony); pusty startowy nick zostaje zastąpiony pierwszym callsignem z puli.
     const player = this.createPlayer('', '', null, true, planeType);
+    player.botDifficulty = difficulty;
+    // Lobby slotowe RTS (2026-06-26): bot dodany do KONKRETNEJ drużyny dostaje jawne teamPref —
+    // assignFaction(s) honoruje je jak wybór człowieka (umożliwia dowolne składy, np. „2 vs 6 botów").
+    // Bez team (stary addBot / FFA) teamPref=null → bot jest wypełniaczem auto-balansu (jak dotąd).
+    if (team !== undefined && this.mode === 'team' && team >= 0 && team < TEAM_COUNT) {
+      player.teamPref = team;
+    }
     // strumień RNG bota osobny od strumienia rozrzutu ognia (inna stała mieszająca)
-    this.botManager.add(player.id, difficulty, (player.id + 1) ^ 0x0b07);
+    this.botManager.add(player.id, difficulty, this.botSeed(player.id));
     this.enterWorld(player); // spawn() zresetuje też kontroler AI (isBot) i nada nick wg typu
     return player.id;
+  }
+
+  /** Deterministyczny seed strumienia RNG bota (stały dla danego id) — używany przy add i przy
+   *  odtworzeniu kontrolera po zmianie poziomu (setBotDifficulty), żeby zachowanie było powtarzalne. */
+  private botSeed(id: number): number {
+    return (id + 1) ^ 0x0b07;
   }
 
   /** Nadaje botowi neutralny nick (callsign), jeśli jeszcze go nie ma. Nazwy NIE zależą już od
@@ -507,6 +526,7 @@ export class GameRoom {
       isBot,
       withdrawn: false,
       ready: isBot, // boty zawsze gotowe; człowiek potwierdza przyciskiem „Gotów"
+      botDifficulty: 'normalny', // nadpisywane przez addBot dla botów; dla ludzi nieużywane
     };
     this.players.set(id, player);
     return player;
@@ -565,18 +585,23 @@ export class GameRoom {
       return;
     }
     const counts = new Array<number>(TEAM_COUNT).fill(0);
-    // 1) LUDZIE: zachowaj drużynę z poczekalni (teamPref albo bieżąca, prawidłowa frakcja).
     const unassignedHumans: ServerPlayer[] = [];
+    const fillerBots: ServerPlayer[] = [];
+    // 1) JAWNE wybory drużyn (WYSIWYG): ludzie (teamPref albo bieżąca, prawidłowa frakcja) ORAZ boty
+    //    z jawnie przypisaną drużyną (lobby slotowe RTS 2026-06-26 — host postawił bota po konkretnej
+    //    stronie). To honorowanie botów umożliwia dowolne składy (np. „2 ludzi vs 6 botów"); wcześniej
+    //    boty były wyłącznie wypełniaczem auto-balansu, więc nie dało się ich skupić po jednej stronie.
     for (const p of this.players.values()) {
-      if (p.isBot) continue;
       let team: number | null = null;
       if (p.teamPref !== null && p.teamPref >= 0 && p.teamPref < TEAM_COUNT) team = p.teamPref;
-      else if (p.faction >= 0 && p.faction < TEAM_COUNT) team = p.faction;
+      else if (!p.isBot && p.faction >= 0 && p.faction < TEAM_COUNT) team = p.faction;
       if (team !== null) {
         p.faction = team;
         counts[team] = (counts[team] ?? 0) + 1;
+      } else if (p.isBot) {
+        fillerBots.push(p); // bot bez przypisanej drużyny → wypełniacz auto-balansu (jak dotąd)
       } else {
-        unassignedHumans.push(p); // brak prawidłowej drużyny (np. świeże przejście z FFA: frakcja = id)
+        unassignedHumans.push(p); // człowiek bez prawidłowej drużyny (np. świeże przejście z FFA: frakcja = id)
       }
     }
     // 2) ludzie bez prawidłowej drużyny → do mniejszej (pierwszy przydział po zmianie trybu)
@@ -585,9 +610,8 @@ export class GameRoom {
       p.faction = t;
       counts[t] = (counts[t] ?? 0) + 1;
     }
-    // 3) BOTY: wypełniacz — równoważą drużyny wokół wyborów ludzi (deterministycznie w kolejności id)
-    for (const p of this.players.values()) {
-      if (!p.isBot) continue;
+    // 3) BOTY-wypełniacze: równoważą drużyny wokół jawnych wyborów (deterministycznie w kolejności id)
+    for (const p of fillerBots) {
       const t = smallerTeamIndex(counts);
       p.faction = t;
       counts[t] = (counts[t] ?? 0) + 1;
@@ -723,6 +747,59 @@ export class GameRoom {
     const target = Math.max(0, Math.min(MAX_BOTS_PER_ROOM, freeForBots, Math.floor(count)));
     for (let i = 0; i < target; i++) this.addBot(difficulty); // addBot odbudowuje też źródła snapshotu
     this.rebuildSnapshotSources();
+  }
+
+  /**
+   * HOST dodaje pojedynczego bota do slotu (lobby slotowe RTS 2026-06-26). W trybie drużynowym do
+   * wskazanej `team` (jawny teamPref → honorowany przez assignFactions, dowolne składy jak „2 vs 6"),
+   * w FFA bez drużyny. Klamp pojemności: pełny pokój / limit botów = no-op. Tylko w 'waiting'
+   * (egzekucja host/stan w connection). Po dodaniu rebalansujemy frakcje, by poczekalnia == start
+   * (WYSIWYG: wypełniacze ułożą się wokół jawnie postawionych slotów).
+   */
+  hostAddBot(team: number | null, difficulty: DifficultyLevel): void {
+    if (this.state !== 'waiting') return;
+    if (this.players.size >= MAX_PLAYERS_PER_ROOM || this.botCount >= MAX_BOTS_PER_ROOM) return;
+    this.addBot(difficulty, undefined, team ?? undefined);
+    if (this.mode === 'team') this.assignFactions();
+    this.broadcastRoomUpdate();
+  }
+
+  /** HOST usuwa konkretnego bota ze slotu (lobby slotowe RTS 2026-06-26). No-op poza 'waiting' / dla
+   *  nie-bota. Rebalans frakcji po usunięciu (wypełniacze mogą się przesunąć), żeby poczekalnia == start. */
+  hostRemoveBot(botId: number): void {
+    if (this.state !== 'waiting') return;
+    const player = this.players.get(botId);
+    if (!player || !player.isBot) return;
+    this.players.delete(botId);
+    this.botManager.remove(botId);
+    if (this.mode === 'team') this.assignFactions();
+    this.rebuildSnapshotSources();
+    this.broadcastRoomUpdate();
+  }
+
+  /**
+   * HOST edytuje slot bota (lobby slotowe RTS 2026-06-26): przenosi go do innej drużyny (`team`, tylko
+   * tryb drużynowy) i/lub zmienia poziom (`difficulty`). Oba pola opcjonalne (null = bez zmian). No-op
+   * poza 'waiting' / dla nie-bota. Zmiana drużyny ustawia jawne teamPref (honorowane przy starcie) i
+   * rebalansuje frakcje; zmiana poziomu odtwarza kontroler AI z tym samym seedem (BotManager).
+   */
+  hostEditBot(botId: number, team: number | null, difficulty: DifficultyLevel | null): void {
+    if (this.state !== 'waiting') return;
+    const player = this.players.get(botId);
+    if (!player || !player.isBot) return;
+    let changed = false;
+    if (team !== null && this.mode === 'team' && team >= 0 && team < TEAM_COUNT) {
+      player.teamPref = team;
+      player.faction = team;
+      this.assignFactions(); // wypełniacze ułożą się wokół przeniesionego slotu (WYSIWYG)
+      changed = true;
+    }
+    if (difficulty !== null) {
+      player.botDifficulty = difficulty;
+      this.botManager.setDifficulty(botId, difficulty, this.botSeed(botId));
+      changed = true;
+    }
+    if (changed) this.broadcastRoomUpdate();
   }
 
   /**
@@ -1565,6 +1642,12 @@ export class GameRoom {
   /** Frakcja/drużyna gracza (faza 18) — diagnostyka/testy (FFA: = id; drużynowy: 0..TEAM_COUNT−1). */
   factionOf(id: number): number {
     return this.players.get(id)?.faction ?? -1;
+  }
+
+  /** Poziom trudności bota (lobby slotowe RTS 2026-06-26) — diagnostyka/testy; undefined dla nie-bota. */
+  botDifficultyOf(id: number): DifficultyLevel | undefined {
+    const p = this.players.get(id);
+    return p?.isBot ? p.botDifficulty : undefined;
   }
 
   /** Pozostałe życia gracza w trybie eliminacyjnym (faza 18) — diagnostyka/testy. */

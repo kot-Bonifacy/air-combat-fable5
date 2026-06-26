@@ -248,6 +248,21 @@ export class NetClient {
     this.sendControl({ t: 'updateRoom', ...opts });
   }
 
+  /** Host: dodaj bota do slotu (lobby slotowe RTS 2026-06-26). `team` w trybie drużynowym (FFA pomija). */
+  addBot(team?: number, difficulty?: DifficultyLevel): void {
+    this.sendControl({ t: 'addBot', team, difficulty });
+  }
+
+  /** Host: usuń konkretnego bota ze slotu (lobby slotowe RTS). */
+  removeBot(botId: number): void {
+    this.sendControl({ t: 'removeBot', botId });
+  }
+
+  /** Host: edytuj slot bota — przenieś do drużyny i/lub zmień poziom (lobby slotowe RTS). */
+  editBot(botId: number, opts: { team?: number; difficulty?: DifficultyLevel }): void {
+    this.sendControl({ t: 'editBot', botId, ...opts });
+  }
+
   /** Wyślij wiadomość na czat pokoju (poczekalnia). Serwer sanityzuje i rozsyła. */
   sendChat(text: string): void {
     this.sendControl({ t: 'chatSend', text });

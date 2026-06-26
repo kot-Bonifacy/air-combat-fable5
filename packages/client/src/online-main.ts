@@ -926,6 +926,9 @@ const lobby = new LobbyUI({
   onSelectTeam: (team) => net?.selectTeam(team), // wybór drużyny (rozdzielenie drużyna↔samolot 2026-06-25)
   onSetReady: (ready) => net?.setReady(ready), // gotowość do startu (system „Gotów" 2026-06-26)
   onUpdateRoom: (opts) => net?.updateRoom(opts), // host: zmiana trybu/botów/poziomu w poczekalni
+  onAddBot: (team, difficulty) => net?.addBot(team ?? undefined, difficulty), // host: dodaj bota do slotu (lobby RTS)
+  onRemoveBot: (botId) => net?.removeBot(botId), // host: usuń bota ze slotu
+  onEditBot: (botId, opts) => net?.editBot(botId, opts), // host: przenieś bota / zmień jego poziom
   onSendChat: (text) => net?.sendChat(text), // czat poczekalni
 });
 

@@ -38,6 +38,17 @@ function validDifficulty(raw: unknown): DifficultyLevel {
   return DIFFICULTY_LEVELS.includes(raw as DifficultyLevel) ? (raw as DifficultyLevel) : DEFAULT_BOT_DIFFICULTY;
 }
 
+/** Drużyna z sieci → indeks [0,TEAM_COUNT) albo null (brak/poza zakresem → auto-balans po stronie pokoju). */
+function clampTeam(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0 || raw >= TEAM_COUNT) return null;
+  return raw;
+}
+
+/** Id bota z sieci → liczba całkowita ≥0 albo null (walidacja przed przekazaniem do pokoju; niezm. 11). */
+function validBotId(raw: unknown): number | null {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : null;
+}
+
 // Jedno połączenie WS. Maszyna stanów: handshaking → lobby → inRoom → closed (faza 10).
 // Handshake JSON niesie wersję protokołu, nick i opcjonalny token reconnectu. Po przyjęciu
 // gracz jest w LOBBY (jeszcze nie lata) i steruje pokojami wiadomościami kontrolnymi (JSON).
@@ -259,6 +270,43 @@ export class Connection implements RoomMember {
           bots: typeof msg.bots === 'number' ? clampBotCount(msg.bots) : undefined,
           difficulty: msg.difficulty !== undefined ? validDifficulty(msg.difficulty) : undefined,
         });
+        return;
+      }
+      case 'addBot': {
+        // host dodaje bota do slotu (lobby slotowe RTS 2026-06-26). Tylko host; pokój egzekwuje stan
+        // 'waiting' i pojemność. team/difficulty klampowane (niezm. nr 11). W FFA team=null (bez drużyny).
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        if (this.room.hostId !== this.playerId) {
+          this.sendControl({ t: 'error', code: 'notHost', message: 'tylko host może dodawać boty' });
+          return;
+        }
+        this.room.hostAddBot(clampTeam(msg.team), validDifficulty(msg.difficulty));
+        return;
+      }
+      case 'removeBot': {
+        // host usuwa konkretnego bota (lobby slotowe RTS). Tylko host; pokój ignoruje nie-bota / poza 'waiting'.
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        if (this.room.hostId !== this.playerId) {
+          this.sendControl({ t: 'error', code: 'notHost', message: 'tylko host może usuwać boty' });
+          return;
+        }
+        const botId = validBotId(msg.botId);
+        if (botId !== null) this.room.hostRemoveBot(botId);
+        return;
+      }
+      case 'editBot': {
+        // host przenosi bota między drużynami i/lub zmienia jego poziom (lobby slotowe RTS). Tylko host;
+        // oba pola opcjonalne — null = bez zmian (pokój klampuje team do trybu/zakresu, difficulty do listy).
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        if (this.room.hostId !== this.playerId) {
+          this.sendControl({ t: 'error', code: 'notHost', message: 'tylko host może edytować boty' });
+          return;
+        }
+        const botId = validBotId(msg.botId);
+        if (botId === null) return;
+        const team = msg.team !== undefined ? clampTeam(msg.team) : null;
+        const difficulty = msg.difficulty !== undefined ? validDifficulty(msg.difficulty) : null;
+        this.room.hostEditBot(botId, team, difficulty);
         return;
       }
       case 'chatSend': {

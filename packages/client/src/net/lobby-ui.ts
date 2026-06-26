@@ -83,8 +83,15 @@ export interface LobbyCallbacks {
   onSelectTeam(team: number): void;
   /** Gracz oznacza gotowość do startu (system „Gotów" 2026-06-26). */
   onSetReady(ready: boolean): void;
-  /** Host zmienia ustawienia pokoju w poczekalni (tryb / liczba botów / poziom trudności). */
-  onUpdateRoom(opts: { mode: MatchMode; bots: number; difficulty: DifficultyLevel }): void;
+  /** Host zmienia ustawienia pokoju w poczekalni (tryb / liczba botów / poziom trudności). Pola
+   *  opcjonalne — w trybie drużynowym wysyłamy sam `mode` (boty/poziom są per slot, nie globalne). */
+  onUpdateRoom(opts: { mode?: MatchMode; bots?: number; difficulty?: DifficultyLevel }): void;
+  /** Host: dodaj bota do slotu (lobby slotowe RTS 2026-06-26). `team` w trybie drużynowym; FFA → null. */
+  onAddBot(team: number | null, difficulty?: DifficultyLevel): void;
+  /** Host: usuń konkretnego bota ze slotu. */
+  onRemoveBot(botId: number): void;
+  /** Host: edytuj slot bota — przenieś do drużyny i/lub zmień poziom. */
+  onEditBot(botId: number, opts: { team?: number; difficulty?: DifficultyLevel }): void;
   /** Wyślij wiadomość na czat pokoju (poczekalnia). */
   onSendChat(text: string): void;
 }
@@ -141,6 +148,9 @@ export class LobbyUI {
   private readonly settingsRow: HTMLDivElement;
   private readonly settingsSummary: HTMLDivElement;
   private readonly waitModeSelect: HTMLSelectElement;
+  /** Kontener globalnych botów (liczba + poziom) — widoczny TYLKO w FFA; w trybie drużynowym boty są
+   *  per slot (lobby slotowe RTS 2026-06-26), więc globalne selektory są chowane. */
+  private readonly ffaBotsBox: HTMLSpanElement;
   private readonly waitBotsSelect: HTMLSelectElement;
   private readonly waitDiffSelect: HTMLSelectElement;
   // czat poczekalni: log wiadomości + pole wpisywania (treść renderowana przez textContent — XSS)
@@ -272,10 +282,14 @@ export class LobbyUI {
       DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: DIFFICULTY_LABELS[lvl] })),
       'normalny',
     );
+    // globalne selektory botów (FFA): liczba + poziom. W trybie drużynowym chowane (boty per slot).
+    this.ffaBotsBox = document.createElement('span');
+    this.ffaBotsBox.className = 'lobby-ffa-bots';
+    this.ffaBotsBox.append(settingsBotLabel, this.waitBotsSelect, this.waitDiffSelect);
     for (const sel of [this.waitModeSelect, this.waitBotsSelect, this.waitDiffSelect]) {
       sel.addEventListener('change', () => this.emitSettings());
     }
-    this.settingsRow.append(this.waitModeSelect, settingsBotLabel, this.waitBotsSelect, this.waitDiffSelect);
+    this.settingsRow.append(this.waitModeSelect, this.ffaBotsBox);
     this.settingsSummary = el('div', 'lobby-sub lobby-settings-summary');
 
     // --- czat poczekalni ---
@@ -434,7 +448,8 @@ export class LobbyUI {
     return card;
   }
 
-  /** Buduje wiersz gracza (tag TY/HOST/BOT + nick + typ samolotu + gotowość). textContent → XSS-safe. */
+  /** Buduje wiersz gracza (tag TY/HOST/BOT + nick + typ samolotu + gotowość). textContent → XSS-safe.
+   *  W trybie drużynowym dla HOSTA boty dostają kontrolki slotu (poziom / przenieś / usuń — lobby RTS). */
   private buildPlayerRow(p: RoomPlayer, view: WaitingView): HTMLDivElement {
     const row = el('div', 'lobby-player-row');
     const tag = el('span', 'lobby-player-tag');
@@ -444,46 +459,94 @@ export class LobbyUI {
     // typ samolotu przy nicku (faza 19b: widać, kto czym leci — niezależnie od drużyny)
     const plane = el('span', 'lobby-player-plane');
     plane.textContent = planeLabelOf(p.planeType);
-    // wskaźnik gotowości (system „Gotów" 2026-06-26) — tylko dla ludzi poza hostem (host steruje startem)
-    const ready = el('span', 'lobby-player-ready');
-    if (!p.isBot && p.id !== view.hostId) {
-      ready.textContent = p.ready ? '✔' : '⏳';
-      ready.classList.add(p.ready ? 'is-ready' : 'is-waiting');
-      ready.title = p.ready ? 'gotów' : 'czeka';
+    row.append(tag, name, plane);
+
+    const isHost = view.youId === view.hostId;
+    const inWaiting = view.state === 'waiting';
+    if (p.isBot && view.mode === 'team' && isHost && inWaiting) {
+      // sloty RTS: host steruje botem (poziom per bot + przeniesienie do drugiej drużyny + usunięcie)
+      row.append(this.buildBotControls(p));
+    } else {
+      // wskaźnik gotowości (system „Gotów") — tylko dla ludzi poza hostem (host steruje startem)
+      const ready = el('span', 'lobby-player-ready');
+      if (!p.isBot && p.id !== view.hostId) {
+        ready.textContent = p.ready ? '✔' : '⏳';
+        ready.classList.add(p.ready ? 'is-ready' : 'is-waiting');
+        ready.title = p.ready ? 'gotów' : 'czeka';
+      }
+      row.append(ready);
     }
-    row.append(tag, name, plane, ready);
     return row;
+  }
+
+  /** Kontrolki slotu bota dla HOSTA (lobby slotowe RTS 2026-06-26): poziom trudności per bot,
+   *  przeniesienie do drugiej drużyny i usunięcie. Wartości waliduje/klampuje serwer (niezm. nr 11). */
+  private buildBotControls(p: RoomPlayer): HTMLSpanElement {
+    const box = document.createElement('span');
+    box.className = 'lobby-bot-controls';
+    // poziom trudności tego bota — zmiana wysyła editBot{difficulty}
+    const diff = selectEl(
+      'lobby-select lobby-bot-diff',
+      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: DIFFICULTY_LABELS[lvl] })),
+      p.botDifficulty ?? 'normalny',
+    );
+    diff.addEventListener('change', () => {
+      this.cb.onEditBot(p.id, { difficulty: diff.value as DifficultyLevel });
+    });
+    // przenieś do drugiej drużyny (TEAM_COUNT=2 → naprzemiennie)
+    const otherTeam = (p.faction + 1) % TEAM_COUNT;
+    const move = button('⇄', 'lobby-btn lobby-btn-icon', () => this.cb.onEditBot(p.id, { team: otherTeam }));
+    move.title = `Przenieś do: ${teamLabel(otherTeam)}`;
+    // usuń bota
+    const remove = button('✕', 'lobby-btn lobby-btn-icon lobby-btn-danger', () => this.cb.onRemoveBot(p.id));
+    remove.title = 'Usuń bota';
+    box.append(diff, move, remove);
+    return box;
   }
 
   updateWaiting(view: WaitingView): void {
     this.localId = view.youId;
     this.waitingCodeEl.textContent = view.code;
     const isTeam = view.mode === 'team';
-    // FFA → płaska lista graczy; drużynowy → dwie kolumny drużyn (grupowanie + kolory, 2026-06-25)
+    const mine = view.players.find((p) => p.id === view.youId);
+    const isHost = view.youId === view.hostId;
+    // wycofany gracz ogląda poczekalnię, choć mecz wciąż TRWA (state≠'waiting', leaveMatch 2026-06-23):
+    // nie ma czego startować ani ustawiać — chowamy Start/ustawienia/karty/gotowość, mówiąc, że mecz w toku.
+    const matchInProgress = view.state !== 'waiting';
+    const roomFull = view.players.length >= MAX_PLAYERS_PER_ROOM;
+
+    // FFA → płaska lista graczy; drużynowy → dwie kolumny drużyn (grupowanie + kolory; lobby slotowe RTS:
+    // host dorzuca/edytuje boty per drużyna → dowolne składy, np. „2 ludzi vs 6 botów").
     this.waitingPlayersEl.style.display = isTeam ? 'none' : '';
     this.teamsEl.style.display = isTeam ? '' : 'none';
-    this.teamRow.style.display = isTeam ? '' : 'none';
+    this.teamRow.style.display = isTeam && !matchInProgress ? '' : 'none';
+    const teamSizes: number[] = [];
     if (isTeam) {
       this.teamsEl.replaceChildren();
       for (let faction = 0; faction < TEAM_COUNT; faction++) {
-        const col = el('div', `lobby-team-col ${TEAM_COLOR_CLASS[faction] ?? ''}`);
         const members = view.players.filter((p) => p.faction === faction);
+        teamSizes.push(members.length);
+        const col = el('div', `lobby-team-col ${TEAM_COLOR_CLASS[faction] ?? ''}`);
         const head = el('div', 'lobby-team-head');
         head.textContent = `${teamLabel(faction)} (${String(members.length)})`;
         const body = el('div', 'lobby-team-body');
         for (const p of members) body.append(this.buildPlayerRow(p, view));
         col.append(head, body);
+        // sloty RTS: host dorzuca boty do KONKRETNEJ drużyny (dowolne składy). Wyłączony przy pełnym pokoju.
+        if (isHost && !matchInProgress) {
+          const add = button('+ dodaj bota', 'lobby-btn lobby-btn-small lobby-add-bot', () =>
+            this.cb.onAddBot(faction),
+          );
+          add.disabled = roomFull;
+          if (roomFull) add.title = 'Pokój pełny';
+          col.append(add);
+        }
         this.teamsEl.append(col);
       }
     } else {
       this.waitingPlayersEl.replaceChildren();
       for (const p of view.players) this.waitingPlayersEl.append(this.buildPlayerRow(p, view));
     }
-    const mine = view.players.find((p) => p.id === view.youId);
-    const isHost = view.youId === view.hostId;
-    // wycofany gracz ogląda poczekalnię, choć mecz wciąż TRWA (state≠'waiting', leaveMatch 2026-06-23):
-    // nie ma czego startować ani ustawiać — chowamy Start/ustawienia/karty/gotowość, mówiąc, że mecz w toku.
-    const matchInProgress = view.state !== 'waiting';
 
     // KARTY samolotu (2026-06-26): podświetl wybraną wg stanu z serwera (niezależną od drużyny).
     this.planeRow.style.display = matchInProgress ? 'none' : '';
@@ -505,41 +568,58 @@ export class LobbyUI {
     this.readyBtn.textContent = this.myReady ? '✔ Gotów — kliknij, by cofnąć' : '✔ Oznacz: jestem gotów';
     this.readyBtn.classList.toggle('is-ready', this.myReady);
 
-    // ustawienia pokoju: host edytuje (selektory), reszta widzi podsumowanie tekstowe (oba tylko w 'waiting')
+    // ustawienia pokoju: host edytuje (selektory), reszta widzi podsumowanie. Globalne boty TYLKO w FFA —
+    // w trybie drużynowym boty są per slot (lobby RTS), więc chowamy globalny licznik/poziom.
     this.settingsRow.style.display = isHost && !matchInProgress ? '' : 'none';
     this.settingsSummary.style.display = !isHost && !matchInProgress ? '' : 'none';
+    this.ffaBotsBox.style.display = isTeam ? 'none' : '';
     if (isHost) {
       this.waitModeSelect.value = view.mode;
       this.waitBotsSelect.value = String(view.botCount);
       this.waitDiffSelect.value = view.difficulty;
     } else {
-      const modeLabel = view.mode === 'team' ? 'Drużynowy' : 'FFA';
-      this.settingsSummary.textContent =
-        `Tryb: ${modeLabel}  ·  Boty: ${String(view.botCount)} (${DIFFICULTY_LABELS[view.difficulty]})`;
+      this.settingsSummary.textContent = isTeam
+        ? 'Tryb: Drużynowy'
+        : `Tryb: FFA  ·  Boty: ${String(view.botCount)} (${DIFFICULTY_LABELS[view.difficulty]})`;
     }
 
-    // Start (host): licznik gotowości innych ludzi. Host startuje świadomie — AFK nie blokuje (nie wymuszamy).
+    // Start (host): licznik gotowości + BLOKADA przy pustej drużynie (decyzja usera: „pozwól, ale zablokuj
+    // Start + ostrzeż"). Mecz z pustą drużyną nie rozstrzygnąłby się eliminacją (potrzeba ≥2 frakcji w grze).
+    const emptyTeam = isTeam && teamSizes.some((n) => n === 0);
     this.startBtn.style.display = isHost && !matchInProgress ? '' : 'none';
+    this.startBtn.disabled = emptyTeam;
     const others = view.players.filter((p) => !p.isBot && p.id !== view.hostId);
     const readyCount = others.filter((p) => p.ready).length;
-    this.startBtn.textContent =
-      others.length > 0 ? `Start meczu (${String(readyCount)}/${String(others.length)} gotowych)` : 'Start meczu';
-    this.startBtn.classList.toggle('lobby-btn-wait', others.length > 0 && readyCount < others.length);
+    this.startBtn.textContent = emptyTeam
+      ? 'Start — obsadź obie drużyny'
+      : others.length > 0
+        ? `Start meczu (${String(readyCount)}/${String(others.length)} gotowych)`
+        : 'Start meczu';
+    this.startBtn.classList.toggle('lobby-btn-wait', !emptyTeam && others.length > 0 && readyCount < others.length);
 
     this.waitingHintEl.textContent = matchInProgress
       ? 'Mecz w toku — dołączysz, gdy host wystartuje kolejny.'
-      : isHost
-        ? 'Jesteś hostem — wybierz samolot/drużynę i wystartuj, gdy ekipa będzie gotowa.'
-        : 'Wybierz samolot i drużynę, a potem kliknij „Gotów". Host wystartuje mecz.';
+      : emptyTeam
+        ? '⚠ Każda drużyna musi mieć przynajmniej jednego pilota lub bota — obsadź pustą stronę.'
+        : isHost
+          ? 'Jesteś hostem — ustaw drużyny (dodaj boty po każdej stronie) i wystartuj, gdy ekipa będzie gotowa.'
+          : 'Wybierz samolot i drużynę, a potem kliknij „Gotów". Host wystartuje mecz.';
   }
 
-  /** Host wysłał zmianę ustawień (tryb/boty/poziom) — wszystkie naraz, serwer klampuje. */
+  /** Host wysłał zmianę ustawień. FFA: tryb + globalna liczba/poziom botów. Drużynowy: SAM tryb —
+   *  boty są per slot (lobby RTS), więc nie dotykamy ich globalnym selektorem (uniknięcie przebudowy
+   *  rosteru, która skasowałaby przypisania drużyn/poziomy per bot). Serwer klampuje wartości. */
   private emitSettings(): void {
-    this.cb.onUpdateRoom({
-      mode: this.waitModeSelect.value === 'team' ? 'team' : 'ffa',
-      bots: Number(this.waitBotsSelect.value) || 0,
-      difficulty: this.waitDiffSelect.value as DifficultyLevel,
-    });
+    const mode: MatchMode = this.waitModeSelect.value === 'team' ? 'team' : 'ffa';
+    if (mode === 'team') {
+      this.cb.onUpdateRoom({ mode });
+    } else {
+      this.cb.onUpdateRoom({
+        mode,
+        bots: Number(this.waitBotsSelect.value) || 0,
+        difficulty: this.waitDiffSelect.value as DifficultyLevel,
+      });
+    }
   }
 
   private trySendChat(): void {
@@ -798,6 +878,15 @@ const LOBBY_CSS = `
 .lobby-btn-ready.is-ready:hover { background: #36904f; }
 /* host: Start z niepełną gotowością — lekko przygaszony, ale wciąż klikalny (AFK nie blokuje) */
 .lobby-btn-wait { opacity: 0.85; }
+.lobby-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+/* lobby slotowe RTS: kontrolki bota po stronie hosta (poziom per bot + przenieś + usuń) */
+.lobby-bot-controls { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; padding-left: 8px; }
+.lobby-bot-diff { font-size: 12px; padding: 3px 6px; min-width: auto; }
+.lobby-btn-icon { min-width: auto; padding: 4px 8px; font-size: 13px; line-height: 1; }
+.lobby-btn-danger { border-color: #8c4a4a; color: #ffb0b0; }
+.lobby-btn-danger:hover { background: rgba(108,56,56,0.95); }
+.lobby-add-bot { margin-top: 4px; align-self: stretch; }
+.lobby-ffa-bots { display: inline-flex; align-items: center; gap: 8px; }
 .lobby-settings-row { flex-wrap: wrap; justify-content: center; }
 .lobby-settings-summary { font-size: 13px; color: #cde; }
 .lobby-chat-log {
