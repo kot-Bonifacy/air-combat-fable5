@@ -4,6 +4,12 @@ export interface HudData {
   iasKmh: number;
   tasKmh: number;
   altM: number;
+  /**
+   * Prędkość pionowa (wariometr) [m/s], + w górę. Uwidacznia wymianę wysokość↔prędkość:
+   * w ostrym zakręcie na suficie G-LOC samolot zniża się, a IAS stoi/rośnie — bez tego
+   * wiersza gracz „nie widzi", że traci energię całkowitą (½mV²+mgh) przez utratę wysokości.
+   */
+  verticalSpeedMs: number;
   throttle01: number;
   nG: number;
   nAvailG: number;
@@ -51,6 +57,17 @@ function fuelWarning(fuel01: number): string {
   if (fuel01 <= 0) return '   *** SILNIK STANĄŁ ***';
   if (fuel01 <= LOW_FUEL_RATIO) return '   ! mało !';
   return '';
+}
+
+/** Martwa strefa wariometru [m/s] — poniżej |tego| lot ~poziomy, pokazujemy „·" zamiast
+ *  migotania strzałki kierunku przy drobnym szumie prędkości pionowej. */
+const VARIO_DEADBAND_MS = 0.5;
+
+/** Wartość wariometru: strzałka kierunku (▲ wznoszenie / ▼ opadanie / · poziom) + |wartość|. */
+function varioValue(verticalSpeedMs: number): string {
+  const arrow =
+    verticalSpeedMs > VARIO_DEADBAND_MS ? '▲' : verticalSpeedMs < -VARIO_DEADBAND_MS ? '▼' : '·';
+  return `${arrow} ${Math.abs(verticalSpeedMs).toFixed(0)}`;
 }
 
 /** Próg, poniżej którego HUD ostrzega, że karta graficzna jest za słaba [fps]. */
@@ -115,6 +132,7 @@ export class Hud {
       hudRow('IAS', data.iasKmh.toFixed(0), 'km/h'),
       hudRow('TAS', data.tasKmh.toFixed(0), 'km/h'),
       hudRow('alt', data.altM.toFixed(0), 'm'),
+      hudRow('wznosz.', varioValue(data.verticalSpeedMs), 'm/s'),
       hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%'),
       hudRow('paliwo', (data.fuel01 * 100).toFixed(0), '%') + fuelWarning(data.fuel01),
       hudRow('n', data.nG.toFixed(1), 'G') + gLocText,

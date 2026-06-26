@@ -13,6 +13,8 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
     aspectRatio: 6,
     oswaldE: 0.8,
     cd0: 0.02,
+    dragHighClK: 0, // fikstura: czysta biegunowa paraboliczna (asercje liczone ręcznie)
+    dragStallK: 0,
     clMax: 1.5,
     clAlphaPerRad: 5,
     enginePowerW: 600_000,

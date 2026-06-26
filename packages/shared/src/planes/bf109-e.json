@@ -5,6 +5,8 @@
   "aspectRatio": 6.1,
   "oswaldE": 0.6,
   "cd0": 0.022,
+  "dragHighClK": 0.005,
+  "dragStallK": 0.8,
   "clMax": 2.0,
   "clAlphaPerRad": 5.0,
   "enginePowerW": 780000,

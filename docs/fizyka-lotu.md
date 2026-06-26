@@ -67,7 +67,17 @@ Każda siła ma własną funkcję `(state, plane) => Vector3` i własną strzał
 - `L = q · S · Cl` wzdłuż `liftDir`. Przy locie odwróconym/nożowym wzór działa bez przypadków specjalnych.
 
 ### 5.2 Opór
-- Biegunowa oporu: `Cd = Cd0 + K · Cl²`, gdzie `K = 1/(π · e · AR)`.
+- Biegunowa oporu: `Cd = Cd0 + K · Cl² + dragHighClK · Cl⁴ + dragStallK · (|Cl_wym| − Cl_max)²₊`,
+  gdzie `K = 1/(π · e · AR)`.
+  - `K · Cl²` — opór indukowany (biegunowa paraboliczna).
+  - `dragHighClK · Cl⁴` — **zagięcie biegunowej przy wysokim Cl** (kalibracja 2026-06-26):
+    znikome przy małym Cl (V_max/wznoszenie/nurkowanie nietknięte), istotne w ciasnym
+    zakręcie. Stałe K zaniżało opór wysokiego Cl → zakręty „za tanie" energetycznie
+    (samoloty trzymały energię w ciasnym manewrze zbyt dobrze).
+  - `dragStallK · (excess)²` — **opór oderwania** po przekroczeniu Cl_max (over-pull w
+    buffet/przeciągnięciu): nośna siedzi na Cl_max, ale strugi się odrywają i opór skacze.
+    Liczony z `clRequired` (nieobciętego), nadwyżka nasycana do Cl_max (skrzydło w pełni
+    oderwane → Cd plateau + strażnik NaN przy q→0).
 - `D = q · S · Cd` przeciwnie do `v̂`.
 - Opcjonalnie (faza 3, jeśli nurkowania będą „za bezpieczne"): narost Cd0 powyżej
   ~0.65 Ma (uproszczone ściśliwości) — daje historyczny limit prędkości nurkowania.
@@ -197,6 +207,8 @@ instruktor zamienia to na `n_demand`, `rollRate_demand`, `yaw_demand`:
 | `aspectRatio` | AR (do K) | 5.61 |
 | `oswaldE` | e (do K) | 0.87 (k≈1.15, Ackroyd/Salisbury) |
 | `cd0` | opór pasożytniczy | 0.020 (Collar/RAE 1940) |
+| `dragHighClK` | zagięcie biegunowej przy wysokim Cl (człon Cl⁴) | 0.0026 (kalibracja energii ciasnego zakrętu 2026-06-26) |
+| `dragStallK` | opór oderwania po przekroczeniu Cl_max (człon (excess)²) | 0.8 |
 | `clMax` | maks. wsp. nośnej | 1.85 (gameplay: stall 117 km/h przy 2744 kg) |
 | `clAlphaPerRad` | nachylenie Cl(α) | 5.0 |
 | `enginePowerW` | P0 | 977000 (1310 KM, Merlin III @ +12 lb) |
@@ -236,7 +248,7 @@ Morgan & Morris BA 1640). Kolumna Bf 109 E-3 do rewizji źródłowej w fazie 14.
 | V_max na poziomie morza (TAS) | ~505 km/h (314 mph, RAE) | ~465 km/h |
 | V_max na 5–6 km (TAS) | ~570 km/h (354 mph @ 18.9k ft) | ~555 km/h |
 | V przeciągnięcia (IAS, czysty) | ~117 km/h (~73 mph @ 6050 lb) | ~125 km/h |
-| Czas pełnego zakrętu 360° (niska wys., pełna moc) | ~16 s (M&M: 17.2 s @ 12k ft) | ~22 s |
+| Czas pełnego zakrętu 360° (niska wys., pełna moc) | ~17.5 s (było ~16; rekal. 2026-06-26, AFDU ~17-18 s) | ~23.5 s (było ~22) |
 | Roll rate @ 350 km/h | ~70°/s | ~85°/s |
 | Wznoszenie początkowe | ~17 m/s (+6¼ lb dawało 2820 ft/min) | ~15 m/s |
 | Pułap praktyczny (wznoszenie < 2,5 m/s) | ~10,5 km (34 700 ft) | ~10 km |

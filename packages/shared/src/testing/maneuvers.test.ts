@@ -46,7 +46,10 @@ const TARGETS: readonly PlaneTargets[] = [
     vStallKmh: 118,
     climbMs: 17,
     rollDegS: 70,
-    turnS: 16,
+    // 17.5 s (było 16): rekalibracja po dodaniu zagięcia biegunowej Cd przy wysokim Cl
+    // (dragHighClK, 2026-06-26) — zakręt ustalony lekko wolniejszy, bliżej literatury
+    // (~17-18 s SL, AFDU); GŁÓWNY efekt zmiany to większy bleed energii w ciasnym/over-pull.
+    turnS: 17.5,
   },
   // Bf 109 E-3 (DB 601A): energy-fighter — szybszy na wysokości, lepszy roll, GORSZY zakręt
   // (małe skrzydło → duże obciążenie powierzchni, niska sprawność indukowana). Kolumna rozdz. 10.
@@ -59,7 +62,9 @@ const TARGETS: readonly PlaneTargets[] = [
     vStallKmh: 125,
     climbMs: 15,
     rollDegS: 85,
-    turnS: 22,
+    // 23.5 s (było 22): jak Spitfire — zagięcie biegunowej przy wysokim Cl (dragHighClK)
+    // koszt zakrętu na wysokim Cl; energy-fighter dalej wyraźnie gorszy w krążeniu.
+    turnS: 23.5,
   },
 ];
 

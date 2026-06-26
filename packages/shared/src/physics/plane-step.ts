@@ -39,7 +39,7 @@ export function stepPlane(
   const lift = liftForce(state, plane, nDemandG, qPa);
   const contributions: ForceContribution[] = [
     lift.contribution,
-    dragForce(state, plane, qPa, lift.cl),
+    dragForce(state, plane, qPa, lift.cl, lift.clRequired),
     thrustForce(state, plane),
     gravityForce(plane.massKg),
   ];

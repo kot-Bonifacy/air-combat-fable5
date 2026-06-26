@@ -218,6 +218,27 @@ globalny licznik). **Deploy front+back RAZEM** (semantyka poczekalni rozjechana 
 (10 testów). ⏳ user: smoke (2 ludzi vs 6 botów; przenoszenie/usuwanie botów; poziom per bot; blokada Startu przy pustej
 drużynie). **Zacommitowane w tej sesji** (deploy front+back razem — jeszcze NIEWDROŻONE).
 
+**Energia w ciasnych manewrach — zagięcie biegunowej + opór oderwania 2026-06-26 (życzenie usera, 514 testów zielone,
+BEZ bumpu protokołu — v7, czysto shared):** user „wrażenie, że samoloty trzymają energię w ciasnych manewrach zbyt
+dobrze (niepewne)". Pomiary (harness E-M + symulacje czasowe `pilotStep`): model strukturalnie poprawny (nośna nie
+wykonuje pracy, opór = jedyne źródło bleedu), sustained realistyczny — ALE biegunowa **paraboliczna (stałe K) zaniżała
+opór wysokiego Cl** i **over-pull ponad clMax był nieukarany** (Cl obcięty → opór przestawał rosnąć) → ciasny zakręt za
+tani energetycznie. Trzecie (UX, nieruszane): przy suficie G-LOC ~5 G samolot wymienia WYSOKOŚĆ na IAS → HUD IAS się
+stabilizuje mimo spadku energii (prawdopodobne źródło wrażenia). **Decyzja usera (AskUserQuestion):** dostrój opór wysokiego
+Cl. Fix `drag.ts`: `Cd = Cd0 + K·Cl² + dragHighClK·Cl⁴ + dragStallK·(|Cl_wym|−clMax)²₊` (2 nowe pola JSON per samolot +
+zakresy loadera; `dragForce` dostał param `clRequired` dla oderwania, `plane-step`/`maneuvers` przekazują `lift.clRequired`;
+nadwyżka oderwania nasycana do clMax = Cd plateau + strażnik NaN). Kalibracja świadomie z MAŁYM `dragHighClK` (Spit 0,0026 /
+Bf 0,005; `dragStallK` 0,8), by sustained ruszył się tylko trochę (honor cytowanego M&M 17,2 s @ 12k ft), a bleed wpadł w
+region powyżej sustained + over-pull: sustained Spit 16→17,6 s, Bf 22,8→23,5 s (bliżej AFDU ~17-18 s); bleed Ps przy 5 G
++20-40% (najwięcej przy niskiej V/wysokim Cl); asymetria zachowana (Bf bleeduje ~2× szybciej). Złote cele turnS 16→17,5 /
+22→23,5; część analityczna `sustainedTurnTest` rozszerzona o człon Cl⁴ (kwadrat wzgl. n²). Czysto shared → klient+serwer
+liczą identycznie z JSON, reconcile spójny, protokół v7 niezmieniony. **Wariometr w HUD (UX, ta sama sesja, czysto
+klienckie):** lek na złudzenie „trzymam energię" — nowy wiersz „wznosz." (`hud.ts` `verticalSpeedMs` + ▲/▼/·, martwa
+strefa 0,5 m/s; `online-main.ts` EMA `varioSmoothedMs` z `velocity.y`, τ=0,4 s). W ostrym zakręcie na suficie G-LOC duże
+▼ uwidacznia wymianę wysokość→IAS (gracz widzi, że zniża się, nie „trzyma energię"). 514 testów/typecheck/lint/build
+zielone. **NIEZACOMMITOWANE.** ⏳ user: playtest czy bleed adekwatny + czy wariometr rozwiewa wrażenie (knoby
+`dragHighClK`/`dragStallK` strojalne bez kodu).
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu

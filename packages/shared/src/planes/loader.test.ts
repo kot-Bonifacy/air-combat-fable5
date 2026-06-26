@@ -10,6 +10,8 @@ function validRaw(): Record<string, unknown> {
     aspectRatio: 5.6,
     oswaldE: 0.8,
     cd0: 0.021,
+    dragHighClK: 0.003,
+    dragStallK: 0.8,
     clMax: 1.45,
     clAlphaPerRad: 5.0,
     enginePowerW: 768000,

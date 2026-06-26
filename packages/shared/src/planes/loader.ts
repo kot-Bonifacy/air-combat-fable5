@@ -15,6 +15,18 @@ export interface PlaneConfig {
   aspectRatio: number;
   oswaldE: number;
   cd0: number;
+  /**
+   * Współczynnik zagięcia biegunowej przy wysokim Cl: człon dragHighClK·Cl⁴ dodany
+   * do Cd. Znikomy przy małym Cl (V_max/wznoszenie nietknięte), istotny w ciasnym
+   * zakręcie — koryguje zaniżenie oporu wysokiego Cl przez stałe K (drag.ts).
+   */
+  dragHighClK: number;
+  /**
+   * Współczynnik oporu oderwania: człon dragStallK·(|Cl_wym|−Cl_max)²₊ dodany do Cd,
+   * gdy żądany Cl przekracza Cl_max (over-pull w buffet/przeciągnięciu). Karze energetycznie
+   * szarpanie za drążek na granicy koperty; 0 = brak kary (stary model). Patrz drag.ts.
+   */
+  dragStallK: number;
   clMax: number;
   clAlphaPerRad: number;
   enginePowerW: number;
@@ -198,6 +210,8 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   aspectRatio: [1, 20],
   oswaldE: [0.1, 1],
   cd0: [0.001, 0.2],
+  dragHighClK: [0, 0.1],
+  dragStallK: [0, 3],
   clMax: [0.5, 5],
   clAlphaPerRad: [1, 10],
   enginePowerW: [10_000, 100_000_000],

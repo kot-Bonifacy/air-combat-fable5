@@ -1417,9 +1417,12 @@ function sendInputTick(dtS: number): void {
 // Pełny HUD-G jak w SP (faza 14): dane lotu z lokalnej predykcji (Predictor.sim — bez zmiany
 // protokołu), amunicja ze snapshotu. Sztuczny horyzont + ostrzeżenia stall/buffet/szarzenie
 // renderuje klasa Hud; tu tylko zbieramy pola. Greyout (G-LOC) tylko gdy żyjemy.
-function updateHud(): void {
+function updateHud(frameDtS: number): void {
   if (!predictor.ready) return; // przed pierwszym snapshotem — ekran ładowania
   const s = predictor.sim.state;
+  // wariometr: EMA prędkości pionowej (world Y = pion) — uwidacznia wymianę wysokość↔IAS
+  const varioAlpha = 1 - Math.exp(-frameDtS / VARIO_SMOOTH_TAU_S);
+  varioSmoothedMs += varioAlpha * (s.velocity.y - varioSmoothedMs);
   const gLoad = predictor.sim.gLoadEffects;
   const stall = predictor.sim.stallEffects;
   const tasMs = s.velocity.length();
@@ -1435,6 +1438,7 @@ function updateHud(): void {
     iasKmh: s.iasMs * MS_TO_KMH,
     tasKmh: tasMs * MS_TO_KMH,
     altM: s.position.y,
+    verticalSpeedMs: varioSmoothedMs,
     throttle01: s.throttle,
     nG: s.loadFactor,
     nAvailG: nAvailG(qPa, localPlane),
@@ -1778,6 +1782,11 @@ let fpsFrames = 0;
 let fpsWindowS = 0;
 let fpsValue = 0;
 
+// wariometr HUD: prędkość pionowa wygładzona (instrument ma naturalną zwłokę; bez tego
+// liczba migotałaby co klatkę). Stała czasowa ~0,4 s.
+let varioSmoothedMs = 0;
+const VARIO_SMOOTH_TAU_S = 0.4;
+
 renderer.setAnimationLoop(() => {
   const now = performance.now();
   const frameDtS = Math.min(0.1, (now - lastMs) / 1000);
@@ -1925,7 +1934,7 @@ renderer.setAnimationLoop(() => {
     updateCombatVisuals(frameDtS);
     updateWorldVisuals(frameDtS);
     updateEmplacements(frameDtS); // stanowiska naziemne: głosy broni + dym zniszczonych
-    updateHud();
+    updateHud(frameDtS);
     updateHudOverlays();
   }
 

@@ -108,7 +108,7 @@ function steadyClimbAt(plane: PlaneConfig, tasMs: number, altitudeM: number): St
     state.velocity.set(0, Math.sin(gammaRad), Math.cos(gammaRad)).multiplyScalar(tasMs);
     alignNoseToVelocity(state);
     const lift = liftForce(state, plane, Math.cos(gammaRad), qPa);
-    const dragN = dragForce(state, plane, qPa, lift.cl).force.length();
+    const dragN = dragForce(state, plane, qPa, lift.cl, lift.clRequired).force.length();
     const thrustN = thrustForce(state, plane).force.length();
     const sinGamma = Math.min(1, Math.max(-1, (thrustN - dragN) / weightN));
     const next = Math.asin(sinGamma);
@@ -246,7 +246,15 @@ export function sustainedTurnTest(plane: PlaneConfig, altitudeM = 500): Sustaine
     const thrustN = thrustForce(state, plane).force.length();
     const excessN = thrustN - qS * plane.cd0;
     if (excessN <= 0) continue;
-    const nSq = (excessN * qS) / (kInduced * weightN * weightN);
+    // T = D(n) z biegunową Cd0 + K·Cl² + dragHighClK·Cl⁴ (Cl = n·W/qS). Podstawiając
+    // u = n²: A·u² + B·u − excessN = 0, gdzie B = K·W²/qS, A = dragHighClK·W⁴/qS³.
+    // A=0 (fikstura) → wzór liniowy jak dawniej. (Człon oderwania nie wchodzi: sustained < Cl_max.)
+    const bCoef = (kInduced * weightN * weightN) / qS;
+    const aCoef = (plane.dragHighClK * weightN ** 4) / qS ** 3;
+    const nSq =
+      aCoef > 0
+        ? (-bCoef + Math.sqrt(bCoef * bCoef + 4 * aCoef * excessN)) / (2 * aCoef)
+        : excessN / bCoef;
     const n = Math.min(Math.sqrt(nSq), nAvailG(qPa, plane), plane.nMaxG);
     if (n <= 1.02) continue;
     const omega = (GRAVITY_MS2 * Math.sqrt(n * n - 1)) / tasMs;
