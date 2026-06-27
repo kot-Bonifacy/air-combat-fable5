@@ -132,6 +132,8 @@ export class LobbyUI {
   // wybór drużyny (tryb drużynowy): każdy gracz wybiera swoją stronę niezależnie od samolotu
   private readonly teamRow: HTMLDivElement;
   private readonly teamSelect: HTMLSelectElement;
+  // wspólny wiersz: selektor drużyny + ustawienia pokoju obok siebie (zbicie wysokości poczekalni)
+  private readonly controlsRow: HTMLDivElement;
   private readonly startBtn: HTMLButtonElement;
   private readonly waitingHintEl: HTMLDivElement;
   // wybór samolotu w poczekalni: KARTY samolotów (2026-06-26) — niezależne od drużyny, klik = wybór
@@ -140,7 +142,6 @@ export class LobbyUI {
   /** Karty per typ samolotu — do podświetlenia wybranej wg stanu z serwera. */
   private readonly planeCards = new Map<PlaneType, HTMLDivElement>();
   // gotowość gracza (system „Gotów" 2026-06-26): przycisk dla nie-hosta + wskaźniki w roster
-  private readonly readyRow: HTMLDivElement;
   private readonly readyBtn: HTMLButtonElement;
   /** Bieżąca gotowość lokalnego gracza (z WaitingView) — do etykiety przycisku i toggle. */
   private myReady = false;
@@ -223,7 +224,7 @@ export class LobbyUI {
     const wTitle = el('div', 'lobby-title');
     wTitle.textContent = 'POCZEKALNIA';
     const codeCaption = el('div', 'lobby-label');
-    codeCaption.textContent = 'Kod pokoju (podaj znajomym)';
+    codeCaption.textContent = 'Kod pokoju (podaj znajomym):';
     this.waitingCodeEl = el('div', 'lobby-code');
     this.waitingPlayersEl = el('div', 'lobby-players');
     // kolumny drużyn (tryb drużynowy): gracze pogrupowani po frakcji, dwie kolumny obok siebie
@@ -254,16 +255,15 @@ export class LobbyUI {
     }
     this.planeRow.append(planeCaption, this.planeCardsEl);
 
-    // gotowość (system „Gotów" 2026-06-26): przycisk dla nie-hosta; host startuje, widząc licznik gotowych
-    this.readyRow = el('div', 'lobby-row lobby-ready-row');
+    // gotowość (system „Gotów" 2026-06-26): przycisk dla nie-hosta — trafia do paska akcji obok „Wyjdź"
+    // (host widzi tam Start; oba są rozłączne), więc nie zajmuje osobnego pełnego wiersza.
     this.readyBtn = button('✔ Gotów', 'lobby-btn lobby-btn-ready', () => {
       this.cb.onSetReady(!this.myReady);
     });
-    this.readyRow.append(this.readyBtn);
 
     // --- ustawienia pokoju w poczekalni (host steruje, reszta widzi podsumowanie) ---
-    const settingsCaption = el('div', 'lobby-label');
-    settingsCaption.textContent = 'Ustawienia pokoju (ustala host — dogadajcie się na czacie)';
+    // Bez osobnego pełnowymiarowego podpisu — selektor trybu jest samoopisowy, a rolę hosta
+    // tłumaczy podpowiedź na dole. Wiersz ląduje obok selektora drużyny (controlsRow).
     this.settingsRow = el('div', 'lobby-row lobby-bot-row lobby-settings-row');
     this.waitModeSelect = selectEl(
       'lobby-select lobby-select-mode',
@@ -307,28 +307,40 @@ export class LobbyUI {
     const chatSendBtn = button('Wyślij', 'lobby-btn lobby-btn-small', () => this.trySendChat());
     chatRow.append(this.chatInput, chatSendBtn);
 
-    this.waitingHintEl = el('div', 'lobby-sub');
+    this.waitingHintEl = el('div', 'lobby-sub lobby-hint');
     this.startBtn = button('Start meczu', 'lobby-btn lobby-btn-primary', () => this.cb.onStartMatch());
     const leaveBtn = button('Wyjdź', 'lobby-btn lobby-btn-small', () => this.cb.onLeaveRoom());
+
+    // kod pokoju w jednym wierszu (podpis + kod) zamiast dwóch pełnowymiarowych wierszy
+    const codeRow = el('div', 'lobby-row lobby-code-row');
+    codeRow.append(codeCaption, this.waitingCodeEl);
+
+    // selektor drużyny + ustawienia (tryb/boty) obok siebie — host widzi oba, gracz tylko drużynę
+    this.controlsRow = el('div', 'lobby-row lobby-controls-row');
+    this.controlsRow.append(this.teamRow, this.settingsRow);
+
+    // czat: podpis PO LEWEJ od okna (log + pole w kolumnie obok) zamiast pełnego wiersza nad logiem
+    const chatSection = el('div', 'lobby-chat-section');
+    const chatBody = el('div', 'lobby-chat-body');
+    chatBody.append(this.chatLogEl, chatRow);
+    chatSection.append(chatCaption, chatBody);
+
+    // pasek akcji: Start (host) ALBO Gotów (gracz) + Wyjdź — wszystkie w jednym wierszu
+    const actionRow = el('div', 'lobby-row lobby-action-row');
+    actionRow.append(this.startBtn, this.readyBtn, leaveBtn);
+
     const panel = el('div', 'lobby-panel');
     panel.append(
       wTitle,
-      codeCaption,
-      this.waitingCodeEl,
+      codeRow,
       this.waitingPlayersEl,
       this.teamsEl,
-      this.teamRow,
-      this.planeRow,
-      this.readyRow,
-      settingsCaption,
-      this.settingsRow,
+      this.controlsRow,
       this.settingsSummary,
-      chatCaption,
-      this.chatLogEl,
-      chatRow,
+      this.planeRow,
+      chatSection,
       this.waitingHintEl,
-      this.startBtn,
-      leaveBtn,
+      actionRow,
     );
     this.waiting.append(panel);
 
@@ -520,6 +532,9 @@ export class LobbyUI {
     this.waitingPlayersEl.style.display = isTeam ? 'none' : '';
     this.teamsEl.style.display = isTeam ? '' : 'none';
     this.teamRow.style.display = isTeam && !matchInProgress ? '' : 'none';
+    // wspólny wiersz selektora drużyny + ustawień: widoczny, gdy jest w nim cokolwiek (drużyna→teamRow,
+    // host→settingsRow). Inaczej (gracz w FFA widzi tylko podsumowanie) chowamy, by nie zostawiać pustego gapu.
+    this.controlsRow.style.display = !matchInProgress && (isTeam || isHost) ? '' : 'none';
     const teamSizes: number[] = [];
     if (isTeam) {
       this.teamsEl.replaceChildren();
@@ -529,10 +544,9 @@ export class LobbyUI {
         const col = el('div', `lobby-team-col ${TEAM_COLOR_CLASS[faction] ?? ''}`);
         const head = el('div', 'lobby-team-head');
         head.textContent = `${teamLabel(faction)} (${String(members.length)})`;
-        const body = el('div', 'lobby-team-body');
-        for (const p of members) body.append(this.buildPlayerRow(p, view));
-        col.append(head, body);
-        // sloty RTS: host dorzuca boty do KONKRETNEJ drużyny (dowolne składy). Wyłączony przy pełnym pokoju.
+        col.append(head);
+        // sloty RTS: host dorzuca boty do KONKRETNEJ drużyny (dowolne składy). „+ dodaj bota" NAD listą,
+        // żeby po dodaniu bota przycisk został pod kursorem (lista rośnie w dół, nie spycha przycisku).
         if (isHost && !matchInProgress) {
           const add = button('+ dodaj bota', 'lobby-btn lobby-btn-small lobby-add-bot', () =>
             this.cb.onAddBot(faction),
@@ -541,6 +555,9 @@ export class LobbyUI {
           if (roomFull) add.title = 'Pokój pełny';
           col.append(add);
         }
+        const body = el('div', 'lobby-team-body');
+        for (const p of members) body.append(this.buildPlayerRow(p, view));
+        col.append(body);
         this.teamsEl.append(col);
       }
     } else {
@@ -564,7 +581,7 @@ export class LobbyUI {
 
     // gotowość (system „Gotów" 2026-06-26): przycisk dla NIE-hosta w poczekalni (host startuje sam)
     this.myReady = mine?.ready ?? false;
-    this.readyRow.style.display = !isHost && !matchInProgress ? '' : 'none';
+    this.readyBtn.style.display = !isHost && !matchInProgress ? '' : 'none';
     this.readyBtn.textContent = this.myReady ? '✔ Gotów — kliknij, by cofnąć' : '✔ Oznacz: jestem gotów';
     this.readyBtn.classList.toggle('is-ready', this.myReady);
 
@@ -597,13 +614,17 @@ export class LobbyUI {
         : 'Start meczu';
     this.startBtn.classList.toggle('lobby-btn-wait', !emptyTeam && others.length > 0 && readyCount < others.length);
 
-    this.waitingHintEl.textContent = matchInProgress
+    // podpowiedź: dla hosta pusta (samoopisowe kontrolki — usunięty nadmiarowy „Jesteś hostem…");
+    // ostrzeżenie o pustej drużynie jest nadrzędne i zostaje. Pusty tekst → chowamy wiersz (bez gapu).
+    const hint = matchInProgress
       ? 'Mecz w toku — dołączysz, gdy host wystartuje kolejny.'
       : emptyTeam
         ? '⚠ Każda drużyna musi mieć przynajmniej jednego pilota lub bota — obsadź pustą stronę.'
         : isHost
-          ? 'Jesteś hostem — ustaw drużyny (dodaj boty po każdej stronie) i wystartuj, gdy ekipa będzie gotowa.'
+          ? ''
           : 'Wybierz samolot i drużynę, a potem kliknij „Gotów". Host wystartuje mecz.';
+    this.waitingHintEl.textContent = hint;
+    this.waitingHintEl.style.display = hint ? '' : 'none';
   }
 
   /** Host wysłał zmianę ustawień. FFA: tryb + globalna liczba/poziom botów. Drużynowy: SAM tryb —
@@ -815,14 +836,17 @@ const LOBBY_CSS = `
 .lobby-open-title { font: 700 17px monospace; letter-spacing: 1px; color: #7fd49a; }
 .lobby-open-detail { font-size: 13px; color: #9fc4e6; }
 .lobby-panel {
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
-  padding: 28px 36px; border-radius: 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 22px 32px; border-radius: 12px; box-sizing: border-box;
+  max-height: calc(100vh - 28px); overflow-y: auto;
   background: rgba(7,13,21,0.72); border: 1px solid #2a3f54;
   box-shadow: 0 10px 40px rgba(0,0,0,0.5);
 }
+/* kod pokoju: podpis + kod w jednym wierszu (zamiast dwóch pełnowymiarowych wierszy) */
+.lobby-code-row { gap: 12px; }
 .lobby-code {
-  font: 700 44px monospace; letter-spacing: 10px; color: #ffd24a;
-  padding: 6px 18px; text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+  font: 700 34px monospace; letter-spacing: 8px; color: #ffd24a;
+  padding: 0 6px; text-shadow: 0 2px 8px rgba(0,0,0,0.9);
 }
 .lobby-players { display: flex; flex-direction: column; gap: 4px; min-width: 240px; }
 .lobby-player-row { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: rgba(12,22,34,0.8); border-radius: 5px; }
@@ -846,7 +870,7 @@ const LOBBY_CSS = `
 .lobby-player-ready.is-ready { color: #6ee08a; }
 .lobby-player-ready.is-waiting { color: #c9a14a; }
 /* wybór samolotu — KARTY (2026-06-26): klikalne kafelki, podświetlenie wybranej idzie za serwerem */
-.lobby-plane-section { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.lobby-plane-section { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
 .lobby-plane-cards { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
 .lobby-plane-card {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
@@ -871,8 +895,7 @@ const LOBBY_CSS = `
   color: #9fc4e6; text-transform: uppercase;
 }
 .lobby-plane-card.selected .lobby-plane-pick { color: #ffb060; }
-/* gotowość — przycisk dla nie-hosta; po potwierdzeniu zielony */
-.lobby-ready-row { justify-content: center; }
+/* gotowość — przycisk dla nie-hosta (w pasku akcji obok „Wyjdź"); po potwierdzeniu zielony */
 .lobby-btn-ready { background: rgba(40,60,80,0.92); border-color: #4a6c8c; }
 .lobby-btn-ready.is-ready { background: #2f7d46; border-color: #46a35f; color: #fff; }
 .lobby-btn-ready.is-ready:hover { background: #36904f; }
@@ -885,12 +908,21 @@ const LOBBY_CSS = `
 .lobby-btn-icon { min-width: auto; padding: 4px 8px; font-size: 13px; line-height: 1; }
 .lobby-btn-danger { border-color: #8c4a4a; color: #ffb0b0; }
 .lobby-btn-danger:hover { background: rgba(108,56,56,0.95); }
-.lobby-add-bot { margin-top: 4px; align-self: stretch; }
+.lobby-add-bot { margin: 0 0 2px; align-self: stretch; }
 .lobby-ffa-bots { display: inline-flex; align-items: center; gap: 8px; }
 .lobby-settings-row { flex-wrap: wrap; justify-content: center; }
 .lobby-settings-summary { font-size: 13px; color: #cde; }
+.lobby-hint { font-size: 13px; text-align: center; max-width: 42em; }
+/* selektor drużyny + ustawienia pokoju obok siebie (zbicie wysokości poczekalni) */
+.lobby-controls-row { flex-wrap: wrap; justify-content: center; gap: 18px; }
+/* pasek akcji: Start/Gotów + Wyjdź w jednym wierszu zamiast osobnych pełnych wierszy */
+.lobby-action-row { gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 2px; }
+/* czat w zwartej sekcji: podpis PO LEWEJ od okna; log + pole w kolumnie obok — zamiast pełnego wiersza */
+.lobby-chat-section { display: flex; flex-direction: row; align-items: flex-start; justify-content: center; gap: 10px; width: 100%; max-width: 460px; }
+.lobby-chat-section .lobby-label { text-align: right; padding-top: 6px; }
+.lobby-chat-body { display: flex; flex-direction: column; gap: 4px; }
 .lobby-chat-log {
-  width: 100%; max-width: 380px; height: 140px; overflow-y: auto;
+  width: 100%; max-width: 380px; height: 108px; overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px; text-align: left;
   padding: 8px 10px; box-sizing: border-box;
   background: rgba(4,9,16,0.7); border: 1px solid #2a3f54; border-radius: 6px;
