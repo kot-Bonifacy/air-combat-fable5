@@ -15,8 +15,11 @@ import {
   PositionHistory,
   SPAWN_PROTECTION_S,
   applyDamage,
+  applyZoneHit,
+  CANNON_DAMAGE_THRESHOLD,
   chooseSpawnIndex,
   compareFfa,
+  createDamageState,
   createFireControl,
   createHealth,
   createPilotDemands,
@@ -34,6 +37,7 @@ import {
   encodeSnapshot,
   eventsByteLength,
   factionsInPlay,
+  firstZoneHit,
   getForward,
   MATCH_LIVES,
   nearestToroidalImage,
@@ -43,9 +47,12 @@ import {
   planesCollide,
   resetFireControl,
   resetHealth,
+  maybeIgnite,
+  resetDamageState,
   segmentSphereHit,
   smallerTeamIndex,
   snapshotByteLength,
+  stepFire,
   stepPilotedPlane,
   stepWreckPiloted,
   TEAM_COUNT,
@@ -54,9 +61,13 @@ import {
   updateLifecycle,
   validatePlaneState,
   wrapToArena,
+  zoneLevels,
+  zoneRoleIndex,
+  ZONE_COUNT,
   ZoneControl,
   type AaFire,
   type AaTarget,
+  type DamageState,
   type Emplacement,
   type ChatMessage,
   type ControlMessage,
@@ -81,6 +92,7 @@ import {
   type StandingRow,
   type Terrain,
   type ZoneOccupant,
+  type ZoneRole,
 } from '@air-combat/shared';
 import { BOT_THINK_INTERVAL, BotManager, MAX_BOTS_PER_ROOM } from './bot-manager';
 
@@ -132,6 +144,8 @@ const NO_KILLER = 0;
 const CHAT_HISTORY_MAX = 30;
 
 const scratchHitCenter = new Vector3();
+/** Koniec wydłużonego odcinka narrow-phase (pos + v·dt) — patrz resolveHits (anty-tunelowanie stref). */
+const scratchZoneEnd = new Vector3();
 /** Bufor zawinięcia torusa dla kroku bota (caller `wrapToArena` go nie czyta). */
 const scratchBotWrap = new Vector3();
 /** Bufory kierunku/prędkości pocisku AA (zero alokacji per strzał stanowiska). */
@@ -265,6 +279,19 @@ interface ServerPlayer {
    *  różne poziomy. Tylko dla botów; dla ludzi pole istnieje, ale jest nieużywane. Kodowane do roster
    *  (RoomPlayer.botDifficulty) i używane przy odtworzeniu kontrolera AI (BotManager.setDifficulty). */
   botDifficulty: DifficultyLevel;
+  /** Pełny, autorytatywny stan modułowych uszkodzeń (faza 22): HP stref + pożar. NIE jedzie jeszcze
+   *  w snapshocie (Część 3 doda poziomy v8) — tu serwer trzyma go i działa lokalnie. Re-tworzony przy
+   *  zmianie typu samolotu (inne strefy/HP), resetowany przy (re)spawnie. */
+  damage: DamageState;
+  /** Bufor poziomów stref (indeks = ZONE_ROLES, 0..3) — przepisywany co tick z `damage` i podpinany
+   *  pod `sim.damageLevels`, gdy są uszkodzenia (inaczej sim.damageLevels=null → tożsamość fizyki). */
+  readonly damageLevelsBuf: number[];
+  /** Id gracza, którego pocisk wzniecił bieżący pożar (kredyt zestrzelenia, gdy ogień dobije). −1 =
+   *  brak/nieznany. Ustawiany w resolveHits przy zapłonie; zerowany przy (re)spawnie. */
+  fireStarterId: number;
+  /** Czy pożar wzniecił pocisk naziemnego stanowiska (flak) — wtedy ewentualne dobicie ogniem nie ma
+   *  sprawcy-gracza (kill cause 'flak'). */
+  fireFromAa: boolean;
 }
 
 export class GameRoom {
@@ -341,6 +368,9 @@ export class GameRoom {
   private readonly emplacements: Emplacement[];
   /** Strumień RNG rozrzutu pocisków AA (osobny od strumieni graczy). */
   private readonly aaRng = createRng(0xa1a1 >>> 0);
+  /** Strumień RNG losów zapłonu po trafieniu (faza 22) — osobny od rozrzutu, by nie zaburzać
+   *  determinizmu balistyki; pożar jest stanem czysto serwerowym (klient nie predykuje zapłonu). */
+  private readonly damageRng = createRng(0xf12e >>> 0);
   /** Scratch celów dla stanowisk (żywe, nietykalne samoloty) — zero alokacji wpisów per tick. */
   private readonly aaTargetScratch: AaTarget[] = Array.from({ length: MAX_PLAYERS_PER_ROOM }, () => ({
     id: 0,
@@ -527,6 +557,10 @@ export class GameRoom {
       withdrawn: false,
       ready: isBot, // boty zawsze gotowe; człowiek potwierdza przyciskiem „Gotów"
       botDifficulty: 'normalny', // nadpisywane przez addBot dla botów; dla ludzi nieużywane
+      damage: createDamageState(initPlane.zones), // pełna sprawność; reset też na (re)spawnie
+      damageLevelsBuf: new Array<number>(ZONE_COUNT).fill(0),
+      fireStarterId: -1,
+      fireFromAa: false,
     };
     this.players.set(id, player);
     return player;
@@ -638,6 +672,7 @@ export class GameRoom {
     player.plane = planeConfigOf(type);
     player.health = createHealth(player.plane.hpPool);
     player.fire = createFireControl(player.plane.armament);
+    player.damage = createDamageState(player.plane.zones); // inne strefy/HP per typ (faza 22)
     this.rebuildSnapshotSources(); // nowe ref fire/health + ammoMax + planeType per encja
     return true;
   }
@@ -1060,6 +1095,46 @@ export class GameRoom {
     return this.players.get(id)?.health.hp ?? 0;
   }
 
+  /** HP strefy o danej roli (faza 22) — diagnostyka/testy; 0 dla nieznanego gracza/strefy. */
+  zoneHpOf(id: number, role: ZoneRole): number {
+    const p = this.players.get(id);
+    if (!p) return 0;
+    const idx = p.plane.zones.findIndex((z) => z.role === role);
+    return idx >= 0 ? (p.damage.zoneHp[idx] ?? 0) : 0;
+  }
+
+  /** Poziom uszkodzenia strefy o danej roli (0=ok..3=zniszczona, faza 22) — diagnostyka/testy. */
+  zoneLevelOf(id: number, role: ZoneRole): number {
+    const p = this.players.get(id);
+    if (!p) return 0;
+    const out = new Array<number>(ZONE_COUNT).fill(0); // diagnostyka (poza hot pathem) — alokacja OK
+    zoneLevels(p.plane.zones, p.damage, p.plane.damage, out);
+    return out[zoneRoleIndex(role)] ?? 0;
+  }
+
+  /** Czy płatowiec gracza się pali (faza 22) — diagnostyka/testy. */
+  isOnFire(id: number): boolean {
+    return this.players.get(id)?.damage.onFire ?? false;
+  }
+
+  /** Czy modyfikatory uszkodzeń są aktywne (sim.damageLevels≠null), tj. fizyka leci uszkodzona —
+   *  diagnostyka/testy zasilenia damageLevels. null = sprawny (tożsamość, złote testy). */
+  damageActiveOf(id: number): boolean {
+    return (this.players.get(id)?.sim.damageLevels ?? null) !== null;
+  }
+
+  /** TEST-ONLY: wymusza pożar encji (zapłon jest probabilistyczny — testy pomijają losowanie, by
+   *  deterministycznie sprawdzić tor dobicia ogniem: DoT→integralność→kredyt). `starterId` = przyszły
+   *  sprawca dobicia (kredyt), `fromAa` → bez sprawcy-gracza (cause 'flak'). No-op dla nieznanego gracza. */
+  igniteForTest(id: number, starterId: number, fromAa = false): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    p.damage.onFire = true;
+    p.damage.fireTimerS = 0;
+    p.fireStarterId = fromAa ? -1 : starterId;
+    p.fireFromAa = fromAa;
+  }
+
   /** Pozostała amunicja gracza — diagnostyka/testy (kadencja i zapas liczone serwerowo). */
   ammoOf(id: number): number {
     return this.players.get(id)?.fire.ammoRemaining ?? 0;
@@ -1084,6 +1159,11 @@ export class GameRoom {
     }
     if (this.state !== 'playing') return;
     this.tick = (this.tick + 1) >>> 0;
+
+    // 0) odśwież poziomy uszkodzeń → sim.damageLevels (faza 22): skutki z poprzednich ticków
+    // (mniejsza moc/clMax, bias roll, słabszy ogon, wyciek) wpływają na RUCH tego ticku. Sprawny
+    // płatowiec → null = tożsamość fizyki (złote testy nietknięte).
+    for (const player of this.players.values()) this.refreshDamageLevels(player);
 
     // 1) ruch wszystkich uczestników (alive: fizyka+cykl-życia; dead: timer respawnu).
     // Bot i gracz różnią się TYLKO źródłem sterowania (AI vs input) — dalej identyczna ścieżka.
@@ -1122,7 +1202,10 @@ export class GameRoom {
 
     // 4) ruch pocisków + 5) hit detection z cofnięciem celów (lag compensation)
     this.pool.update(dtS); // balistyka per pocisk (dragK/lifetime z grupy broni przy strzale)
-    this.resolveHits();
+    this.resolveHits(dtS);
+
+    // 5b) maszyna stanów pożaru (faza 22): DoT do integralności; pożar może dobić (→ wrak)
+    this.stepFireDamage(dtS);
 
     // 6) rozstrzygnięcie końca meczu (po rozliczeniu trafień tego ticku) — strefa albo eliminacja
     this.checkMatchEnd();
@@ -1140,6 +1223,25 @@ export class GameRoom {
     const e = this.pendingEnd;
     this.pendingEnd = null;
     this.endMatch(e.winnerId, e.winningFaction, e.reason);
+  }
+
+  /**
+   * Przepisuje poziomy stref z pełnego stanu uszkodzeń do bufora encji i podpina go pod
+   * `sim.damageLevels`, gdy COKOLWIEK jest uszkodzone — inaczej null (fizyka tożsama, złote testy
+   * nietknięte). Wołane przed ruchem (krok 0 step()), więc uszkodzenia z poprzedniego ticku działają
+   * na lot tego ticku. Modyfikatory liczą się WYŁĄCZNIE z poziomów (2 bity/strefa); ten sam wkład
+   * dostanie predykcja klienta w Części 3 (spójny reconcile, jak paliwo po v7).
+   */
+  private refreshDamageLevels(player: ServerPlayer): void {
+    const levels = zoneLevels(player.plane.zones, player.damage, player.plane.damage, player.damageLevelsBuf);
+    let any = false;
+    for (let i = 0; i < levels.length; i++) {
+      if (levels[i]! > 0) {
+        any = true;
+        break;
+      }
+    }
+    player.sim.damageLevels = any ? levels : null;
   }
 
   /** Samolot bez pilota: żywy gracz-człowiek z zerwanym połączeniem (slot trzymany na reconnect).
@@ -1389,12 +1491,15 @@ export class GameRoom {
   }
 
   /**
-   * Hit detection: każdy aktywny pocisk vs każdy żywy cel (poza właścicielem). Cel jest
-   * cofany do ticku, który strzelec widział (b.rewindTicks); brak danych w oknie → pozycja
-   * bieżąca (fallback). HP, kredyt i eventy — wyłącznie tu (niezmiennik nr 5). Friendly fire
-   * ON (FFA; drużyny w fazie 13). Pocisk trafia najwyżej jeden cel.
+   * Hit detection (faza 22: po STREFACH). Każdy aktywny pocisk vs każdy żywy cel (poza właścicielem):
+   * broad-phase = sfera obrysu (hitRadiusM, cel cofnięty do b.rewindTicks; brak danych → pozycja
+   * bieżąca), narrow-phase = wybór najwcześniej trafionej STREFY (firstZoneHit). Każde trafienie zadaje
+   * PEŁNE obrażenia integralności (health — TTK ogniem bez krytyków niezmienione) ORAZ obrażenia
+   * trafionej strefy (skutki taktyczne). Skutki krytyczne stref (kabina/skrzydło 0 HP) i pożar dobijają
+   * niezależnie od integralności (model hybrydowy). HP, kredyt i eventy — wyłącznie tu (niezmiennik
+   * nr 5). Friendly fire ON. Pocisk trafia najwyżej jeden cel.
    */
-  private resolveHits(): void {
+  private resolveHits(dtS: number): void {
     for (const b of this.pool.bullets) {
       if (!b.active) continue;
       const fromAa = b.ownerId === EMPLACEMENT_BULLET_OWNER;
@@ -1407,13 +1512,50 @@ export class GameRoom {
         const center = this.history.sample(target.id, targetTick, scratchHitCenter)
           ? scratchHitCenter
           : ts.position;
-        // promień sfery trafień per CEL (faza 19b: Bf 109 5,5 m < Spitfire 6 m)
+        // broad-phase: sfera obrysu per CEL (faza 19b: Bf 109 5,5 m < Spitfire 6 m). Poza nią na
+        // pewno nie trafia żadnej strefy — odrzucamy bez iteracji brył (tańsza ścieżka pudła).
         if (!segmentSphereHit(b.prevPosition, b.position, center, target.plane.hitRadiusM)) continue;
         b.active = false;
         consumed = true;
         target.damagedBy.add(b.ownerId);
-        if (applyDamage(target.health, b.damage) === 'destroyed') {
+
+        // integralność strukturalna (backstop hybrydy): pełne obrażenia pocisku jak dotąd → czas do
+        // killa samym ogniem (bez trafień krytycznych) jest niezmieniony, zawsze da się kogoś dobić.
+        const healthDestroyed = applyDamage(target.health, b.damage) === 'destroyed';
+
+        // narrow-phase: która STREFA na torze pocisku (najwcześniej). Pozycja celu cofnięta (center),
+        // orientacja bieżąca (decyzja usera 2026-06-27). Odcinek WYDŁUŻONY o jeden tick do przodu
+        // (pos + v·dt): broad-phase (sfera 6 m) konsumuje pocisk, gdy WCHODZI w obrys — o tick zanim
+        // jego krótki odcinek dosięgnie skupionych przy środku brył stref (a skok ~12 m/tick potrafi
+        // przeskoczyć strefę między pozycjami). Skoro konsumujemy pocisk teraz, „zaliczamy" strefę, w
+        // którą właśnie wchodzi. −1 = minął wszystkie bryły → generyczny kadłub (tylko integralność;
+        // „co widzę, to trafiam" + TTK zachowane).
+        scratchZoneEnd.copy(b.position).addScaledVector(b.velocity, dtS);
+        const zoneIdx = firstZoneHit(target.plane.zones, center, ts.orientation, b.prevPosition, scratchZoneEnd);
+        let criticalDestroyed = false;
+        if (zoneIdx >= 0) {
+          const res = applyZoneHit(target.plane.zones, target.damage, zoneIdx, b.damage);
+          // skutki krytyczne: kabina 0 HP → pilot kill; skrzydło 0 HP → utrata skrzydła → korkociąg
+          // (wrak z autorotacją — bias roll z modyfikatorów działa w stepWreck). Silnik 0% i ogon
+          // obsługują same modyfikatory (brak ciągu / słaby ster), bez osobnej gałęzi śmierci.
+          if (res.zoneDestroyed && (res.role === 'cockpit' || res.role === 'wingL' || res.role === 'wingR')) {
+            criticalDestroyed = true;
+          }
+        }
+
+        // zapłon po trafieniu (kaliber decyduje o szansie: działko >> kaem). Pożar = osobny tor
+        // dobijający (DoT w stepFireDamage); zapamiętujemy podpalacza dla kredytu przy dobiciu ogniem.
+        if (!target.damage.onFire) {
+          const cannon = b.damage >= CANNON_DAMAGE_THRESHOLD;
+          if (maybeIgnite(target.damage, target.plane.damage, cannon, this.damageRng)) {
+            target.fireStarterId = fromAa ? -1 : b.ownerId;
+            target.fireFromAa = fromAa;
+          }
+        }
+
+        if (healthDestroyed || criticalDestroyed) {
           // pocisk AA → zestrzelenie z ziemi (flak, bez sprawcy-gracza); inaczej zwykłe zestrzelenie
+          // (także pilot kill / utrata skrzydła od ognia wroga — kredyt należy do strzelca).
           if (fromAa) this.onAaKill(target);
           else this.onAirKill(target, b.ownerId);
         } else {
@@ -1535,6 +1677,30 @@ export class GameRoom {
     this.creditAssists(victim, null);
   }
 
+  /**
+   * Maszyna stanów pożaru (faza 22), co tick po rozliczeniu trafień. Płonący płatowiec dostaje DoT do
+   * integralności (health) i — po fireSelfExtinguishS — gaśnie sam (stepFire). Pożar może DOBIĆ
+   * (health→0): wtedy wrak spada, kredyt dla podpalacza (jego pocisk wzniecił ogień). Tylko żywe encje:
+   * wrak już opada (DoT do health bez sensu), a nietykalni po respawnie nie palą się (nie oberwą).
+   */
+  private stepFireDamage(dtS: number): void {
+    for (const player of this.players.values()) {
+      if (player.sim.state.life !== 'alive' || !player.damage.onFire) continue;
+      const dot = stepFire(player.damage, player.plane.damage, dtS);
+      if (dot > 0 && applyDamage(player.health, dot) === 'destroyed') this.onFireKill(player);
+    }
+  }
+
+  /**
+   * Dobicie ogniem (faza 22): wrak spada. Kredyt dla podpalacza (cause 'air'), gdy znamy żywego
+   * sprawcę-gracza; gdy ogień wzniecił flak (fireFromAa) albo podpalacza już nie ma — bez kredytu
+   * (cause 'flak', jak zestrzelenie z ziemi). Ta sama buchalteria co onAirKill/onAaKill (asysty itp.).
+   */
+  private onFireKill(victim: ServerPlayer): void {
+    if (!victim.fireFromAa && victim.fireStarterId >= 0) this.onAirKill(victim, victim.fireStarterId);
+    else this.onAaKill(victim);
+  }
+
   /** Asysta dla każdego WROGA, kto wcześniej trafił ofiarę — poza zabójcą (ma już zestrzelenie).
    *  Faza 18: trafienie sojusznika (ta sama frakcja) nie daje asysty. FFA bez zmian (frakcja = id). */
   private creditAssists(victim: ServerPlayer, killerId: number | null): void {
@@ -1595,6 +1761,11 @@ export class GameRoom {
     resetHealth(player.health, player.plane.hpPool);
     resetFireControl(player.fire, player.plane.armament); // pełny zapas wszystkich grup + zerowanie cooldownów
     player.damagedBy.clear();
+    // świeży płatowiec: pełna sprawność stref, brak pożaru, brak modyfikatorów (sim leci tożsamością)
+    resetDamageState(player.damage, player.plane.zones);
+    player.fireStarterId = -1;
+    player.fireFromAa = false;
+    player.sim.damageLevels = null;
     // nietykalność po (re)spawnie (anty-spawn-kill); znika po czasie albo gdy gracz strzeli
     player.protectionTimerS = SPAWN_PROTECTION_S;
 

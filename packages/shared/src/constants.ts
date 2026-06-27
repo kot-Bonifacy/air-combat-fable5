@@ -66,6 +66,15 @@ export const BULLET_POOL_CAPACITY = 768;
 /** Konwersja milliradianów (rozrzut w JSON) → radiany. */
 export const MRAD_TO_RAD = 1e-3;
 
+/**
+ * Próg `damagePerHit` odróżniający DZIAŁKO (20 mm) od karabinu maszynowego (7,7 mm) przy
+ * decyzji o szansie pożaru (faza 22). Pocisk niesie tylko `damage` (= damagePerHit grupy),
+ * więc kaliber rozpoznajemy z niego: Spitfire .303 = 1,5 i Bf 109 MG 17 = 1,4 (kaem) << MG FF
+ * 20 mm = 40 (działko). 10 leży z dużym zapasem między tymi klasami — działko zapala dużo
+ * częściej (osobne szanse w JSON: fireIgniteChanceCannon vs fireIgniteChanceMg).
+ */
+export const CANNON_DAMAGE_THRESHOLD = 10;
+
 // --- mecz offline (faza 6) ---
 
 /** Liczba zestrzeleń kończąca pojedynek 1v1 (punkty do N, z respawnami). */

@@ -263,7 +263,21 @@ wybuch+szczątki, ślad dymny 20 mm) → BACKLOG** (świadomie: nieweryfikowalne
 kryterium; plan w `docs/phases/faza-21.md`). ⏳ user: odsłuch/playtest miksu, brak błędów autoplay (Chrome/FF/Edge),
 fps RTX przy 8 samolotach.
 
-**Następna: Faza 22 — uszkodzenia** (lub domknięcie wizualiów Faza 21 — do decyzji usera).
+**Faza 22 — modułowe uszkodzenia (podział na 5 części, życzenie usera; plan w `docs/phases/faza-22.md`):**
+model śmierci HYBRYDA (strefy z własnym HP + globalna „integralność" = istniejące `health`); bryły = kapsuły
+(skrzydła/kadłub/ogon) + sfery (silnik/kabina/zbiornik); ograniczenie z f9: modyfikatory liczone z KWANTYZOWANYCH
+POZIOMÓW stref (klient zna ze snapshotu tylko poziomy → spójny reconcile). **Część 1 ✅ (fundament shared, commit
+`762342f`):** `combat/capsule.ts`, `combat/damage-model.ts` (poziomy→modyfikatory, tożsamość bez uszkodzeń), strefy+tuning
+w JSON obu samolotów + walidacja loadera, `SimPlane.damageLevels`+`effectivePlaneConfig` w `pilotStep`. **Część 2 ✅
+(serwer: hit detection po strefach + maszyna stanów, 2026-06-27, 567 testów):** `shared` `firstZoneHit` (narrow-phase
+body→world, najwcześniejsza strefa) + `CANNON_DAMAGE_THRESHOLD`; `game-room.ts` `ServerPlayer.damage`, `refreshDamageLevels`
+(poziomy→`sim.damageLevels` co tick, null=tożsamość), `resolveHits` po strefach (broad-phase `hitRadiusM` + PEŁNE obrażenia
+health = TTK niezmienione → narrow-phase `firstZoneHit`), skutki krytyczne (kabina/skrzydło 0 HP → kill mimo health>0),
+`maybeIgnite`+`stepFireDamage`/`onFireKill` (pożar dobija, kredyt podpalaczowi/'flak'), reset na (re)spawn. Decyzja usera
+(AskUserQuestion): lag-comp = pozycja z historii + bieżąca orientacja. **Pułapka:** sfera obrysu 6 m > skupione bryły +
+skok pocisku ~12 m/tick → pocisk konsumowany w „halo" o tick przed strefą (lub przeskakiwał między pozycjami) → fix:
+narrow-phase na odcinku `[prevPos, pos+v·dt]`. BEZ protokołu (v7), nie wymaga deployu. **Pozostało:** Część 3 (protokół
+v8 +u16 stanu stref + predykcja klienta + boty), 4 (klient HUD sylwetki + wizualia obcych), 5 (balans + tag `1.0`).
 (Decyzja 2026-06-18: pełny parytet MP↔SP przed Bf 109; Bf 109→19 ✅, teren→20 ✅, dźwięk→21 ✅ audio, uszkodzenia→22.)
 
 ## Stack (skrót)

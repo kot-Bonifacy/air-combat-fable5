@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { Quaternion, Vector3 } from 'three';
 import {
   applyZoneHit,
   computeDamageModifiers,
   createDamageState,
+  firstZoneHit,
   maybeIgnite,
   NO_DAMAGE_MODIFIERS,
   quantizeZoneLevel,
@@ -159,6 +161,61 @@ describe('zoneLevels — mapowanie na role kanoniczne', () => {
     zoneLevels(zones, state, tuning, out);
     expect(out[2]).toBe(2); // kanoniczny indeks tank = 2
     expect(out.filter((v) => v !== 0)).toHaveLength(1);
+  });
+});
+
+describe('firstZoneHit — narrow-phase: wybór strefy (body→world)', () => {
+  // strefy w pozycjach na osi Z (centerline) + skrzydła na osi X — łatwe do trafienia odcinkiem
+  function geomZones(): HitZone[] {
+    return [
+      { role: 'engine', shape: { kind: 'sphere', center: [0, 0, 5], radius: 1 }, maxHp: 40 },
+      { role: 'cockpit', shape: { kind: 'sphere', center: [0, 0, 0], radius: 1 }, maxHp: 40 },
+      { role: 'tank', shape: { kind: 'sphere', center: [0, 0, -3], radius: 1 }, maxHp: 40 },
+      { role: 'wingL', shape: { kind: 'capsule', a: [1, 0, 0], b: [6, 0, 0], radius: 0.5 }, maxHp: 40 },
+      { role: 'wingR', shape: { kind: 'capsule', a: [-1, 0, 0], b: [-6, 0, 0], radius: 0.5 }, maxHp: 40 },
+      { role: 'tail', shape: { kind: 'sphere', center: [0, 0, -8], radius: 1 }, maxHp: 40 },
+    ];
+  }
+  const ID = new Quaternion();
+  const ORIGIN = new Vector3();
+
+  it('pocisk z TYŁU (−Z→+Z) na osi trafia najpierw OGON (najwcześniej na torze)', () => {
+    const idx = firstZoneHit(geomZones(), ORIGIN, ID, new Vector3(0, 0, -12), new Vector3(0, 0, 12));
+    expect(idx).toBe(5); // tail (z=−8) jest najbliżej startu pocisku
+  });
+
+  it('pocisk z PRZODU (+Z→−Z) na osi trafia najpierw SILNIK', () => {
+    const idx = firstZoneHit(geomZones(), ORIGIN, ID, new Vector3(0, 0, 12), new Vector3(0, 0, -12));
+    expect(idx).toBe(0); // engine (z=5) najbliżej startu
+  });
+
+  it('kapsuła skrzydła trafiona torem równoległym do Z przy x=3', () => {
+    const idx = firstZoneHit(geomZones(), ORIGIN, ID, new Vector3(3, 0, 5), new Vector3(3, 0, -5));
+    expect(idx).toBe(3); // wingL (oś x∈[1,6]) — sfery centerline (x=0,r1) są poza zasięgiem przy x=3
+  });
+
+  it('pocisk mijający obrys → −1 (żadnej strefy)', () => {
+    const idx = firstZoneHit(geomZones(), ORIGIN, ID, new Vector3(20, 20, 5), new Vector3(20, 20, -5));
+    expect(idx).toBe(-1);
+  });
+
+  it('orientacja ma znaczenie: obrót 180° wokół Y zamienia przód↔tył', () => {
+    const q = new Quaternion(0, 1, 0, 0); // 180° wokół Y: [x,y,z]→[−x,y,−z]
+    // ten sam pocisk z przodu (+Z→−Z) — po obrocie silnik jest z TYŁU, więc najpierw OGON (z=8 w świecie)
+    const idx = firstZoneHit(geomZones(), ORIGIN, q, new Vector3(0, 0, 12), new Vector3(0, 0, -12));
+    expect(idx).toBe(5); // tail
+  });
+
+  it('przesunięcie celu (center) transluje strefy', () => {
+    const center = new Vector3(100, 50, 0);
+    const idx = firstZoneHit(
+      geomZones(),
+      center,
+      ID,
+      new Vector3(100, 50, 12),
+      new Vector3(100, 50, -12),
+    );
+    expect(idx).toBe(0); // engine — strefy poszły za center
   });
 });
 

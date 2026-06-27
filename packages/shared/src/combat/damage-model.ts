@@ -1,3 +1,7 @@
+import { Quaternion, Vector3 } from 'three';
+import { segmentSphereHitT } from './hit';
+import { segmentCapsuleHitT } from './capsule';
+
 // Model modułowych uszkodzeń (faza 22a). Dwie warstwy:
 //
 //  1. STAN PEŁNY (serwer, autorytatywny): HP każdej strefy + globalna „integralność"
@@ -219,6 +223,48 @@ export function resetDamageState(state: DamageState, zones: readonly HitZone[]):
   state.zoneHp.length = zones.length;
   state.onFire = false;
   state.fireTimerS = 0;
+}
+
+// ============================ NARROW-PHASE: WYBÓR STREFY (serwer) ============================
+
+const scratchZoneCenter = new Vector3();
+const scratchZoneA = new Vector3();
+const scratchZoneB = new Vector3();
+
+/**
+ * Indeks strefy w `zones[]` trafionej NAJWCZEŚNIEJ przez tor pocisku p0→p1, albo −1, gdy żadnej.
+ * Bryły stref są w body frame — transformujemy je do świata pozą celu (`center` = pozycja,
+ * `q` = orientacja). „Najwcześniej" = najmniejszy parametr t wzdłuż toru pocisku (segmentSphere/
+ * CapsuleHitT zwracają położenie zbliżenia na torze), więc przy przebiciu kilku stref wygrywa ta
+ * od strony lufy. Caller (serwer) odpala to PO broad-phase (sfera hitRadiusM) — tu już wiadomo, że
+ * pocisk wszedł w obrys; pytanie tylko, w którą strefę. Czyste, scratch modułowy (jeden wątek).
+ */
+export function firstZoneHit(
+  zones: readonly HitZone[],
+  center: Vector3,
+  q: Quaternion,
+  p0: Vector3,
+  p1: Vector3,
+): number {
+  let bestIdx = -1;
+  let bestT = Infinity;
+  for (let i = 0; i < zones.length; i++) {
+    const shape = zones[i]!.shape;
+    let t: number;
+    if (shape.kind === 'sphere') {
+      scratchZoneCenter.set(shape.center[0], shape.center[1], shape.center[2]).applyQuaternion(q).add(center);
+      t = segmentSphereHitT(p0, p1, scratchZoneCenter, shape.radius);
+    } else {
+      scratchZoneA.set(shape.a[0], shape.a[1], shape.a[2]).applyQuaternion(q).add(center);
+      scratchZoneB.set(shape.b[0], shape.b[1], shape.b[2]).applyQuaternion(q).add(center);
+      t = segmentCapsuleHitT(p0, p1, scratchZoneA, scratchZoneB, shape.radius);
+    }
+    if (t >= 0 && t < bestT) {
+      bestT = t;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 /** Wynik aplikacji obrażeń do strefy — serwer decyduje o skutkach krytycznych (pilot/skrzydło). */

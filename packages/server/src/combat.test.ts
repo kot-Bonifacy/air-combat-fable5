@@ -135,22 +135,27 @@ describe('serwer — hit detection, HP i kredyt zestrzeleń', () => {
     const b = add(room, 'B');
     room.start();
     // symetryczny pojedynek czołowy z bliska (12 m): a nosem +Z ku b, b nosem −Z ku a.
-    // pozy „przyklejone" co tick → ogień idealnie symetryczny, obaj giną ~w tym samym ticku;
-    // gdyby jeden padł o tick wcześniej, pociski drugiego „już lecące" i tak dobijają (kredyt zostaje).
+    // pozy „przyklejone" co tick → ogień idealnie symetryczny, obaj giną ~w tym samym ticku.
+    // Faza 22: z 12 m ogień SKRZYDŁOWY Spitfire'a (8 luf na skrzydłach) sieje po SKRZYDŁACH
+    // przeciwnika → śmierć może nastąpić przez UTRATĘ SKRZYDŁA (krytyk), zanim integralność zejdzie
+    // do 0 — dlatego sprawdzamy ŚMIERĆ (lives/deaths/kredyt), nie samo HP. Setup symetryczny → obaj
+    // przekraczają próg zniszczenia skrzydła w tym samym ticku, więc kredyt trafia do obu.
     const aPos: [number, number, number] = [0, 5000, 0];
     const bPos: [number, number, number] = [0, 5000, 12];
     room.applyInput(a, input({ fire: true, aimX: 0, aimY: 0, aimZ: 1 }));
     room.applyInput(b, input({ fire: true, aimX: 0, aimY: 0, aimZ: -1 }));
 
     let ticks = 0;
-    while ((room.healthOf(a) > 0 || room.healthOf(b) > 0) && ticks < 300) {
+    while ((room.livesOf(a) > 0 || room.livesOf(b) > 0) && ticks < 300) {
       repose(room, a, aPos, false);
       repose(room, b, bPos, true);
       room.step(FIXED_DT_S);
       ticks++;
     }
-    expect(room.healthOf(a)).toBe(0);
-    expect(room.healthOf(b)).toBe(0);
+    expect(room.livesOf(a)).toBe(0); // obaj martwi (MATCH_LIVES=1 → 0 po śmierci)
+    expect(room.livesOf(b)).toBe(0);
+    expect(room.deathsOf(a)).toBe(1);
+    expect(room.deathsOf(b)).toBe(1);
     expect(room.killsOf(a)).toBe(1);
     expect(room.killsOf(b)).toBe(1);
   });
@@ -190,10 +195,12 @@ describe('serwer — hit detection, HP i kredyt zestrzeleń', () => {
     expect(room.healthOf(victim)).toBeLessThan(SPITFIRE_MK2.hpPool); // A trafił
     expect(room.healthOf(victim)).toBeGreaterThan(0); // ale nie dobił
 
-    // faza 2: C dobija
+    // faza 2: C dobija. Pętla kończy się na ŚMIERCI ofiary (lives), nie na health→0 — faza 22:
+    // dobicie może nastąpić przez utratę skrzydła (krytyk), gdzie integralność zostaje dodatnia;
+    // gdyby pętla czekała na health→0, C strzelałby dalej i jego pociski dobiłyby A za martwą ofiarą.
     room.applyInput(c, input({ fire: true }));
     let ticks = 0;
-    while (room.healthOf(victim) > 0 && ticks < 600) {
+    while (room.livesOf(victim) > 0 && ticks < 600) {
       repose(room, a, aPos, false);
       repose(room, victim, vPos, false);
       repose(room, c, cPos, true);

@@ -88,10 +88,49 @@ w JSON (sekcja `damage`) — strojenie w Części 5 bez kodu.
 
 ---
 
-## CZĘŚĆ 2 — Serwer: hit detection po strefach + maszyna stanów  ⛔ NIE ROZPOCZĘTE
+## CZĘŚĆ 2 — Serwer: hit detection po strefach + maszyna stanów  ✅ UKOŃCZONE (2026-06-27)
 
-**Warstwa:** `packages/server` (+ ew. drobne `shared`). **Protokół:** BEZ zmian (stan stref jeszcze
-nie jedzie w snapshocie — to Część 3; tu serwer trzyma go autorytatywnie i działa lokalnie).
+**Warstwa:** `packages/server` (+ drobne `shared`: `firstZoneHit`, `CANNON_DAMAGE_THRESHOLD`).
+**Protokół:** BEZ zmian (v7 — stan stref jeszcze nie jedzie w snapshocie, to Część 3; serwer trzyma go
+autorytatywnie i działa lokalnie). **Deploy:** nie dotyczy (BEZ protokołu).
+
+### Decyzja usera (AskUserQuestion 2026-06-27)
+Lag-comp stref = **pozycja z historii + bieżąca orientacja** (zgodne z dokiem „jak dziś", zero ryzyka
+dla load-bearing modułu lag-comp; broad-phase = CZY trafienie bez zmian → TTK i „co widzę, to trafiam"
+zachowane; tylko WYBÓR strefy może się minimalnie rozjechać przy szybkim manewrze). Odrzucone:
+rozszerzenie historii o kwaternion (wyższa wierność, większe ryzyko).
+
+### Zrobione
+- **`shared/combat/damage-model.ts`** — `firstZoneHit(zones, center, q, p0, p1)`: narrow-phase, bryły
+  body→world (pozycja+orientacja), wybór NAJWCZEŚNIEJ trafionej strefy (najmniejsze t na torze) lub −1.
+  Reużywa `segmentSphereHitT`/`segmentCapsuleHitT`. 6 testów geometrii (przód/tył/skrzydło/pudło/orientacja/translacja).
+- **`shared/constants.ts`** — `CANNON_DAMAGE_THRESHOLD = 10` (kaliber z `bullet.damage`: kaem ≤1,5 << działko 40).
+- **`server/game-room.ts`**:
+  - `ServerPlayer.damage: DamageState` (createDamageState z `plane.zones`) + `damageLevelsBuf` + `fireStarterId`/
+    `fireFromAa` (kredyt dobicia ogniem). Re-tworzony przy zmianie typu (`applyPlaneSelection`), resetowany na
+    (re)spawnie (`resetDamageState`, `sim.damageLevels=null`, fireStarter wyzerowany).
+  - **Krok 0 `step()`** — `refreshDamageLevels`: poziomy stref → `sim.damageLevels` (lub null, gdy sprawny =
+    tożsamość, złote testy nietknięte). Uszkodzenia z poprzedniego ticku działają na ruch tego ticku.
+  - **`resolveHits` po STREFACH**: broad-phase `hitRadiusM` (cofnięta pozycja + bieżąca orientacja) →
+    `applyDamage(health, dmg)` (PEŁNE obrażenia = TTK niezmienione) + narrow-phase `firstZoneHit` na odcinku
+    **wydłużonym o 1 tick** (`pos+v·dt`, anty-tunelowanie: sfera 6 m konsumuje pocisk o tick przed dosięgnięciem
+    skupionych przy środku brył) → `applyZoneHit`; skutek krytyczny (kabina/skrzydło 0 HP) → kill mimo health>0.
+  - **`maybeIgnite`** po trafieniu (kaliber → cannon/mg), RNG `damageRng` (osobny od balistyki); zapamiętanie podpalacza.
+  - **`stepFireDamage`** (krok 5b) — DoT pożaru do `health`; dobicie → `onFireKill` (kredyt podpalaczowi /
+    'flak' gdy flak/nieznany).
+  - Diagnostyka/testy: `zoneHpOf`, `zoneLevelOf`, `isOnFire`, `damageActiveOf`, `igniteForTest` (test-only).
+- **`server/zone-damage.test.ts`** (6 testów): strefa+integralność z tyłu (przód nietknięty); utrata skrzydła
+  → śmierć mimo health>0 + kredyt + damageActive; pożar DoT+samowygaszenie; pożar dobija (kredyt podpalaczowi);
+  flak dobija bez kredytu; reset stref+pożaru na (re)spawnie. **`combat.test.ts`** zaktualizowany (remis + asysta:
+  pętle na `lives`, bo krytyk zostawia health>0).
+
+### Wynik 2
+typecheck (3 ws) ✓, **567 testów** ✓ (+12), lint ✓, build ✓. Niezmiennik tożsamości zachowany (sprawny =
+`sim.damageLevels=null`). **Pułapka odkryta i naprawiona:** sfera obrysu (6 m) > skupione bryły stref + skok
+pocisku ~12 m/tick → pocisk konsumowany w „halo" o tick przed strefą (lub przeskakiwał ją między pozycjami) →
+strefy nie obrywały przy podejściu od tyłu/przodu. Fix: narrow-phase na odcinku `[prevPos, pos+v·dt]`.
+
+### Pierwotny plan Części 2 (zrealizowany)
 
 ### Zakres
 - `ServerPlayer.damage: DamageState` (createDamageState z `plane.zones`); reset przy respawnie.
@@ -109,10 +148,11 @@ nie jedzie w snapshocie — to Część 3; tu serwer trzyma go autorytatywnie i 
   uwzględniała uszkodzenia (predykcja klienta dostanie poziomy w Części 3).
 
 ### Kryteria
-- [ ] Trafienie aktualizuje właściwą strefę + integralność; broad/narrow-phase spójne z TTK.
-- [ ] Maszyna stanów: pożar (gaśnie/dobija), wyciek, pilot kill (rzadki), utrata skrzydła→korkociąg.
-- [ ] Reset stanu uszkodzeń przy respawnie; brak wycieków stanu między życiami.
-- [ ] Testy serwerowe (combat/zone-hit/state-machine); typecheck+test+lint+build zielone; commit.
+- [x] Trafienie aktualizuje właściwą strefę + integralność; broad/narrow-phase spójne z TTK.
+- [x] Maszyna stanów: pożar (gaśnie/dobija), wyciek (modyfikator z poziomów), pilot kill (rzadki — kabina 0 HP,
+      ta sama gałąź co utrata skrzydła), utrata skrzydła→korkociąg (`spin` z modyfikatorów w `stepWreck`).
+- [x] Reset stanu uszkodzeń przy respawnie; brak wycieków stanu między życiami.
+- [x] Testy serwerowe (combat/zone-hit/state-machine); typecheck+test+lint+build zielone; commit.
 
 ### Pułapki
 - Pilot kill: start od ~0 szansy/twardości, podnosić w Części 5 (< 5% killi).
@@ -182,7 +222,12 @@ nie jedzie w snapshocie — to Część 3; tu serwer trzyma go autorytatywnie i 
   protokołu (v7). Pliki: `combat/capsule.ts`, `combat/damage-model.ts` (+testy), strefy+tuning w
   JSON obu samolotów + walidacja loadera, modyfikatory w `pilotStep` (`SimPlane.damageLevels`,
   `effectivePlaneConfig`). Tożsamość bez uszkodzeń zachowana.
-- **Część 2** — —
+- **Część 2 (serwer: hit detection po strefach + maszyna stanów)** — ✅ 2026-06-27, 567 testów/typecheck/
+  lint/build zielone, BEZ protokołu (v7). Pliki: `shared` `firstZoneHit` + `CANNON_DAMAGE_THRESHOLD`;
+  `server/game-room.ts` (`ServerPlayer.damage`, `refreshDamageLevels`, `resolveHits` po strefach +
+  skutki krytyczne, `stepFireDamage`/`onFireKill`, diagnostyka); `server/zone-damage.test.ts`. Decyzja
+  usera: lag-comp = pozycja z historii + bieżąca orientacja. Pułapka „halo" broad-phase naprawiona
+  (narrow-phase na odcinku `pos+v·dt`).
 - **Część 3** — —
 - **Część 4** — —
 - **Część 5** — —
