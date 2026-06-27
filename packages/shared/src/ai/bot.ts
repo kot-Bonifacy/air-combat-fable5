@@ -100,6 +100,7 @@ export class Bot {
     targetOffBoresightRad: Math.PI,
     aspectRad: Math.PI,
     iasMs: 0,
+    criticalDamage: false,
   };
   private readonly rng: () => number;
 
@@ -161,6 +162,8 @@ export class Bot {
   /**
    * Jeden tick decyzji. Wypełnia `outDemands` (do pilotStep) i zwraca
    * {state, throttle, fire}. `target` = null albo martwy → patrol.
+   * `criticalDamage` (faza 22 cz.3): serwer sygnalizuje krytyczne uszkodzenia — bot przerywa walkę
+   * i ucieka (FSM → extend). Domyślnie false (sprawny / wywołania testów bez uszkodzeń).
    */
   update(
     self: PlaneState,
@@ -169,6 +172,7 @@ export class Bot {
     env: BotEnvironment,
     dtS: number,
     outDemands: PilotDemands,
+    criticalDamage = false,
   ): BotOutput {
     this.jinkTimeS += dtS;
     this.updateHitReaction(dtS);
@@ -210,6 +214,9 @@ export class Bot {
     } else {
       this.perception.hasTarget = false;
     }
+    // niezależne od celu — krytycznie uszkodzony bot ucieka także w patrolu (często trafiany bez
+    // wypatrzenia napastnika); FSM bez celu i tak zwróci patrol, więc zaszkodzić nie może
+    this.perception.criticalDamage = criticalDamage;
 
     this.state = nextBotState(this.state, this.perception, this.tuning);
 

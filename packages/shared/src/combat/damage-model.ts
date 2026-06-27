@@ -196,6 +196,20 @@ export function computeDamageModifiers(
   return out;
 }
 
+/**
+ * Czy stan uszkodzeń jest „krytyczny" dla decyzji AI (faza 22 cz.3: bot przerywa walkę i ucieka).
+ * Kryterium: pożar (zaraz dobije) ALBO którakolwiek strefa ciężko/zniszczona (poziom ≥ 2 = silnik
+ * na 30 %/0 %, skrzydło/ogon mocno degradujące lot, pilot ranny). Liczone z POZIOMÓW (te same, które
+ * jadą w snapshocie), żeby definicja była jedna i testowalna; próg jest knobem balansu Części 5.
+ */
+export function isCriticalDamage(levels: readonly number[], onFire: boolean): boolean {
+  if (onFire) return true;
+  for (let i = 0; i < levels.length; i++) {
+    if ((levels[i] ?? 0) >= 2) return true;
+  }
+  return false;
+}
+
 // ============================ STAN PEŁNY (serwer) ============================
 
 /**

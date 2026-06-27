@@ -26,6 +26,9 @@ export interface BotPerception {
   aspectRad: number;
   /** Moja prędkość wskazywana [m/s] — proxy energii. */
   iasMs: number;
+  /** Krytyczne uszkodzenia (faza 22 cz.3): bot przerywa walkę i ucieka (silnik/ogień/skrzydło).
+   *  Liczone przez serwer ze stanu uszkodzeń (boty są serwerowe — bez predykcji klienta). */
+  criticalDamage: boolean;
 }
 
 /** Czy cel jest na moim ogonie (zagrożenie wymuszające evade). */
@@ -45,7 +48,8 @@ export function isOffensive(p: BotPerception, t: BotTuning): boolean {
 
 /**
  * Następny stan FSM. Priorytety: brak celu → patrol; zagrożenie → evade
- * (nadrzędne nad engage/extend); reszta wg bieżącego stanu z histerezą.
+ * (nadrzędne nad engage/extend); krytyczne uszkodzenia → extend (ucieczka, faza 22 cz.3);
+ * reszta wg bieżącego stanu z histerezą.
  */
 export function nextBotState(
   current: BotStateName,
@@ -54,6 +58,11 @@ export function nextBotState(
 ): BotStateName {
   if (!p.hasTarget) return 'patrol';
   if (isThreatened(p, t)) return 'evade';
+  // krytyczne uszkodzenia (faza 22 cz.3): przerwij walkę i uciekaj — oddal się od wroga i zniżaj
+  // (extend), zamiast dalej atakować. Po evade (gdy ktoś siedzi na ogonie), bo ostry break ratuje
+  // skuteczniej; gdy nikt nie zagraża — extend wyprowadza z walki. Nadrzędne nad histerezą stanów
+  // (zwrot tutaj pomija switch), więc raz uszkodzony bot nie wraca do engage przy odbudowie energii.
+  if (p.criticalDamage) return 'extend';
 
   const lowEnergy = p.iasMs < t.lowEnergyIasMs;
   const recovered = p.iasMs > t.recoveredEnergyIasMs;

@@ -13,6 +13,7 @@ function p(over: Partial<BotPerception> = {}): BotPerception {
     targetOffBoresightRad: Math.PI,
     aspectRad: 0,
     iasMs: 120,
+    criticalDamage: false,
     ...over,
   };
 }
@@ -54,6 +55,19 @@ describe('przejścia FSM', () => {
     expect(nextBotState('engage', threat(), t)).toBe('evade');
     expect(nextBotState('patrol', threat(), t)).toBe('evade');
     expect(nextBotState('extend', threat(), t)).toBe('evade');
+  });
+
+  it('krytyczne uszkodzenia → extend (ucieczka) z każdego stanu, mimo dobrej pozycji', () => {
+    const crit = p({ criticalDamage: true });
+    expect(nextBotState('engage', crit, t)).toBe('extend');
+    expect(nextBotState('patrol', crit, t)).toBe('extend');
+    // pozycja ofensywna i energia odbudowana nie wciągają z powrotem w walkę
+    expect(nextBotState('extend', p({ criticalDamage: true, iasMs: 120, attackerOffBoresightRad: 0.1, rangeM: 300 }), t)).toBe('extend');
+  });
+
+  it('krytyczne uszkodzenia: zagrożenie ma pierwszeństwo (evade), a brak celu → patrol', () => {
+    expect(nextBotState('engage', threat({ criticalDamage: true }), t)).toBe('evade');
+    expect(nextBotState('engage', p({ criticalDamage: true, hasTarget: false }), t)).toBe('patrol');
   });
 
   it('patrol → engage gdy cel w zasięgu wykrycia', () => {

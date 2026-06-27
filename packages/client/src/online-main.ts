@@ -42,6 +42,7 @@ import {
   surfaceHeightM,
   totalAmmo,
   wingspanM,
+  type EntityDamage,
   type EntitySnapshot,
   type GameEvent,
   type InputFrame,
@@ -509,6 +510,12 @@ const healthFracById = new Map<number, number>();
 const lifeById = new Map<number, LifePhase>();
 const smokeAccumById = new Map<number, number>();
 /**
+ * Stan uszkodzeń stref per encja z ostatniego snapshotu (protokół v8). Lokalny gracz konsumuje go
+ * w predyktorze (sim.damageLevels); tu trzymamy poziomy/pożar WSZYSTKICH encji pod wizualia Części 4
+ * (HUD sylwetki własnego, dym/ogień/brak końcówki obcych). Czyszczony jak healthFracById.
+ */
+const damageById = new Map<number, EntityDamage>();
+/**
  * Encje rozbite o LĄD — zwęglone wraki ZOSTAJĄ widoczne (zamrożone, lekko dymią) do końca meczu
  * (parytet z SP: Combatant.burningWreck). Uderzenie w wodę tu NIE trafia (mesh znika). Czyszczone
  * przy resecie meczu; pojedynczy respawn (gdyby kiedyś wrócił) przywraca materiały (render loop).
@@ -620,6 +627,7 @@ function resetGameState(): void {
   localAmmoFrac = 1;
   localAmmoSecondaryFrac = 1;
   healthFracById.clear();
+  damageById.clear();
   lifeById.clear();
   smokeAccumById.clear();
   burningWreckIds.clear(); // nowy mecz/reconnect — żadnych zwęglonych wraków z poprzedniego (meshe i tak czyszczone)
@@ -672,6 +680,7 @@ function handleSnapshot(snap: Snapshot): void {
     planeTypeById.set(e.id, e.planeType); // typ z autorytetu serwera (mesh/HUD/smugacze)
     ensureMesh(e.id, e.planeType);
     healthFracById.set(e.id, e.healthFrac); // dym uszkodzeń (lokalny i obce) wg HP serwera
+    damageById.set(e.id, e.damage); // stan stref/pożar (v8) — pod wizualia uszkodzeń (Część 4)
     if (e.isLocal) {
       // własny typ ujawnia się tu (FFA: wybór gracza; drużynowy: wg strony) — przestaw lokalny
       // samolot PRZED reconcile, by predykcja od pierwszego kroku liczyła właściwą kopertą osiągów.
@@ -692,6 +701,7 @@ function handleSnapshot(snap: Snapshot): void {
     meshTypeById.delete(id);
     planeTypeById.delete(id);
     healthFracById.delete(id);
+    damageById.delete(id);
     lifeById.delete(id);
     smokeAccumById.delete(id);
     burningWreckIds.delete(id);

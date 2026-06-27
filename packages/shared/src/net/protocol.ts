@@ -4,6 +4,7 @@ import type { DifficultyLevel } from '../ai/difficulty';
 import type { LifePhase, PlaneState } from '../physics/state';
 import type { MatchMode } from '../world/team';
 import { planeTypeFromCode, planeTypeToCode, type PlaneType } from '../planes/plane-type';
+import { ZONE_COUNT } from '../combat/damage-model';
 
 // Protokół sieciowy fazy 8 (docs/phases/faza-08.md).
 //
@@ -43,8 +44,13 @@ import { planeTypeFromCode, planeTypeToCode, type PlaneType } from '../planes/pl
  * (auto-reconnect bez przeładowania) stan klienta rozjeżdżał się z serwerem (pokazywany pusty bak).
  * Teraz paliwo jest autorytatywne jak HP/amunicja: klient predykuje między snapshotami i KORYGUJE do
  * wartości serwera. Deploy front+back RAZEM (niespójna wersja = błąd handshake).
+ * v8 (faza 22 cz.3): snapshot encji dokłada u16 STANU USZKODZEŃ (6 stref × 2 bity poziomu 0..3 +
+ * bit pożaru; indeks strefy = ZONE_ROLES). Lokalna encja: klient ustawia z tego `SimPlane.damageLevels`
+ * i predykuje uszkodzony lot tymi samymi modyfikatorami co serwer (spójny reconcile, jak paliwo po v7,
+ * bo skutki liczą się WYŁĄCZNIE z poziomów). Obce: poziomy/pożar zasilą wizualia uszkodzeń (Część 4).
+ * SNAPSHOT_ENTITY_BYTES 34→36. Deploy front+back RAZEM.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 /** Tag pierwszego bajtu ramki binarnej: wejście gracza (klient → serwer). */
 export const MSG_INPUT = 1;
@@ -222,6 +228,18 @@ export function validateInputFrame(frame: InputFrame): string | null {
 
 // =========================== SNAPSHOT (serwer → klient) ===========================
 
+/**
+ * Stan uszkodzeń encji po dekodowaniu (protokół v8). `levels` ma długość ZONE_COUNT, indeks =
+ * ZONE_ROLES (engine/cockpit/tank/wingL/wingR/tail), wartości 0..3 (0=ok…3=zniszczona). Lokalna
+ * encja: klient ustawia z `levels` swój `SimPlane.damageLevels` (spójna predykcja); obce: pod
+ * wizualia Części 4 (dym/ogień/brak końcówki skrzydła). `onFire` służy tylko prezentacji (DoT do
+ * integralności liczy autorytatywnie serwer).
+ */
+export interface EntityDamage {
+  levels: number[];
+  onFire: boolean;
+}
+
 /** Stan jednej encji po dekodowaniu snapshotu (po stronie klienta). */
 export interface EntitySnapshot {
   id: number;
@@ -245,6 +263,8 @@ export interface EntitySnapshot {
   fuelFrac: number;
   /** Typ samolotu encji (faza 19b) — klient dobiera mesh i etykietę HUD; lokalnie też predykcję. */
   planeType: PlaneType;
+  /** Stan uszkodzeń stref (protokół v8) — poziomy 0..3 per strefa + pożar (patrz EntityDamage). */
+  damage: EntityDamage;
 }
 
 export interface Snapshot {
@@ -273,14 +293,43 @@ export interface SnapshotEntitySource {
   ammoSecondaryMax: number;
   /** Typ samolotu encji (faza 19b) — kodowany jednym bajtem (snapshot v4). */
   planeType: PlaneType;
+  /** Żywe źródło stanu uszkodzeń (faza 22, protokół v8): `levels` to bufor poziomów mutowany co tick
+   *  (refreshDamageLevels), `fire.onFire` z żywego DamageState. Struktura (a nie typ DamageState),
+   *  by protokół nie zależał od logiki combat — kodujemy tylko kwantyzowane poziomy + bit pożaru. */
+  damage: { levels: readonly number[]; fire: { onFire: boolean } };
 }
 
 export const SNAPSHOT_HEADER_BYTES = 10; // u8 type | u32 tick | u32 ack | u8 count
-export const SNAPSHOT_ENTITY_BYTES = 34; // u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp | u8 ammo | u8 ammoSecondary | u8 planeType | u8 fuel
+export const SNAPSHOT_ENTITY_BYTES = 36; // ...u8 fuel | u16 stan uszkodzeń (v8); reszta jak w v7
+// layout encji: u8 id | u8 flags | f32×3 pos | i16×4 orient | i16×3 vel | u8 throttle | u8 hp |
+//   u8 ammo | u8 ammoSecondary | u8 planeType | u8 fuel | u16 damage
 
 /** Rozmiar snapshotu [bajty] dla zadanej liczby encji — do budżetu pasma. */
 export function snapshotByteLength(entityCount: number): number {
   return SNAPSHOT_HEADER_BYTES + entityCount * SNAPSHOT_ENTITY_BYTES;
+}
+
+// --- stan uszkodzeń jako u16 we encji (protokół v8) ---
+// 6 stref (ZONE_COUNT) × 2 bity poziomu (0..3) = 12 bitów + bit pożaru (bit 12). Indeks strefy =
+// ZONE_ROLES (importowany ZONE_COUNT pilnuje zgodności rozmiaru bez duplikacji liczby).
+const DAMAGE_FIRE_BIT = 1 << (ZONE_COUNT * 2);
+
+/** Pakuje poziomy stref (0..3, indeks = ZONE_ROLES, długość ZONE_COUNT) + pożar do u16. */
+function packDamage(levels: readonly number[], onFire: boolean): number {
+  let v = 0;
+  for (let i = 0; i < ZONE_COUNT; i++) {
+    const lvl = Math.round(clamp(levels[i] ?? 0, 0, 3));
+    v |= lvl << (i * 2);
+  }
+  if (onFire) v |= DAMAGE_FIRE_BIT;
+  return v;
+}
+
+/** Rozpakowuje u16 do poziomów (nowa tablica długości ZONE_COUNT) + flagi pożaru. */
+function unpackDamage(v: number): EntityDamage {
+  const levels = new Array<number>(ZONE_COUNT);
+  for (let i = 0; i < ZONE_COUNT; i++) levels[i] = (v >> (i * 2)) & 0b11;
+  return { levels, onFire: (v & DAMAGE_FIRE_BIT) !== 0 };
 }
 
 const ENTITY_FLAG_STALLED = 0b100;
@@ -330,6 +379,7 @@ export function encodeSnapshot(
     view.setUint8(o + 31, Math.round(clamp(ammoSecFrac, 0, 1) * 255));
     view.setUint8(o + 32, planeTypeToCode(e.planeType));
     view.setUint8(o + 33, Math.round(clamp(s.fuelFrac, 0, 1) * 255)); // paliwo (v7) — autorytet serwera
+    view.setUint16(o + 34, packDamage(e.damage.levels, e.damage.fire.onFire), true); // uszkodzenia (v8)
     o += SNAPSHOT_ENTITY_BYTES;
   }
   return o;
@@ -376,6 +426,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
     const ammoSecondaryFrac = view.getUint8(o + 31) / 255;
     const planeType = planeTypeFromCode(view.getUint8(o + 32));
     const fuelFrac = view.getUint8(o + 33) / 255;
+    const damage = unpackDamage(view.getUint16(o + 34, true));
     entities.push({
       id,
       life: lifePhaseFromCode(flags),
@@ -390,6 +441,7 @@ export function decodeSnapshot(view: DataView): Snapshot {
       ammoSecondaryFrac,
       fuelFrac,
       planeType,
+      damage,
     });
     o += SNAPSHOT_ENTITY_BYTES;
   }

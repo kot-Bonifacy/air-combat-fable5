@@ -160,7 +160,8 @@ export class BotManager {
    * + degradacja + unikanie ziemi → wypełnia `demands` (do pilotStep) i zapamiętuje
    * throttle/fire. `candidates` = żywe stany INNYCH uczestników (FFA: każdy poza tym botem).
    * `dtS` to czas, który UPŁYNĄŁ od ostatniej decyzji (= fixedDt × interwał), żeby filtry
-   * czasowe (reakcja, szum, jink) szły zgodnie z realnym tempem decyzji.
+   * czasowe (reakcja, szum, jink) szły zgodnie z realnym tempem decyzji. `criticalDamage` (faza 22
+   * cz.3) sygnalizuje krytyczne uszkodzenia — bot przerywa walkę i ucieka.
    */
   think(
     id: number,
@@ -170,6 +171,7 @@ export class BotManager {
     terrain: Terrain,
     demands: PilotDemands,
     dtS: number,
+    criticalDamage = false,
   ): void {
     const rt = this.runtimes.get(id);
     if (!rt) return;
@@ -182,7 +184,7 @@ export class BotManager {
       GROUND_LOOKAHEAD_M,
     );
     const target = selectNearestTarget(self.position, candidates, SPOT_RANGE_M);
-    const out = rt.bot.update(self, plane, target, { surfaceHeightM: surf }, dtS, demands);
+    const out = rt.bot.update(self, plane, target, { surfaceHeightM: surf }, dtS, demands, criticalDamage);
     rt.control.throttle = out.throttle;
     rt.control.fire = out.fire;
   }

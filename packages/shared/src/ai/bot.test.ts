@@ -97,3 +97,28 @@ describe('Bot.notifyHit — zryw po trafieniu (tylko trudny)', () => {
     expect(headingDeviationAfterHit('normalny', true)).toBeLessThan(0.15);
   });
 });
+
+describe('Bot.update — ucieczka przy krytycznych uszkodzeniach (faza 22 cz.3)', () => {
+  /** Bot lecący na cel w zasięgu: bez uszkodzeń atakuje (engage), krytycznie uszkodzony ucieka. */
+  function stateAfterDecision(criticalDamage: boolean): string {
+    const self = createPlaneState();
+    self.position.set(0, 3000, 0);
+    self.velocity.set(0, 0, 150);
+    self.orientation.copy(new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), new Vector3(0, 0, 1)));
+    self.iasMs = 150; // wysoka energia → bez krytyku FSM nie ucieknie z powodu „extend energii"
+    self.life = 'alive';
+    // cel ~800 m na wprost, lecący w tę samą stronę (nie celuje we mnie → brak evade)
+    const target = createPlaneState();
+    target.position.set(0, 3000, 800);
+    target.velocity.set(0, 0, 150);
+    const bot = new Bot(BOT_CONFIG.tuning, BOT_CONFIG.levels.normalny, 0xc0de);
+    bot.reset(self);
+    const demands = createPilotDemands();
+    return bot.update(self, SPITFIRE_MK2, target, { surfaceHeightM: 0 }, FIXED_DT_S, demands, criticalDamage).state;
+  }
+
+  it('sprawny atakuje cel w zasięgu (engage), uszkodzony krytycznie ucieka (extend)', () => {
+    expect(stateAfterDecision(false)).toBe('engage');
+    expect(stateAfterDecision(true)).toBe('extend');
+  });
+});

@@ -26,6 +26,7 @@ function ent(x: number, vx = V): EntitySnapshot {
     ammoSecondaryFrac: 1,
     fuelFrac: 1,
     planeType: 'spitfire',
+    damage: { levels: [0, 0, 0, 0, 0, 0], onFire: false },
   };
 }
 

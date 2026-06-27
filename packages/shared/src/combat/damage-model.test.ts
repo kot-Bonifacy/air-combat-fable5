@@ -5,6 +5,7 @@ import {
   computeDamageModifiers,
   createDamageState,
   firstZoneHit,
+  isCriticalDamage,
   maybeIgnite,
   NO_DAMAGE_MODIFIERS,
   quantizeZoneLevel,
@@ -71,6 +72,19 @@ describe('quantizeZoneLevel', () => {
 describe('computeDamageModifiers — tożsamość', () => {
   it('brak uszkodzeń → modyfikatory neutralne (złote testy fizyki nietknięte)', () => {
     expect(mods(lvl())).toEqual(NO_DAMAGE_MODIFIERS);
+  });
+});
+
+describe('isCriticalDamage — sygnał ucieczki bota (faza 22 cz.3)', () => {
+  it('sprawny → nie krytyczny; pożar → krytyczny mimo zerowych poziomów', () => {
+    expect(isCriticalDamage(lvl(), false)).toBe(false);
+    expect(isCriticalDamage(lvl(), true)).toBe(true);
+  });
+
+  it('lekkie (poziom 1) nie kwalifikuje; ciężkie/zniszczone (≥ 2) tak — dowolna strefa', () => {
+    expect(isCriticalDamage(lvl(1, 1, 1, 1, 1, 1), false)).toBe(false);
+    expect(isCriticalDamage(lvl(2), false)).toBe(true); // silnik ciężko
+    expect(isCriticalDamage(lvl(0, 0, 0, 0, 0, 3), false)).toBe(true); // ogon zniszczony
   });
 });
 

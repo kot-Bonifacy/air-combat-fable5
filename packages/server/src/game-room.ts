@@ -61,6 +61,7 @@ import {
   updateLifecycle,
   validatePlaneState,
   wrapToArena,
+  isCriticalDamage,
   zoneLevels,
   zoneRoleIndex,
   ZONE_COUNT,
@@ -1350,6 +1351,9 @@ export class GameRoom {
     if (state.life === 'alive') {
       if (player.protectionTimerS > 0) player.protectionTimerS = Math.max(0, player.protectionTimerS - dtS);
       if ((this.tick + player.slot) % BOT_THINK_INTERVAL === 0) {
+        // krytyczne uszkodzenia (faza 22 cz.3): bot przerywa walkę i ucieka. damageLevelsBuf jest
+        // świeży (refreshDamageLevels w kroku 0 step()), onFire z żywego stanu uszkodzeń.
+        const critical = isCriticalDamage(player.damageLevelsBuf, player.damage.onFire);
         this.botManager.think(
           player.id,
           state,
@@ -1358,6 +1362,7 @@ export class GameRoom {
           this.terrain,
           player.demands,
           dtS * BOT_THINK_INTERVAL,
+          critical,
         );
       }
       state.throttle = this.botManager.controlOf(player.id).throttle;
@@ -2032,6 +2037,10 @@ export class GameRoom {
         fireSecondary: secGroup && secFire ? secFire : null,
         ammoSecondaryMax: secGroup ? secGroup.ammoPerGun * secGroup.muzzles.length : 0,
         planeType: p.planeType,
+        // uszkodzenia (v8): żywe referencje — `damageLevelsBuf` mutuje refreshDamageLevels co tick
+        // (krok 0 step()), `p.damage` niesie bieżący onFire. Snapshot koduje aktualne poziomy bez
+        // przebudowy źródeł; przy zmianie typu applyPlaneSelection przebudowuje (świeże ref damage).
+        damage: { levels: p.damageLevelsBuf, fire: p.damage },
       };
     });
   }

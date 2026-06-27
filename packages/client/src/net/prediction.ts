@@ -180,6 +180,11 @@ export class Predictor {
     // co po auto-reconnekcie pokazywało rozjechany/pusty bak): przyjmij wartość serwera jak HP/prędkość;
     // replay nowszych niż ack inputów (niżej) dopali ją lokalnie spójnie z dopredykowaną pozycją.
     state.fuelFrac = server.fuelFrac;
+    // poziomy uszkodzeń są autorytatywne (protokół v8): klient nie zna HP stref, więc bierze
+    // kwantyzowane poziomy z serwera i replay nowszych inputów liczy uszkodzony lot TYMI SAMYMI
+    // modyfikatorami (spójny reconcile, jak paliwo po v7 — skutki zależą tylko od poziomów). Brak
+    // uszkodzeń (wszystkie 0, też świeży spawn) → null = tożsamość fizyki (złote testy nietknięte).
+    this.sim.damageLevels = server.damage.levels.some((l) => l > 0) ? server.damage.levels : null;
     // iasMs nie jest w snapshocie — odtwórz z prędkości i wysokości (zgodnie z serwerem),
     // bo koperta (maxRollRate) czyta state.iasMs już w PIERWSZYM kroku replay
     state.iasMs = tasToIasMs(server.velocity.length(), airDensityKgM3(server.position.y));

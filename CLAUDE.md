@@ -8,7 +8,7 @@
 
 ## Status faz
 
-Fazy ukończone: **0–18 + domknięcie parytetu MP↔SP (P1–P5) + Faza 19 (19a ✅, 19b ✅) + Faza 20 ✅ + Faza 21 (audio ✅; wizualia → backlog)**. Szczegóły
+Fazy ukończone: **0–18 + domknięcie parytetu MP↔SP (P1–P5) + Faza 19 (19a ✅, 19b ✅) + Faza 20 ✅ + Faza 21 (audio ✅; wizualia → backlog) + Faza 22 (cz.1 ✅, cz.2 ✅, cz.3 ✅; cz.4–5 ⏳)**. Szczegóły
 każdej fazy w `docs/phases/faza-NN.md` i `memory/`; cały wysiłek parytetu MP↔SP (fazy 14–18 + P1–P5) spięty
 w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwarte sprawy).
 
@@ -28,12 +28,15 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 | 19b   | **Drugi samolot (integracja)**: protokół v4 (bajt typu), per-player plane serwer, rejestr meshy + model 3D Bf 109, wybór w lobby, HUD typ wroga, balans 1v1 | ✅ 440 testów zielone; ⏳ user: playtest balansu + weryfikacja wzrokowa modelu + smoke v4 |
 | 20    | **Teren v2 (timebox)**: złota godzina+lens flare, chmury billboardowe (krycie się), woda v2 (waternormals+odbicie nieba, bez planar), teren 2-poziomowy | ✅ 460 testów zielone; podpunkt 5 → backlog; **doszlif 2026-06-21**: tekstury v3 2K + anti-tiling (koniec „kraty"), fix migotania brzegu (`logarithmicDepthBuffer`), drzewa próbowane→odrzucone; ⏳ user: pomiar fps RTX + weryfikacja wzrokowa (patrz `docs/phases/faza-20.md`) |
 | 21    | **Dźwięk i efekty (audio)**: Web Audio (Three.js listener), silniki dobrane do modeli (Merlin→Spitfire, **DB 601→Bf 109**), broń 7,7 mm vs działko 20 mm, eksplozje/trafienia (sample freesound CC0/CC-BY), świst∝IAS²+buffet+ding/UI proceduralne, master vol+mute (localStorage, menu pauzy/klawisz M) | ✅ 474 testy zielone; **wizualia (smugi kondensacyjne/szczątki/ślad 20 mm) → backlog** (nieweryfikowalne wzrokowo z sesji, fps to kryterium); ⏳ user: odsłuch/playtest miksu + brak błędów autoplay (Chrome/FF/Edge) + fps RTX (patrz `docs/phases/faza-21.md`) |
+| 22    | **Modułowe uszkodzenia (5 części)**: strefy z HP + integralność (hybryda); cz.1 fundament shared, cz.2 serwer hit-detection po strefach+maszyna stanów, cz.3 **protokół v8** (u16 stref w snapshocie)+predykcja klienta+ucieczka botów | cz.1–3 ✅ **567→575 testów zielone**; cz.3 **wymaga deployu front+back RAZEM (v8)**; pozostało cz.4 (HUD sylwetki+wizualia obcych) + cz.5 (balans+tag `1.0`); ⏳ user: smoke v8 + playtest (patrz `docs/phases/faza-22.md`) |
 
-**Protokół: `PROTOCOL_VERSION = 7`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
+**Protokół: `PROTOCOL_VERSION = 8`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
 w sesji poprawek 2026-06-21 +1 bajt amunicji GRUPY WTÓRNEJ = działko 20 mm Bf 109 → v5; v6 = naziemne
 stanowiska ogniowe AA (nowe zdarzenia binarne EV_AA_FIRE/EV_AA_DESTROYED, cause `'flak'`); v7 = +1 bajt
 PALIWA w snapshocie encji (paliwo przestało być ukrytym stanem — autorytatywne jak HP/amunicja, fix pustego
-baku po auto-reconnekcie, 2026-06-26); fazy 15–18, P1–P5 i czat poczekalni bez bumpu — addytywne JSON albo
+baku po auto-reconnekcie, 2026-06-26); **v8 = +u16 STANU USZKODZEŃ w snapshocie encji** (6 stref × 2 bity
+poziomu 0..3 + bit pożaru; faza 22 cz.3 — klient predykuje uszkodzony lot z poziomów, jak paliwo po v7;
+`SNAPSHOT_ENTITY_BYTES` 34→36); fazy 15–18, P1–P5 i czat poczekalni bez bumpu — addytywne JSON albo
 usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
 
 **Sesja poprawek 2026-06-21 (poza fazami, 7 zgłoszeń usera — 460 testów zielone):** (1) pole nicku/czatu
@@ -276,9 +279,16 @@ health = TTK niezmienione → narrow-phase `firstZoneHit`), skutki krytyczne (ka
 `maybeIgnite`+`stepFireDamage`/`onFireKill` (pożar dobija, kredyt podpalaczowi/'flak'), reset na (re)spawn. Decyzja usera
 (AskUserQuestion): lag-comp = pozycja z historii + bieżąca orientacja. **Pułapka:** sfera obrysu 6 m > skupione bryły +
 skok pocisku ~12 m/tick → pocisk konsumowany w „halo" o tick przed strefą (lub przeskakiwał między pozycjami) → fix:
-narrow-phase na odcinku `[prevPos, pos+v·dt]`. BEZ protokołu (v7), nie wymaga deployu. **Pozostało:** Część 3 (protokół
-v8 +u16 stanu stref + predykcja klienta + boty), 4 (klient HUD sylwetki + wizualia obcych), 5 (balans + tag `1.0`).
-(Decyzja 2026-06-18: pełny parytet MP↔SP przed Bf 109; Bf 109→19 ✅, teren→20 ✅, dźwięk→21 ✅ audio, uszkodzenia→22.)
+narrow-phase na odcinku `[prevPos, pos+v·dt]`. BEZ protokołu (v7), nie wymaga deployu. **Część 3 ✅ (protokół v8 +
+predykcja klienta + ucieczka botów, 2026-06-27, 575 testów):** `protocol.ts` `EntityDamage` + `packDamage`/`unpackDamage`
+(u16: 6×2 bity poziomów + bit pożaru `1<<ZONE_COUNT*2`), `SNAPSHOT_ENTITY_BYTES` 34→36; `EntitySnapshot.damage`/
+`SnapshotEntitySource.damage` (żywe ref: `damageLevelsBuf` z kroku 0 + `p.damage.onFire`); `prediction.ts` `reconcile`
+ustawia `sim.damageLevels` z autorytetu PRZED replay (sprawny→null=tożsamość); `online-main.ts` `damageById` (pod
+wizualia cz.4); boty — `isCriticalDamage(levels,onFire)` (pożar LUB strefa ≥2), `BotPerception.criticalDamage`+`nextBotState`
+krytyk→`extend` (ucieczka, po evade), próg threadowany przez `Bot.update`/`BotManager.think`/`stepBot`. **Protokół v8 —
+DEPLOY front+back RAZEM.** **Pozostało:** 4 (klient HUD sylwetki + wizualia obcych — czyta `EntitySnapshot.damage`/
+`damageById`), 5 (balans 20mm vs 7,7mm + tag `1.0`). (Decyzja 2026-06-18: pełny parytet MP↔SP przed Bf 109; Bf 109→19 ✅,
+teren→20 ✅, dźwięk→21 ✅ audio, uszkodzenia→22.)
 
 ## Stack (skrót)
 

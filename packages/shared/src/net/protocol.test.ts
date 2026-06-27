@@ -135,13 +135,27 @@ function makeEntity(
   planeType: PlaneType = 'spitfire',
   fireSecondary: { ammoRemaining: number } | null = null,
   ammoSecondaryMax = 0,
+  damage: { levels: readonly number[]; fire: { onFire: boolean } } = {
+    levels: [0, 0, 0, 0, 0, 0],
+    fire: { onFire: false },
+  },
 ): SnapshotEntitySource {
   const state = createPlaneState();
   state.position.set(1234.5, 678.25, -9000.75);
   state.orientation.set(0.1, 0.2, 0.3, 0.9).normalize();
   state.velocity.set(120, -5, 30);
   state.throttle = 0.8;
-  return { id, state: Object.assign(state, over), health, fire, ammoMax, fireSecondary, ammoSecondaryMax, planeType };
+  return {
+    id,
+    state: Object.assign(state, over),
+    health,
+    fire,
+    ammoMax,
+    fireSecondary,
+    ammoSecondaryMax,
+    planeType,
+    damage,
+  };
 }
 
 describe('protokół SNAPSHOT round-trip', () => {
@@ -210,6 +224,22 @@ describe('protokół SNAPSHOT round-trip', () => {
     encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, [lowFuel]);
     const snap = decodeSnapshot(new DataView(buf.buffer));
     expect(snap.entities[0]?.fuelFrac).toBeCloseTo(0.75, 2);
+  });
+
+  it('koduje stan uszkodzeń stref + pożar (u16, protokół v8)', () => {
+    // poziomy w kolejności ZONE_ROLES: engine=2, cockpit=0, tank=1, wingL=3, wingR=0, tail=1; pożar
+    const dmg = makeEntity(0, {}, { hp: 120, maxHp: 120 }, { ammoRemaining: 2400 }, 2400, 'spitfire', null, 0, {
+      levels: [2, 0, 1, 3, 0, 1],
+      fire: { onFire: true },
+    });
+    const healthy = makeEntity(1); // sprawny → wszystkie 0, brak pożaru
+    const buf = new Uint8Array(snapshotByteLength(2));
+    encodeSnapshot(new DataView(buf.buffer), 0, 0, 0, [dmg, healthy]);
+    const snap = decodeSnapshot(new DataView(buf.buffer));
+    expect(snap.entities[0]?.damage.levels).toEqual([2, 0, 1, 3, 0, 1]);
+    expect(snap.entities[0]?.damage.onFire).toBe(true);
+    expect(snap.entities[1]?.damage.levels).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(snap.entities[1]?.damage.onFire).toBe(false);
   });
 
   it('zachowuje typ samolotu każdej encji (protokół v4)', () => {

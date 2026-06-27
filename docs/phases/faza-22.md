@@ -160,23 +160,48 @@ strefy nie obrywały przy podejściu od tyłu/przodu. Fix: narrow-phase na odcin
 
 ---
 
-## CZĘŚĆ 3 — Protokół v8 + predykcja klienta + reakcja botów  ⛔ NIE ROZPOCZĘTE
+## CZĘŚĆ 3 — Protokół v8 + predykcja klienta + reakcja botów  ✅ UKOŃCZONE (2026-06-27)
 
 **Warstwa:** `shared/net` + `client` + `shared/ai`/`server` (boty). **Protokół:** **bump v7→v8**
 (+u16 stanu stref w encji, `SNAPSHOT_ENTITY_BYTES` 34→36). **Deploy front+back RAZEM.**
 
-### Zakres
-- `EntitySnapshot.damage`/`SnapshotEntitySource.damage` (u16: 6×2 bity poziomów + bit pożaru);
-  encode/decode + round-trip testy; nota wersji w `protocol.ts`.
-- Klient: dekod stanu stref → `SimPlane.damageLevels` lokalnego gracza (spójna predykcja uszkodzonego
-  lotu) + zapamiętanie poziomów obcych pod wizualia Części 4.
-- Boty: warunek wycofania przy krytycznych uszkodzeniach (FSM/`bot-manager`).
+### Zrobione
+- **`shared/net/protocol.ts`** — `PROTOCOL_VERSION = 8` + nota v8. Nowy `EntityDamage` (`levels: number[]`
+  długości ZONE_COUNT, indeks=ZONE_ROLES, 0..3 + `onFire`). `EntitySnapshot.damage` (dekod) i
+  `SnapshotEntitySource.damage` (`{ levels: readonly number[]; fire: { onFire: boolean } }` — żywe
+  referencje, struktura zamiast typu `DamageState`, by protokół nie zależał od logiki combat). `packDamage`/
+  `unpackDamage` (u16: 6×2 bity poziomów + bit pożaru `1<<(ZONE_COUNT*2)`; import `ZONE_COUNT` pilnuje rozmiaru
+  bez duplikacji liczby). Encode/decode u16 na offsecie 34; `SNAPSHOT_ENTITY_BYTES` 34→36 (8 encji = 298 B < budżet).
+- **`server/game-room.ts`** — `rebuildSnapshotSources` dokłada `damage: { levels: p.damageLevelsBuf, fire: p.damage }`
+  (żywe ref: buf mutuje `refreshDamageLevels` co tick w kroku 0, `p.damage` niesie onFire). Snapshot niesie
+  poziomy z kroku 0 (te, którymi liczono RUCH tego ticku) → reconcile spójny w stanie ustalonym (zmiana
+  poziomu = transient ≤ 1 snapshot, korygowany, niezmienny niezmiennik „brak narastającej korekty").
+- **`client/net/prediction.ts`** — `reconcile` przyjmuje `sim.damageLevels = server.damage.levels.some(>0) ? levels : null`
+  PRZED replayem nowszych inputów (uszkodzony lot predykowany TYMI SAMYMI modyfikatorami co serwer; sprawny/spawn
+  → null = tożsamość fizyki, złote testy nietknięte).
+- **`client/online-main.ts`** — `damageById: Map<id, EntityDamage>` zasilana co snapshot dla WSZYSTKICH encji
+  (lokalny+obce), czyszczona jak `healthFracById` (usunięcie encji / reset meczu) — pod wizualia Części 4.
+- **Boty** — `shared/combat/damage-model.ts` `isCriticalDamage(levels, onFire)` (pożar LUB którakolwiek strefa
+  poziom ≥ 2; próg = knob Części 5). `BotPerception.criticalDamage` + `nextBotState`: krytyk → `extend` (ucieczka),
+  po `evade` (zagrożenie ratuje ostry break), nadrzędne nad histerezą (raz uszkodzony nie wraca do `engage`).
+  `Bot.update(..., criticalDamage=false)` ustawia percepcję; `BotManager.think(..., criticalDamage=false)` przekazuje;
+  `game-room.stepBot` liczy `isCriticalDamage(damageLevelsBuf, damage.onFire)` w ticku myślenia.
+- **Testy (+8 → 575):** protocol round-trip u16 (poziomy+pożar, sprawny=0); prediction (uszkodzony lot spójny po
+  replay 1:1, sprawny→null); fsm (krytyk→extend z każdego stanu, evade>krytyk, brak celu→patrol); bot.update
+  (sprawny engage / krytyk extend); damage-model `isCriticalDamage` (pożar, próg ≥2). Helpery testowe
+  (makeEntity/entityOf/ent/p) dostały nowe wymagane pola.
+
+### Wynik 3
+typecheck (3 ws) ✓, **575 testów** ✓ (+8), lint ✓, build ✓. Protokół v8 — **wymaga deployu front+back RAZEM**
+(niespójna wersja = błąd handshake). Skutki uszkodzeń zależą WYŁĄCZNIE od poziomów (2 bity/strefa) → predykcja
+klienta i serwer liczą identycznie (spójny reconcile, jak paliwo po v7). Wizualia uszkodzeń (HUD sylwetki własnego
++ dym/ogień/brak końcówki obcych) → Część 4 (czyta `EntitySnapshot.damage` / `damageById`).
 
 ### Kryteria
-- [ ] Round-trip v8; rozmiar pakietu w budżecie (8 encji).
-- [ ] Predykcja lokalna spójna z serwerem dla uszkodzonego samolotu (brak narastającej korekty).
-- [ ] Boty uciekają przy krytycznych uszkodzeniach.
-- [ ] typecheck+test+lint+build zielone; commit (deploy front+back razem).
+- [x] Round-trip v8; rozmiar pakietu w budżecie (8 encji = 298 B).
+- [x] Predykcja lokalna spójna z serwerem dla uszkodzonego samolotu (brak narastającej korekty).
+- [x] Boty uciekają przy krytycznych uszkodzeniach.
+- [x] typecheck+test+lint+build zielone; commit (deploy front+back razem).
 
 ---
 
@@ -228,6 +253,10 @@ strefy nie obrywały przy podejściu od tyłu/przodu. Fix: narrow-phase na odcin
   skutki krytyczne, `stepFireDamage`/`onFireKill`, diagnostyka); `server/zone-damage.test.ts`. Decyzja
   usera: lag-comp = pozycja z historii + bieżąca orientacja. Pułapka „halo" broad-phase naprawiona
   (narrow-phase na odcinku `pos+v·dt`).
-- **Część 3** — —
+- **Część 3 (protokół v8 + predykcja klienta + reakcja botów)** — ✅ 2026-06-27, 575 testów/typecheck/lint/
+  build zielone, **protokół v8 (deploy front+back RAZEM)**. Pliki: `shared/net/protocol.ts` (EntityDamage +
+  pack/unpack u16, ENTITY_BYTES 34→36), `server/game-room.ts` (snapshot źródło uszkodzeń), `client/net/prediction.ts`
+  (`sim.damageLevels` z autorytetu przed replay), `client/online-main.ts` (`damageById`), `shared/combat/damage-model.ts`
+  (`isCriticalDamage`), `shared/ai/{fsm,bot}.ts` + `server/bot-manager.ts` (ucieczka botów). Wizualia → Część 4.
 - **Część 4** — —
 - **Część 5** — —

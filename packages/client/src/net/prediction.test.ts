@@ -36,7 +36,10 @@ function spawnState(s: PlaneState): void {
   s.stalled = false;
 }
 
-function entityOf(s: PlaneState): EntitySnapshot {
+function entityOf(
+  s: PlaneState,
+  damage: { levels: number[]; onFire: boolean } = { levels: [0, 0, 0, 0, 0, 0], onFire: false },
+): EntitySnapshot {
   return {
     id: 0,
     life: s.life,
@@ -51,6 +54,7 @@ function entityOf(s: PlaneState): EntitySnapshot {
     ammoSecondaryFrac: 1,
     fuelFrac: s.fuelFrac,
     planeType: 'spitfire',
+    damage,
   };
 }
 
@@ -77,7 +81,8 @@ function makeServer() {
       stepWreckPiloted(sim, SPITFIRE_MK2, demands, c, terrain, DT, 'srv-wrak');
     },
     entity(): EntitySnapshot {
-      return entityOf(sim.state);
+      // snapshot niesie autorytatywne poziomy uszkodzeń serwera (v8) — predyktor je przyjmuje
+      return entityOf(sim.state, { levels: sim.damageLevels ?? [0, 0, 0, 0, 0, 0], onFire: false });
     },
   };
 }
@@ -97,6 +102,33 @@ describe('Predictor — predykcja i reconciliation', () => {
 
     expect(p.sim.state.position.distanceTo(server.sim.state.position)).toBeLessThan(1e-6);
     expect(p.sim.state.orientation.angleTo(server.sim.state.orientation)).toBeLessThan(1e-6);
+  });
+
+  it('uszkodzony lot (v8): predykcja z poziomów serwera spójna po replay', () => {
+    const server = makeServer();
+    // serwer leci uszkodzony: silnik ciężko (poziom 2), prawe skrzydło lekko (1), ogon lekko (1)
+    server.sim.damageLevels = [2, 0, 0, 0, 1, 1];
+    const p = new Predictor(SPITFIRE_MK2, terrain);
+    p.reconcile(server.entity(), 0); // klient przyjmuje poziomy + stan
+    expect(p.sim.damageLevels).toEqual([2, 0, 0, 0, 1, 1]);
+
+    // klient predykuje 20 inputów do przodu; serwer potwierdza tylko 12 → replay 13..20 z uszkodzeniami
+    for (let t = 1; t <= 20; t++) p.predict(cmd({ pitchUp: 0.4, rollRight: 0.2 }), t);
+    for (let t = 1; t <= 12; t++) server.step(cmd({ pitchUp: 0.4, rollRight: 0.2 }));
+    p.reconcile(server.entity(), 12);
+
+    // serwer dokańcza — przy spójnych poziomach (te same modyfikatory) klient zbiega do autorytetu 1:1
+    for (let t = 13; t <= 20; t++) server.step(cmd({ pitchUp: 0.4, rollRight: 0.2 }));
+    p.reconcile(server.entity(), 20);
+    expect(p.sim.state.position.distanceTo(server.sim.state.position)).toBeLessThan(1e-6);
+    expect(p.sim.damageLevels).toEqual([2, 0, 0, 0, 1, 1]);
+  });
+
+  it('przyjmuje brak uszkodzeń jako tożsamość (damageLevels=null gdy wszystkie poziomy 0)', () => {
+    const server = makeServer();
+    const p = new Predictor(SPITFIRE_MK2, terrain);
+    p.reconcile(server.entity(), 0);
+    expect(p.sim.damageLevels).toBeNull(); // sprawny → null (ścieżka złotych testów fizyki)
   });
 
   it('zamknięta pętla z lagiem 100 ms: korekty < próg snap, klient nadąża za serwerem', () => {
