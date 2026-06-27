@@ -255,20 +255,36 @@ nieweryfikowalne wzrokowo z sesji → ⏳ user (weryfikacja + fps RTX przy 8 sam
 
 ---
 
-## CZĘŚĆ 5 — Balans + tag `1.0`  ⛔ NIE ROZPOCZĘTE
+## CZĘŚĆ 5 — Balans + tag `1.0`  🟡 CZĘŚCIOWO (2026-06-27): analiza+lock+commit ✓; tag i playtest ⏳ user
 
-**Warstwa:** strojenie JSON (`damage`) + playtest. **Protokół:** BEZ zmian.
+**Warstwa:** strojenie JSON (`damage`) + playtest. **Protokół:** BEZ zmian (v8).
 
-### Zakres
-- Sesje balansowe: czas do killa 20 mm vs 7,7 mm; progi stref, szanse pożaru/pilot kill, siła roll
-  biasu — wszystko knobem w JSON `damage`, bez kodu.
-- Test subiektywny: asymetrię skrzydła CZUĆ na drążku (bias roll wymaga kontry).
-- Sesja online z testerami: śmierci czytelne — feedback do `memory/`.
+### Decyzja usera (AskUserQuestion 2026-06-27)
+1. **Balans:** zostaw obecne wartości (pomiary pokazują spójną, sensowną asymetrię — nic „zepsutego"),
+   zabezpiecz je deterministycznym testem TTK + udokumentuj; realne strojenie po playte​ście usera (knoby
+   bez kodu). **Nie zgaduj-strój bez danych z gry.**
+2. **Tag `1.0`:** WSTRZYMANY do playtestu — commit pracy cz.5 teraz, tag zakłada user po potwierdzeniu
+   odczucia asymetrii na drążku i sesji z testerami (kryterium subiektywne nieweryfikowalne z sesji).
 
-### Kryteria
-- [ ] Czas do killa 20 mm vs 7,7 mm udokumentowany w `memory/`.
-- [ ] Asymetria skrzydła odczuwalna (test subiektywny usera).
-- [ ] typecheck+test+lint+build zielone; commit + **tag `1.0`**; memory zapisane.
+### Zrobione
+- **`shared/combat/ttk.test.ts`** (NOWY, +8 testów) — analityczny pomiar TTK z REALNEGO JSON (loader),
+  więc liczby = liczby w grze. Mechanika wierna serwerowi (b.damage=group.damagePerHit, kadencja =
+  luf×RPM/60, każde trafienie: health −dmg ORAZ strefa −dmg). Metryki deterministyczne (niezależne od
+  pilota): integralność (rozproszony ogień), skrzydło/kabina (skupiony = najlepszy przypadek), czas @100%.
+  Loguje tabelę (do memory) + asercjuje INTENCJĘ w tolerancyjnych pasmach (regres łapany, strojenie
+  dozwolone — wyjście poza pasmo = sygnał „zaktualizuj test", nie cichy regres).
+- **Zmierzone TTK (lock):** działko 20 mm → **3 traf** integralnością / **2 traf** skrzydło|kabina (kill
+  krytyczny), 0,17 s @100%; .303×8 Spitfire → **74–80 traf** / 28–30 skrzydło, 0,5 s @100%; MG 17×2 Bf 109
+  → **79–86 traf**, ale tylko 40 poc./s → **2,1 s @100%** (samodzielnie słaby finisher — Bf polega na
+  działku, historycznie zgodne). Pożar: maks 48 HP (4 HP/s × 12 s) < 110 HP → DOBIJA, nie zabija pełnego;
+  P(zapłon w serii do killa) działko 27% / kaem 45–50%. Asymetria skrzydła: bias ciężkiego skrzydła 23°/s
+  = 25–29% szczytu roll → odczuwalny, opanowalny kontrą.
+
+### Pozostało (⏳ user — nieweryfikowalne z sesji)
+- [x] Czas do killa 20 mm vs 7,7 mm udokumentowany w `memory/` (+ lock w teście).
+- [ ] Asymetria skrzydła odczuwalna na drążku — **test subiektywny usera** (knoby gotowe: `wingRollBiasFullRadS`).
+- [ ] Sesja online z testerami: śmierci czytelne → feedback do `memory/`.
+- [ ] **tag `1.0`** — zakłada user po playte​ście (typecheck+test+lint+build już zielone, commit zrobiony).
 
 ---
 
@@ -294,4 +310,9 @@ nieweryfikowalne wzrokowo z sesji → ⏳ user (weryfikacja + fps RTX przy 8 sam
   (#damage-hud), `client/src/smoke.ts` (FIRE_TIER + livingSmokeTier/zoneSmokeTier), `client/src/online-main.ts`
   (DamageHud w HUD, pętla efektów z kotwic stref, moduł śmierci w deathLabel). Decyzja usera: zniszczone
   skrzydło = efekty (dym/ogień), bez ruszania geometrii (GLTF bez nazwanych końcówek). ⏳ user: fps RTX @8.
-- **Część 5** — —
+- **Część 5 (balans + tag 1.0)** — 🟡 CZĘŚCIOWO 2026-06-27, **597 testów**/typecheck/lint/build zielone,
+  BEZ protokołu (v8). Decyzja usera: zostaw wartości (spójne) + lock testem + dokumentacja; tag `1.0`
+  WSTRZYMANY do playtestu. Plik: `shared/combat/ttk.test.ts` (analityczny TTK z realnego JSON, +8 testów,
+  loguje tabelę + asercjuje intencję w tolerancyjnych pasmach). Zmierzono: działko 3 traf / 2 (skrzydło|
+  kabina), .303 ~74–80 traf, MG 17 ~79–86 (2,1 s @100% — słaby solo), pożar dobija (48<110 HP), asymetria
+  skrzydła 25–29% szczytu roll. ⏳ user: subiektywna asymetria na drążku + sesja z testerami → potem **tag `1.0`**.
