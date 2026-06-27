@@ -1,6 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import { segmentSphereHitT } from './hit';
-import { segmentCapsuleHitT } from './capsule';
+import { segmentCapsuleHitT, closestSegmentSegment, type ClosestSegResult } from './capsule';
 
 // Model modułowych uszkodzeń (faza 22a). Dwie warstwy:
 //
@@ -275,6 +275,50 @@ export function firstZoneHit(
     }
     if (t >= 0 && t < bestT) {
       bestT = t;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+const scratchNearA = new Vector3();
+const scratchNearB = new Vector3();
+const scratchNearSeg: ClosestSegResult = { s: 0, t: 0 };
+
+/**
+ * Indeks strefy, której bryła jest NAJBLIŻEJ punktu `point` (po dystansie do POWIERZCHNI bryły:
+ * odległość punkt↔bryła minus jej promień; ujemna = punkt w bryle). Fallback dla `firstZoneHit`=−1:
+ * broad-phase (sfera obrysu) potwierdził, że pocisk wszedł w sylwetkę celu, ale wąskie bryły stref
+ * minął „o włos". Zamiast gubić trafienie w „generyczny kadłub" (tylko integralność, NIEWIDOCZNA na
+ * sylwetce HUD → „dymię, a wszystko zielone") przypisujemy je najbliższej strefie. WSZYSTKIE role
+ * rywalizują na równi (skrzydła też → muśnięcie przy końcówce skrzydła trafia w skrzydło, nie zawsze
+ * w kadłub). Caller MUSI podać PUNKT wejścia pocisku w sferę obrysu, a nie cały tor — długi odcinek
+ * pocisku (~12–24 m/tick) sięgałby stref po drugiej stronie kadłuba (np. trafienie z tyłu „dotykałoby"
+ * silnika z przodu). Bryły są w body frame → transformowane do świata pozą celu (`center`, `q`). Czyste,
+ * scratch modułowy (jeden wątek). Zwraca −1 tylko dla pustej listy stref.
+ */
+export function nearestZoneToPoint(
+  zones: readonly HitZone[],
+  center: Vector3,
+  q: Quaternion,
+  point: Vector3,
+): number {
+  let bestIdx = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < zones.length; i++) {
+    const shape = zones[i]!.shape;
+    let dist: number;
+    if (shape.kind === 'sphere') {
+      scratchNearA.set(shape.center[0], shape.center[1], shape.center[2]).applyQuaternion(q).add(center);
+      dist = point.distanceTo(scratchNearA) - shape.radius;
+    } else {
+      scratchNearA.set(shape.a[0], shape.a[1], shape.a[2]).applyQuaternion(q).add(center);
+      scratchNearB.set(shape.b[0], shape.b[1], shape.b[2]).applyQuaternion(q).add(center);
+      // dystans punkt↔odcinek osi: closestSegmentSegment z pierwszym odcinkiem zdegenerowanym do punktu
+      dist = Math.sqrt(closestSegmentSegment(point, point, scratchNearA, scratchNearB, scratchNearSeg)) - shape.radius;
+    }
+    if (dist < bestDist) {
+      bestDist = dist;
       bestIdx = i;
     }
   }

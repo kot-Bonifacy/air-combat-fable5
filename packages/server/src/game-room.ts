@@ -38,6 +38,7 @@ import {
   eventsByteLength,
   factionsInPlay,
   firstZoneHit,
+  nearestZoneToPoint,
   getForward,
   MATCH_LIVES,
   nearestToroidalImage,
@@ -50,6 +51,7 @@ import {
   maybeIgnite,
   resetDamageState,
   segmentSphereHit,
+  segmentSphereHitT,
   smallerTeamIndex,
   snapshotByteLength,
   stepFire,
@@ -147,6 +149,8 @@ const CHAT_HISTORY_MAX = 30;
 const scratchHitCenter = new Vector3();
 /** Koniec wydłużonego odcinka narrow-phase (pos + v·dt) — patrz resolveHits (anty-tunelowanie stref). */
 const scratchZoneEnd = new Vector3();
+/** Punkt wejścia pocisku w sferę obrysu — fallback wyboru najbliższej strefy (resolveHits). */
+const scratchHitEntry = new Vector3();
 /** Bufor zawinięcia torusa dla kroku bota (caller `wrapToArena` go nie czyta). */
 const scratchBotWrap = new Vector3();
 /** Bufory kierunku/prędkości pocisku AA (zero alokacji per strzał stanowiska). */
@@ -1519,7 +1523,9 @@ export class GameRoom {
           : ts.position;
         // broad-phase: sfera obrysu per CEL (faza 19b: Bf 109 5,5 m < Spitfire 6 m). Poza nią na
         // pewno nie trafia żadnej strefy — odrzucamy bez iteracji brył (tańsza ścieżka pudła).
-        if (!segmentSphereHit(b.prevPosition, b.position, center, target.plane.hitRadiusM)) continue;
+        // `broadT` = parametr wejścia w sferę → punkt wejścia (fallback najbliższej strefy niżej).
+        const broadT = segmentSphereHitT(b.prevPosition, b.position, center, target.plane.hitRadiusM);
+        if (broadT < 0) continue;
         b.active = false;
         consumed = true;
         target.damagedBy.add(b.ownerId);
@@ -1533,10 +1539,19 @@ export class GameRoom {
         // (pos + v·dt): broad-phase (sfera 6 m) konsumuje pocisk, gdy WCHODZI w obrys — o tick zanim
         // jego krótki odcinek dosięgnie skupionych przy środku brył stref (a skok ~12 m/tick potrafi
         // przeskoczyć strefę między pozycjami). Skoro konsumujemy pocisk teraz, „zaliczamy" strefę, w
-        // którą właśnie wchodzi. −1 = minął wszystkie bryły → generyczny kadłub (tylko integralność;
-        // „co widzę, to trafiam" + TTK zachowane).
+        // którą właśnie wchodzi. −1 (minął wszystkie bryły o włos) → fallback nearestZoneToPoint niżej,
+        // bo broad-phase już potwierdził trafienie w obrys („co widzę, to trafiam" + TTK zachowane).
         scratchZoneEnd.copy(b.position).addScaledVector(b.velocity, dtS);
-        const zoneIdx = firstZoneHit(target.plane.zones, center, ts.orientation, b.prevPosition, scratchZoneEnd);
+        let zoneIdx = firstZoneHit(target.plane.zones, center, ts.orientation, b.prevPosition, scratchZoneEnd);
+        if (zoneIdx < 0) {
+          // pocisk wszedł w sferę obrysu, ale minął wszystkie bryły stref „o włos" (muśnięcie
+          // krawędzi). Zamiast zaliczać tylko integralność (niewidoczną na sylwetce HUD →
+          // „dymię, a wszystko zielone") przypisujemy trafienie NAJBLIŻSZEJ strefie wg punktu
+          // WEJŚCIA pocisku w obrys (nie całego toru — patrz nearestZoneToPoint). Wszystkie role
+          // na równi: muśnięcie przy końcówce skrzydła trafia w skrzydło.
+          scratchHitEntry.lerpVectors(b.prevPosition, b.position, broadT);
+          zoneIdx = nearestZoneToPoint(target.plane.zones, center, ts.orientation, scratchHitEntry);
+        }
         let criticalDestroyed = false;
         if (zoneIdx >= 0) {
           const res = applyZoneHit(target.plane.zones, target.damage, zoneIdx, b.damage);
@@ -1564,10 +1579,11 @@ export class GameRoom {
           if (fromAa) this.onAaKill(target);
           else this.onAirKill(target, b.ownerId);
         } else {
-          // zwykłe trafienie niesie realnego strzelca (hit marker/ding). Trafienie z ziemi (AA) NIE
-          // ma sprawcy-gracza → bez eventu hit (feedback ofiary flaku dorobimy w części 2), ale bot
-          // i tak reaguje uskokiem.
-          if (!fromAa) this.queueEvent({ kind: 'hit', shooterId: b.ownerId, victimId: target.id });
+          // zwykłe trafienie → ofiara słyszy łomot („hit-metal"), strzelec dostaje hit marker/ding.
+          // Trafienie z ziemi (AA) niesie sentinel ownerId = EMPLACEMENT_BULLET_OWNER (0xffff → 255
+          // na drucie u8): żaden gracz nie ma tego id, więc nie zapala fałszywego markera u strzelca,
+          // ale ofiara (victimId) dostaje TEN SAM odgłos trafienia co od broni samolotu (AA = karabiny).
+          this.queueEvent({ kind: 'hit', shooterId: b.ownerId, victimId: target.id });
           // bot trafiony, ale żywy → reakcja AI (zryw obronny na „trudnym"; niższe poziomy ignorują)
           if (target.isBot) this.botManager.notifyHit(target.id);
         }

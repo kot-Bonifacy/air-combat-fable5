@@ -7,6 +7,7 @@ import {
   firstZoneHit,
   isCriticalDamage,
   maybeIgnite,
+  nearestZoneToPoint,
   NO_DAMAGE_MODIFIERS,
   quantizeZoneLevel,
   stepFire,
@@ -230,6 +231,52 @@ describe('firstZoneHit — narrow-phase: wybór strefy (body→world)', () => {
       new Vector3(100, 50, -12),
     );
     expect(idx).toBe(0); // engine — strefy poszły za center
+  });
+});
+
+describe('nearestZoneToPoint — fallback najbliższej strefy (muśnięcie krawędzi obrysu)', () => {
+  // ta sama geometria co firstZoneHit: silnik z przodu (+Z), ogon z tyłu (−Z), skrzydła na osi X
+  function geomZones(): HitZone[] {
+    return [
+      { role: 'engine', shape: { kind: 'sphere', center: [0, 0, 5], radius: 1 }, maxHp: 40 },
+      { role: 'cockpit', shape: { kind: 'sphere', center: [0, 0, 0], radius: 1 }, maxHp: 40 },
+      { role: 'tank', shape: { kind: 'sphere', center: [0, 0, -3], radius: 1 }, maxHp: 40 },
+      { role: 'wingL', shape: { kind: 'capsule', a: [1, 0, 0], b: [6, 0, 0], radius: 0.5 }, maxHp: 40 },
+      { role: 'wingR', shape: { kind: 'capsule', a: [-1, 0, 0], b: [-6, 0, 0], radius: 0.5 }, maxHp: 40 },
+      { role: 'tail', shape: { kind: 'sphere', center: [0, 0, -8], radius: 1 }, maxHp: 40 },
+    ];
+  }
+  const ID = new Quaternion();
+  const ORIGIN = new Vector3();
+
+  it('punkt z TYŁU (−Z, blisko ogona) → ogon, NIE silnik z przodu', () => {
+    expect(nearestZoneToPoint(geomZones(), ORIGIN, ID, new Vector3(0, 0, -7))).toBe(5); // tail (z=−8)
+  });
+
+  it('punkt z PRZODU (+Z) → silnik', () => {
+    expect(nearestZoneToPoint(geomZones(), ORIGIN, ID, new Vector3(0, 0, 6))).toBe(0); // engine (z=5)
+  });
+
+  it('SKRZYDŁA rywalizują: punkt przy końcówce lewego skrzydła → wingL (nie kadłub)', () => {
+    expect(nearestZoneToPoint(geomZones(), ORIGIN, ID, new Vector3(5, 1, 0))).toBe(3); // wingL (oś x∈[1,6])
+  });
+
+  it('punkt przy końcówce prawego skrzydła → wingR', () => {
+    expect(nearestZoneToPoint(geomZones(), ORIGIN, ID, new Vector3(-5, 1, 0))).toBe(4); // wingR
+  });
+
+  it('orientacja ma znaczenie: po obrocie 180° wokół Y punkt z tyłu świata → silnik', () => {
+    const q = new Quaternion(0, 1, 0, 0); // 180° wokół Y: [x,y,z]→[−x,y,−z] (silnik ląduje przy z=−5)
+    expect(nearestZoneToPoint(geomZones(), ORIGIN, q, new Vector3(0, 0, -6))).toBe(0); // engine
+  });
+
+  it('przesunięcie celu (center) transluje strefy', () => {
+    const center = new Vector3(100, 50, 0);
+    expect(nearestZoneToPoint(geomZones(), center, ID, new Vector3(100, 50, 6))).toBe(0); // engine
+  });
+
+  it('pusta lista stref → −1', () => {
+    expect(nearestZoneToPoint([], ORIGIN, ID, new Vector3(0, 0, 0))).toBe(-1);
   });
 });
 
