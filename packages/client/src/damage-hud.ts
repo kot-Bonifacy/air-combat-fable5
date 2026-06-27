@@ -75,25 +75,67 @@ export function criticalZoneLabel(damage: EntityDamage): string | null {
 }
 
 // --- geometria sylwetki (widok z góry, nos u góry; +X = lewe skrzydło = lewa strona ekranu) ---
-// Każda strefa to jeden element SVG kolorowany poziomem. Spine (neutralny) spina nos z ogonem,
-// żeby drobne szczeliny między strefami czytały się jak linie podziału płatowca, nie dziury.
+//
+// JEDNA uproszczona, ogólna sylwetka myśliwca dla OBU samolotów (decyzja usera 2026-06-27: porzucony
+// wymóg dopasowania kształtu do konkretnego modelu — HUD ma czytać się naturalnie, nie udawać Spitfire
+// vs Bf 109). Sześć stref to osobne ścieżki SVG kafelkujące obrys, więc czyta się jak jeden samolot
+// pocięty na moduły (cienki obrys = linie podziału): smukły kadłub (silnik→kabina→zbiornik→ogon, układ
+// jak na wzorcowym rzucie z góry od usera) + trapezowe skrzydło z zaokrągloną końcówką + zaokrąglone
+// stateczniki poziome. Detale neutralne (śmigło, owiewka) NIE są strefami — tylko czytelność. Pod
+// strefami leży neutralny obrys kadłuba (chroni przed szczelinami między ścieżkami). To SCHEMAT — strefy
+// NIE odwzorowują realnych współrzędnych `zones` z JSON (kolor=poziom uszkodzenia, pozycja=czytelna;
+// flagi/kolory liczą się po roli niezależnie od położenia). viewBox 120×120, oś x=60 = środek kadłuba,
+// nos u góry (y≈10), ogon u dołu (y≈112).
+
+interface ZonePath {
+  role: ZoneRole;
+  /** Atrybut `d` ścieżki SVG (jedna lub kilka podścieżek o wspólnym wypełnieniu, np. ogon + stateczniki). */
+  d: string;
+}
+
+/** Łopaty śmigła — cienka pozioma elipsa u nosa (neutralna): [cx, cy, rx, ry]. */
+const PROP: readonly [number, number, number, number] = [60, 12, 23, 3.3];
+
+/** Neutralny obrys kadłuba pod strefami (smukłe wrzeciono nos→ogon) — chroni przed szczelinami. */
+const FUSELAGE =
+  'M60,10 C55,13 53,22 53,40 C53,60 55.5,90 58.5,104 L60,112 L61.5,104 C64.5,90 67,60 67,40 C67,22 65,13 60,10 Z';
+
+/** Owiewka kabiny — neutralny kontur nad strefą `cockpit` (pod nią widać kolor strefy). */
+const CANOPY =
+  'M60,37 C56.5,37 55,40 55,44 C55,48 57.5,51 60,52 C62.5,51 65,48 65,44 C65,40 63.5,37 60,37 Z';
+
+// Strefy w KOLEJNOŚCI RYSOWANIA: skrzydła pierwsze (ich korzenie chowają się pod segmenty kadłuba
+// malowane później), potem pasma kadłuba od nosa do ogona; ogon niesie też dwa stateczniki poziome.
+const ZONE_PATHS: readonly ZonePath[] = [
+  // skrzydło proste (myśliwiec tłokowy): łagodny skos krawędzi natarcia (przód, mniejszy y) + krawędź
+  // spływu (tył) zaginana DO PRZODU ku końcówce → końcówka na linii środkowej cięciwy, nie „skośna".
+  { role: 'wingL', d: 'M53.2,35 C40,35 21,38 9,42 C6.5,43.5 6.5,49.5 8.5,51 C24,53 42,57 54,58 Z' },
+  { role: 'wingR', d: 'M66.8,35 C80,35 99,38 111,42 C113.5,43.5 113.5,49.5 111.5,51 C96,53 78,57 66,58 Z' },
+  { role: 'engine', d: 'M60,10 C55.5,13 53.5,22 53.2,34 L66.8,34 C66.5,22 64.5,13 60,10 Z' },
+  { role: 'cockpit', d: 'M53.2,34 L66.8,34 L66.7,52 L53.3,52 Z' },
+  { role: 'tank', d: 'M53.3,52 L66.7,52 L65.5,66 L54.5,66 Z' },
+  {
+    role: 'tail',
+    d:
+      'M54.5,66 C55.5,80 57,98 58.5,104 L60,112 L61.5,104 C63,98 64.5,80 65.5,66 Z' +
+      'M57.5,88 C49,87.5 40,89 37,92.5 C40,96 49,96.5 58,99 Z' +
+      'M62.5,88 C71,87.5 80,89 83,92.5 C80,96 71,96.5 62,99 Z',
+  },
+];
+
+const FUSELAGE_FILL = '#33404d';
+const PROP_FILL = '#465562';
+const DETAIL_STROKE = 'rgba(12,18,26,0.9)';
+const ZONE_STROKE = 'rgba(8,14,20,0.85)';
 
 interface ZoneShape {
   role: ZoneRole;
-  el: SVGElement;
-}
-
-/** Tworzy element SVG strefy (polygon/ellipse) z atrybutami i wstępnym kolorem. */
-function makeShape(tag: 'polygon' | 'ellipse', attrs: Record<string, string>): SVGElement {
-  const el = document.createElementNS(SVG_NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-  el.setAttribute('stroke', 'rgba(8,14,20,0.85)');
-  el.setAttribute('stroke-width', '1.2');
-  return el;
+  el: SVGPathElement;
 }
 
 export class DamageHud {
   private readonly root: HTMLElement;
+  private readonly svg: SVGSVGElement;
   private readonly shapes: ZoneShape[] = [];
   private readonly fireEl: HTMLElement;
   private readonly leakEl: HTMLElement;
@@ -102,32 +144,11 @@ export class DamageHud {
   constructor(container: HTMLElement) {
     this.root = container;
     const svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 100 108');
+    svg.setAttribute('viewBox', '0 0 120 120');
     svg.setAttribute('width', '100%');
-    svg.setAttribute('height', '100%');
-
-    // neutralny grzbiet kadłuba (nos→ogon) pod strefami
-    const spine = document.createElementNS(SVG_NS, 'polygon');
-    spine.setAttribute('points', '50,8 56,30 53,86 47,86 44,30');
-    spine.setAttribute('fill', '#33404d');
-    svg.appendChild(spine);
-
-    // strefy (kolejność rysowania: skrzydła i ogon pod, silnik/zbiornik/kabina na wierzchu)
-    const defs: { role: ZoneRole; tag: 'polygon' | 'ellipse'; attrs: Record<string, string> }[] = [
-      { role: 'wingL', tag: 'polygon', attrs: { points: '46,32 6,47 11,54 46,44' } },
-      { role: 'wingR', tag: 'polygon', attrs: { points: '54,32 94,47 89,54 54,44' } },
-      { role: 'tail', tag: 'polygon', attrs: { points: '45,60 55,60 58,84 72,94 72,99 28,99 28,94 42,84' } },
-      { role: 'engine', tag: 'polygon', attrs: { points: '50,6 59,27 41,27' } },
-      { role: 'tank', tag: 'ellipse', attrs: { cx: '50', cy: '36', rx: '8', ry: '9.5' } },
-      { role: 'cockpit', tag: 'ellipse', attrs: { cx: '50', cy: '52', rx: '6.5', ry: '8.5' } },
-    ];
-    for (const d of defs) {
-      const el = makeShape(d.tag, d.attrs);
-      el.setAttribute('fill', ZONE_LEVEL_COLORS[0]);
-      svg.appendChild(el);
-      this.shapes.push({ role: d.role, el });
-    }
+    this.svg = svg;
     this.root.appendChild(svg);
+    this.buildSilhouette();
 
     const flags = document.createElement('div');
     flags.className = 'damage-flags';
@@ -137,6 +158,47 @@ export class DamageHud {
     this.root.appendChild(flags);
 
     this.setVisible(false);
+  }
+
+  private makePath(d: string, fill: string, stroke: string, strokeWidth: string): SVGPathElement {
+    const el = document.createElementNS(SVG_NS, 'path');
+    el.setAttribute('d', d);
+    el.setAttribute('fill', fill);
+    el.setAttribute('stroke', stroke);
+    el.setAttribute('stroke-width', strokeWidth);
+    el.setAttribute('stroke-linejoin', 'round');
+    this.svg.appendChild(el);
+    return el;
+  }
+
+  /**
+   * Buduje raz całą sylwetkę SVG (jedna wspólna dla obu samolotów). Kolejność warstw: śmigło
+   * (neutralne) → kadłub (neutralny) → strefy (kolorowane) → owiewka (neutralna, na wierzchu).
+   * Strefy `shapes` trzymamy do kolorowania; resztę traktujemy jako stałe dekoracje.
+   */
+  private buildSilhouette(): void {
+    // śmigło — cienka pozioma elipsa u nosa, pod kadłubem (łopaty wystają poza spinner)
+    const prop = document.createElementNS(SVG_NS, 'ellipse');
+    prop.setAttribute('cx', String(PROP[0]));
+    prop.setAttribute('cy', String(PROP[1]));
+    prop.setAttribute('rx', String(PROP[2]));
+    prop.setAttribute('ry', String(PROP[3]));
+    prop.setAttribute('fill', PROP_FILL);
+    prop.setAttribute('stroke', DETAIL_STROKE);
+    prop.setAttribute('stroke-width', '0.8');
+    this.svg.appendChild(prop);
+
+    // neutralny obrys kadłuba pod strefami (chroni przed szczelinami)
+    this.makePath(FUSELAGE, FUSELAGE_FILL, ZONE_STROKE, '0.8');
+
+    // strefy (kolorowane poziomem) — skrzydła pierwsze, korzenie chowają się pod segmenty kadłuba
+    for (const z of ZONE_PATHS) {
+      const el = this.makePath(z.d, ZONE_LEVEL_COLORS[0], ZONE_STROKE, '1.2');
+      this.shapes.push({ role: z.role, el });
+    }
+
+    // owiewka (sam kontur — pod spodem widać kolor strefy `cockpit`)
+    this.makePath(CANOPY, 'none', DETAIL_STROKE, '1');
   }
 
   private static makeFlag(parent: HTMLElement, text: string, cls: string): HTMLElement {
@@ -152,7 +214,10 @@ export class DamageHud {
     this.root.style.display = visible ? 'block' : 'none';
   }
 
-  /** Maluje sylwetkę ze stanu uszkodzeń lokalnej encji. `null` → ukrycie (martwy / brak danych). */
+  /**
+   * Maluje sylwetkę ze stanu uszkodzeń lokalnej encji. `null` → ukrycie (martwy / brak danych).
+   * Sylwetka jest wspólna dla obu samolotów — kolorujemy tylko strefy wg poziomów.
+   */
   update(damage: EntityDamage | null): void {
     if (!damage) {
       this.setVisible(false);
