@@ -205,22 +205,53 @@ klienta i serwer liczą identycznie (spójny reconcile, jak paliwo po v7). Wizua
 
 ---
 
-## CZĘŚĆ 4 — Klient: HUD sylwetki + wizualizacja uszkodzeń obcych  ⛔ NIE ROZPOCZĘTE
+## CZĘŚĆ 4 — Klient: HUD sylwetki + wizualizacja uszkodzeń obcych  ✅ UKOŃCZONE (2026-06-27)
 
-**Warstwa:** `packages/client`. **Protokół:** BEZ zmian (czyta v8 z Części 3).
+**Warstwa:** `packages/client`. **Protokół:** BEZ zmian (czyta v8 z Części 3). **Deploy:** nie dotyczy
+(czysto klienckie; działa na już wdrożonym v8).
 
-### Zakres
-- HUD uszkodzeń: sylwetka samolotu z kolorami stref (zielony/żółty/czerwony) + wskaźniki pożaru/
-  wycieku/rannego pilota (z `EntitySnapshot.damage` lokalnego gracza).
-- Wizualia obcych: narastający dym silnika, ogień, brakująca końcówka skrzydła (podmiana/ukrycie
-  fragmentu meshu — wzorzec `charPlaneMesh`/`restorePlaneMesh`), dym wraku w korkociągu.
-- Czytelność śmierci („wiem, co mnie zabiło") — przyczyna modułowa, spójna z `KillCause`/`deathLabel`.
-- Cleanup efektów przy śmierci/usunięciu encji (pułapka wiszących źródeł — jak audio fazy 21).
+### Decyzja usera (AskUserQuestion 2026-06-27)
+Zniszczone/ciężko uszkodzone skrzydło obcych = **efekty (dym/ogień z pozycji końcówki)**, BEZ ruszania
+geometrii. Powód (zgłoszony userowi jako ryzyko): w GLTF-ach Spitfire/Bf 109 skrzydło bywa JEDNĄ bryłą bez
+nazwanych węzłów końcówek → prawdziwe „odcięcie końcówki" wymagałoby zrzutu drzewa + oględzin wzrokowych z
+działającej gry (niedostępne z sesji) albo przycinania wierzchołków per-model (ryzyko). Dodatkowo skrzydło
+na 0 HP to skutek krytyczny → śmierć (Część 2), więc „żywy bez końcówki" jest i tak ulotny.
+
+### Zrobione
+- **`client/src/damage-hud.ts`** (nowy) — czyste helpery (testowalne bez DOM) + klasa `DamageHud`:
+  - `zoneLevelColor(level)` 0..3 → 4 barwy (zielony/żółty/pomarańcz/ciemnoczerwony); `damageFlags(damage)`
+    → {fire (onFire), leak (zbiornik ≥1), pilot (kabina ≥2)}; `criticalZoneLabel(damage)` → moduł krytyczny
+    (POŻAR > strefa o najwyższym poziomie ≥2, remis rozstrzyga priorytet roli: pilot > silnik > skrzydło > ogon > zbiornik).
+  - `DamageHud` maluje SVG sylwetkę z góry (6 stref kolorowanych poziomem + neutralny grzbiet) i wskaźniki
+    🔥/⛽/✚; `update(EntityDamage|null)` (null = ukrycie), `setVisible`. DOM tylko w klasie (jak `Hud`/`ZoneBar`).
+- **`index.html`** — `#damage-hud` (lewy dolny róg) + style (sylwetka + 3 kolorowe flagi).
+- **`client/src/smoke.ts`** — `SmokeProfile.additive?` (ogień = AdditiveBlending, dym = NormalBlending);
+  `FIRE_TIER` (krótkie, jasne, kurczące się języki, interwał 0,05); refaktor progów na wspólny `hpSmokeLevel`
+  + `LIVING_TIERS[0..3]`; `livingSmokeTier(hpFrac, engineLevel)` = GORSZY z (HP, silnik) → „narastający dym
+  silnika"; `zoneSmokeTier(level)` (≥2) dla dymu z końcówki skrzydła. Budżet `MAX_PUFFS=260` chroni fps
+  (świadomie NIE ponawiane `Explosions`, które nie mają limitu).
+- **`client/src/online-main.ts`** — `DamageHud` instancja + update w `updateHud` (własna encja, tylko w
+  locie; poziomy z `damageById.get(localId)`), ukrycie w `hideCombatOverlays`. Pętla `updateWorldVisuals`
+  przepisana: smuga kadłuba `livingSmokeTier` (pożar → wymuszony czarny), `FIRE_TIER` u kotwicy silnika i
+  `zoneSmokeTier` u kotwic końcówek skrzydeł — kotwice w body frame czytane z `planeConfigOf(type).zones`
+  (TEN SAM JSON co serwerowy hit-detection → efekt wychodzi dokładnie ze strefy, która obrywa; cache per typ).
+  Akumulatory emisji jako struktura `{body,fire,wingL,wingR}` (`emitAccumById`, zastąpił `smokeAccumById`),
+  czyszczone przy usunięciu encji / resecie. Czytelność śmierci: `localDeathModule` (z `criticalZoneLabel`
+  w `onKill`) dokleja moduł do `deathLabel` („ZESTRZELONY — SILNIK"); pokazywany dla air/flak, pomijany dla
+  kolizji/rozbicia (to nie strefa dobiła). Korkociąg/dym wraku w 'dying' bez zmian (już WRECK_TIER).
+- **`client/src/damage-hud.test.ts`** (nowy, +14 testów) — kolor strefy (clamp/round), flagi (progi
+  zbiornik ≥1 / kabina ≥2 / onFire), moduł krytyczny (pożar>strefa, remis→priorytet, <2→null), tiery
+  (livingSmokeTier worse-of, zoneSmokeTier ≥2, FIRE additive).
+
+### Wynik 4
+typecheck (3 ws) ✓, **589 testów** ✓ (+14), lint ✓, build ✓. BEZ protokołu (czyta v8). Wizualia
+nieweryfikowalne wzrokowo z sesji → ⏳ user (weryfikacja + fps RTX przy 8 samolotach).
 
 ### Kryteria
-- [ ] HUD sylwetki (3 kolory) + flagi pożaru/wycieku/pilota.
-- [ ] Uszkodzenia obcych widoczne (dym/ogień/brak końcówki/korkociąg); fps na RTX przy 8 samolotach.
-- [ ] typecheck+test+lint+build zielone; commit.
+- [x] HUD sylwetki (4 kolory: ok/lekkie/ciężkie/zniszczone) + flagi pożaru/wycieku/pilota.
+- [x] Uszkodzenia obcych widoczne (dym narastający z silnikiem/HP, ogień u silnika, dym z końcówki
+      skrzydła, czarny dym wraku w korkociągu); budżet kłębów chroni fps — ⏳ user: pomiar fps RTX @8.
+- [x] typecheck+test+lint+build zielone; commit.
 
 ---
 
@@ -258,5 +289,9 @@ klienta i serwer liczą identycznie (spójny reconcile, jak paliwo po v7). Wizua
   pack/unpack u16, ENTITY_BYTES 34→36), `server/game-room.ts` (snapshot źródło uszkodzeń), `client/net/prediction.ts`
   (`sim.damageLevels` z autorytetu przed replay), `client/online-main.ts` (`damageById`), `shared/combat/damage-model.ts`
   (`isCriticalDamage`), `shared/ai/{fsm,bot}.ts` + `server/bot-manager.ts` (ucieczka botów). Wizualia → Część 4.
-- **Część 4** — —
+- **Część 4 (klient: HUD sylwetki + wizualia obcych)** — ✅ 2026-06-27, 589 testów/typecheck/lint/build
+  zielone, BEZ protokołu (czyta v8). Pliki: `client/src/damage-hud.ts` (+ `.test.ts`), `index.html`
+  (#damage-hud), `client/src/smoke.ts` (FIRE_TIER + livingSmokeTier/zoneSmokeTier), `client/src/online-main.ts`
+  (DamageHud w HUD, pętla efektów z kotwic stref, moduł śmierci w deathLabel). Decyzja usera: zniszczone
+  skrzydło = efekty (dym/ogień), bez ruszania geometrii (GLTF bez nazwanych końcówek). ⏳ user: fps RTX @8.
 - **Część 5** — —

@@ -1,4 +1,5 @@
 import {
+  AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
   Color,
@@ -39,6 +40,11 @@ export interface SmokeProfile {
   /** Barwa świeżego dymu i rozrzedzonego (lerp po czasie życia). */
   colorStart: Color;
   colorEnd: Color;
+  /**
+   * Mieszanie addytywne zamiast normalnego — dla OGNIA (jasne, świecące języki rozjaśniają tło).
+   * Dym zostaje na NormalBlending (bywa ciemny → addytywne by go rozjaśniło). Domyślnie false.
+   */
+  additive?: boolean;
 }
 
 /** Poziom dymu = wygląd (profil) + częstość emisji kłębów. */
@@ -130,14 +136,55 @@ const GROUND_FIRE_PROFILE: SmokeProfile = {
 /** Lekki, stały dym zwęglonego wraku na lądzie (rzadki interwał → cienka kolumna). */
 export const GROUND_FIRE_TIER: SmokeTier = { profile: GROUND_FIRE_PROFILE, intervalS: 0.2 };
 
+/**
+ * Pożar płatowca (faza 22 cz.4): krótkie, jasne, ADDYTYWNE języki ognia migoczące u źródła
+ * (silnik / urwana końcówka). Kurczą się i gasną szybko (sizeEnd<sizeStart), więc kolejne kłęby
+ * czytają się jako trzepoczący płomień, a nie kula dymu. Towarzyszy mu ciężki, czarny dym (caller
+ * podbija poziom dymu kadłuba przy pożarze). Współdzieli budżet MAX_PUFFS — bez nieograniczonego
+ * narastania (w odróżnieniu od ponawianych wybuchów Explosions, które nie mają limitu).
+ */
+const FIRE_PROFILE: SmokeProfile = {
+  particlesPerPuff: 6,
+  lifetimeS: 0.45,
+  spawnRadiusM: 0.5,
+  riseSpeedMs: 6,
+  spreadSpeedMs: 2.4,
+  sizeStart: 8,
+  sizeEnd: 2, // płomień kurczy się i gaśnie, zamiast pęcznieć jak dym
+  opacityStart: 0.9,
+  colorStart: new Color(0xffd070), // jasny, żółto-pomarańczowy rdzeń
+  colorEnd: new Color(0xc02808), // ciemnieje do czerwieni i gaśnie
+  additive: true,
+};
+
+/** Ogień u źródła (silnik / urwana końcówka skrzydła) — gęsto emitowane, krótkie języki. */
+export const FIRE_TIER: SmokeTier = { profile: FIRE_PROFILE, intervalS: 0.05 };
+
 const LIGHT_TIER: SmokeTier = { profile: LIGHT_PROFILE, intervalS: 0.16 };
 const MEDIUM_TIER: SmokeTier = { profile: MEDIUM_PROFILE, intervalS: 0.11 };
 const HEAVY_TIER: SmokeTier = { profile: HEAVY_PROFILE, intervalS: 0.07 };
+
+/** Poziom dymu (0..3) → profil żywej, trafionej maszyny; 0 = brak dymu. Wrak ('dying') używa
+ *  osobnego WRECK_TIER. Indeks = poziom (HP albo strefy), wspólny dla wszystkich źródeł. */
+const LIVING_TIERS: readonly (SmokeTier | null)[] = [null, LIGHT_TIER, MEDIUM_TIER, HEAVY_TIER];
 
 /** Progi HP (ułamek maxHp) wyznaczające poziom dymu trafionego, ale żywego samolotu. */
 const SMOKE_START_FRAC = 0.75; // powyżej — maszyna jeszcze nie dymi
 const SMOKE_MEDIUM_FRAC = 0.5;
 const SMOKE_HEAVY_FRAC = 0.25;
+
+/** Poziom dymu (0..3) z ułamka HP — wspólny rdzeń damageSmokeTier/livingSmokeTier. */
+function hpSmokeLevel(frac: number): number {
+  if (frac > SMOKE_START_FRAC) return 0;
+  if (frac > SMOKE_MEDIUM_FRAC) return 1;
+  if (frac > SMOKE_HEAVY_FRAC) return 2;
+  return 3;
+}
+
+function clampLevel(level: number): number {
+  const n = Math.round(level);
+  return n < 0 ? 0 : n > 3 ? 3 : n;
+}
 
 /**
  * Dobiera poziom dymu żywego samolotu wg ułamka HP. Zwraca null, gdy maszyna jest
@@ -146,10 +193,24 @@ const SMOKE_HEAVY_FRAC = 0.25;
  */
 export function damageSmokeTier(hp: number, maxHp: number): SmokeTier | null {
   const frac = maxHp > 0 ? hp / maxHp : 0;
-  if (frac > SMOKE_START_FRAC) return null;
-  if (frac > SMOKE_MEDIUM_FRAC) return LIGHT_TIER;
-  if (frac > SMOKE_HEAVY_FRAC) return MEDIUM_TIER;
-  return HEAVY_TIER;
+  return LIVING_TIERS[hpSmokeLevel(frac)] ?? null;
+}
+
+/**
+ * Poziom dymu kadłuba żywej maszyny (faza 22 cz.4): bierze GORSZY z dwóch sygnałów — ogólnej
+ * integralności (ułamek HP) i poziomu uszkodzenia SILNIKA (0..3 ze snapshotu v8). Dzięki temu dym
+ * „narasta" wraz z degradacją silnika, nawet gdy globalne HP jeszcze wysokie (uszkodzenia modułowe).
+ */
+export function livingSmokeTier(hpFrac: number, engineLevel: number): SmokeTier | null {
+  const level = Math.max(hpSmokeLevel(hpFrac), clampLevel(engineLevel));
+  return LIVING_TIERS[level] ?? null;
+}
+
+/** Poziom dymu (0..3) konkretnej strefy → profil; 0/1 → brak/lekki (drobne uszkodzenie nie dymi
+ *  z końcówki), 2 → średni, 3 → ciężki. Do dymu z urwanej/uszkodzonej końcówki skrzydła. */
+export function zoneSmokeTier(level: number): SmokeTier | null {
+  const l = clampLevel(level);
+  return l >= 2 ? (LIVING_TIERS[l] ?? null) : null;
 }
 
 /** Maksymalna liczba żywych kłębów (wszystkie maszyny) — twardy budżet draw calls. */
@@ -193,7 +254,8 @@ export class SmokeTrails {
       size: profile.sizeStart,
       transparent: true,
       opacity: profile.opacityStart,
-      blending: NormalBlending, // dym bywa CIEMNY — addytywne mieszanie by go rozjaśniło
+      // dym bywa CIEMNY → NormalBlending (addytywne by go rozjaśniło); ogień jest jasny → addytywne
+      blending: profile.additive ? AdditiveBlending : NormalBlending,
       depthWrite: false,
     });
     const points = new Points(geometry, material);

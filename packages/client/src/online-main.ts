@@ -42,6 +42,7 @@ import {
   surfaceHeightM,
   totalAmmo,
   wingspanM,
+  ZONE_ROLES,
   type EntityDamage,
   type EntitySnapshot,
   type GameEvent,
@@ -78,8 +79,17 @@ import { ResultsOverlay, ScoreboardOverlay } from './net/match-ui';
 import type { NetConditionsPanel } from './net/net-conditions-panel';
 import { RosterOverlay, type RosterRow } from './roster-overlay';
 import { ZoneBar, type ZoneBarState } from './zone-bar';
-import { SmokeTrails, WRECK_TIER, GROUND_FIRE_TIER, damageSmokeTier, type SmokeTier } from './smoke';
+import {
+  SmokeTrails,
+  WRECK_TIER,
+  GROUND_FIRE_TIER,
+  FIRE_TIER,
+  livingSmokeTier,
+  zoneSmokeTier,
+  type SmokeTier,
+} from './smoke';
 import { createPlaneMesh, charPlaneMesh, restorePlaneMesh, type PlaneModel } from './plane-mesh';
+import { DamageHud, criticalZoneLabel } from './damage-hud';
 import { createWorld } from './world';
 import { buildEmplacements, charEmplacement, restoreEmplacement } from './emplacement-mesh';
 import { AudioManager } from './audio/audio-manager';
@@ -224,6 +234,10 @@ let withdrawnToWaiting = false;
 // Przyczyna ostatniej śmierci LOKALNEGO gracza (z eventu KILL) — dobiera komunikat: ogień wroga →
 // ZESTRZELONY, zderzenie z samolotem → KOLIZJA, rozbicie o teren/wodę → ROZBITY. null poza śmiercią.
 let localDeathCause: KillCause | null = null;
+// Moduł najpewniej odpowiedzialny za śmierć (faza 22 cz.4): „SILNIK"/„PILOT"/„SKRZYDŁO"/„POŻAR"… z
+// poziomów stref lokalnej encji w chwili zestrzelenia. Wzbogaca komunikat śmierci („wiem, co mnie
+// zabiło"). null, gdy zwykłe dobicie integralności (brak strefy krytycznej) albo poza śmiercią.
+let localDeathModule: string | null = null;
 /** Id obserwowanego pilota po wejściu w tryb obserwatora; null = wybór automatyczny (pierwszy żywy). */
 let spectatorTargetId: number | null = null;
 // poza obserwowanego (z interpolacji) do kamery — wypełniane w pętli renderu, gdy obserwujemy
@@ -500,15 +514,65 @@ const zoneBar = new ZoneBar(document.body);
 // markery wrogów (DOM) — pula na maks. liczbę innych pilotów w pokoju
 const markers = Array.from({ length: MAX_PLAYERS_PER_ROOM - 1 }, () => new EnemyMarker(document.body));
 const hud = new Hud(hudEl, requireEl('stall-warning'), requireEl('horizon-disc'));
+// HUD modułowych uszkodzeń: sylwetka własnego samolotu (strefy + flagi pożaru/wycieku/pilota), v8
+const damageHud = new DamageHud(requireEl('damage-hud'));
 const horizonEl = requireEl('horizon');
 const reticleEl = requireEl('reticle');
 const noseMarkerEl = requireEl('nose-marker');
 const alertEl = requireEl('arena-alert');
 
-// ułamek HP / faza życia per encja (do dymu uszkodzeń); akumulator interwału dymu per encja
+// ułamek HP / faza życia per encja (do dymu uszkodzeń); akumulatory interwału emisji per encja
 const healthFracById = new Map<number, number>();
 const lifeById = new Map<number, LifePhase>();
-const smokeAccumById = new Map<number, number>();
+
+// indeksy kanoniczne stref (ZONE_ROLES) — odczyt poziomu silnika/skrzydeł z EntityDamage
+const ENGINE_ZONE = ZONE_ROLES.indexOf('engine');
+const WING_L_ZONE = ZONE_ROLES.indexOf('wingL');
+const WING_R_ZONE = ZONE_ROLES.indexOf('wingR');
+
+/**
+ * Akumulatory czasu emisji efektów uszkodzeń per encja (dawkowanie kłębów do interwału tieru):
+ * `body` = smuga dymu za kadłubem, `fire` = języki ognia u silnika, `wingL`/`wingR` = dym z końcówek.
+ * Osobne, bo każde źródło ma własny interwał i pozycję. Czyszczone jak healthFracById.
+ */
+interface EmitAccum {
+  body: number;
+  fire: number;
+  wingL: number;
+  wingR: number;
+}
+const emitAccumById = new Map<number, EmitAccum>();
+function ensureEmitAccum(id: number): EmitAccum {
+  let a = emitAccumById.get(id);
+  if (!a) {
+    a = { body: 0, fire: 0, wingL: 0, wingR: 0 };
+    emitAccumById.set(id, a);
+  }
+  return a;
+}
+
+/**
+ * Kotwice efektów w body frame (silnik / końcówki skrzydeł) odczytane z definicji stref samolotu
+ * (`planeConfigOf(type).zones`) — ten sam JSON, którego używa serwerowy hit-detection, więc ogień/
+ * dym wychodzą DOKŁADNIE ze strefy, która obrywa. Sfera → środek, kapsuła skrzydła → koniec zewn.
+ * (`b` = końcówka). Liczone raz per typ (cache).
+ */
+const zoneAnchorCache = new Map<PlaneType, { engine: Vector3; wingL: Vector3; wingR: Vector3 }>();
+function anchorFor(type: PlaneType, role: 'engine' | 'wingL' | 'wingR'): Vector3 {
+  const zone = planeConfigOf(type).zones.find((z) => z.role === role);
+  if (!zone) return new Vector3();
+  const s = zone.shape;
+  if (s.kind === 'sphere') return new Vector3(s.center[0], s.center[1], s.center[2]);
+  return new Vector3(s.b[0], s.b[1], s.b[2]); // kapsuła: końcówka zewnętrzna
+}
+function zoneAnchorsOf(type: PlaneType): { engine: Vector3; wingL: Vector3; wingR: Vector3 } {
+  let a = zoneAnchorCache.get(type);
+  if (!a) {
+    a = { engine: anchorFor(type, 'engine'), wingL: anchorFor(type, 'wingL'), wingR: anchorFor(type, 'wingR') };
+    zoneAnchorCache.set(type, a);
+  }
+  return a;
+}
 /**
  * Stan uszkodzeń stref per encja z ostatniego snapshotu (protokół v8). Lokalny gracz konsumuje go
  * w predyktorze (sim.damageLevels); tu trzymamy poziomy/pożar WSZYSTKICH encji pod wizualia Części 4
@@ -532,6 +596,7 @@ const sinkingWrecks = new Map<number, number>();
 // scratch (jeden wątek, sekwencyjnie)
 const scratchSmokeDir = new Vector3();
 const scratchSmokePos = new Vector3();
+const scratchAnchor = new Vector3(); // body-frame kotwica efektu → świat (silnik/skrzydło)
 const scratchFwd = new Vector3();
 const scratchUp = new Vector3();
 const scratchRight = new Vector3();
@@ -629,7 +694,7 @@ function resetGameState(): void {
   healthFracById.clear();
   damageById.clear();
   lifeById.clear();
-  smokeAccumById.clear();
+  emitAccumById.clear();
   burningWreckIds.clear(); // nowy mecz/reconnect — żadnych zwęglonych wraków z poprzedniego (meshe i tak czyszczone)
   sinkingWrecks.clear(); // jw. — żadnych tonących wraków z poprzedniego meczu
   // odbuduj stanowiska ogniowe na nowy mecz (zdejmij zwęglenie, wyzeruj dym) — serwer też je resetuje
@@ -639,6 +704,7 @@ function resetGameState(): void {
     emplacementSmokeAccum[i] = 0;
   }
   localDeathCause = null; // nowy mecz — zapomnij przyczynę śmierci z poprzedniego
+  localDeathModule = null;
   latestStandings = null;
   matchMode = 'ffa';
   factionById.clear();
@@ -669,6 +735,7 @@ function hideCombatOverlays(): void {
   noseMarkerEl.style.display = 'none';
   alertEl.style.opacity = '0';
   horizonEl.style.display = 'none';
+  damageHud.setVisible(false);
 }
 
 function handleSnapshot(snap: Snapshot): void {
@@ -703,7 +770,7 @@ function handleSnapshot(snap: Snapshot): void {
     healthFracById.delete(id);
     damageById.delete(id);
     lifeById.delete(id);
-    smokeAccumById.delete(id);
+    emitAccumById.delete(id);
     burningWreckIds.delete(id);
     sinkingWrecks.delete(id);
     disposeEntityAudio(id); // encja zniknęła z meczu → zatrzymaj jej silnik/broń (cleanup źródeł)
@@ -853,7 +920,12 @@ function spawnCosmeticVolley(ownerId: number, seed: number, shots: number): void
 function onKill(killerId: number, victimId: number, cause: KillCause, localId: number | null): void {
   const victim = playerName(victimId);
   // przyczyna WŁASNEJ śmierci → komunikat (ZESTRZELONY/KOLIZJA/ROZBITY) w nakładce wraku i alercie
-  if (victimId === localId) localDeathCause = cause;
+  if (victimId === localId) {
+    localDeathCause = cause;
+    // moduł krytyczny z ostatniego znanego stanu uszkodzeń (snapshot v8) — „ZESTRZELONY — SILNIK"
+    const dmg = damageById.get(localId);
+    localDeathModule = dmg ? criticalZoneLabel(dmg) : null;
+  }
   if (cause === 'air') {
     // teamkill (friendly fire ON w drużynowym) — serwer NIE kredytuje, więc oznaczamy w feedzie
     // „(sojusznik!)" i NIE pokazujemy złotego markera zestrzelenia (parytet z SP).
@@ -914,11 +986,13 @@ function playerName(id: number): string {
  * Komunikat śmierci LOKALNEGO gracza wg przyczyny z eventu KILL (życzenie usera 2026-06-23:
  * „ZESTRZELONY" tylko, gdy padł od ognia). Zderzenie z samolotem → KOLIZJA, rozbicie o teren/wodę
  * → ROZBITY. Domyślnie (przyczyna nieznana, np. świeże zestrzelenie zanim dotrze event) → ZESTRZELONY.
+ * Faza 22 cz.4: gdy padł od ognia/flaku, dokleja MODUŁ z uszkodzeń („— SILNIK"/„— POŻAR") — czytelność
+ * „wiem, co mnie zabiło". Dla kolizji/rozbicia moduł pomijamy (to nie strefa dobiła, tylko ziemia).
  */
-function deathLabel(cause: KillCause | null): string {
-  if (cause === 'collision') return 'KOLIZJA';
-  if (cause === 'ground') return 'ROZBITY';
-  return 'ZESTRZELONY';
+function deathLabel(cause: KillCause | null, module: string | null = null): string {
+  const base = cause === 'collision' ? 'KOLIZJA' : cause === 'ground' ? 'ROZBITY' : 'ZESTRZELONY';
+  const showModule = module && (cause === null || cause === 'air' || cause === 'flak');
+  return showModule ? `${base} — ${module}` : base;
 }
 
 // --- lobby UI + sieć ---
@@ -1019,6 +1093,7 @@ function onLocalRespawn(): void {
   playerDeath = 'none';
   spectatorTargetId = null;
   localDeathCause = null; // świeże życie — zapomnij przyczynę poprzedniej śmierci
+  localDeathModule = null;
   downedOverlay.hide();
   updateMouseAimEnabled();
 }
@@ -1470,6 +1545,11 @@ function updateHud(frameDtS: number): void {
     secondaryAmmoMax: localSecondaryMax > 0 ? localSecondaryMax : undefined,
     extraLines: hudExtraLines(),
   });
+
+  // HUD sylwetki uszkodzeń — własna encja, tylko w locie (martwy / obserwator → ukryty). Poziomy
+  // stref ze snapshotu v8 (te same, którymi predykcja liczy modyfikatory → HUD zgodny z lotem).
+  const localId = net?.localPlayerId ?? null;
+  damageHud.update(localAlive && localId !== null ? (damageById.get(localId) ?? null) : null);
 }
 
 /** Wiersze dodatkowe HUD online: HP, ping, FPS.
@@ -1552,35 +1632,64 @@ function updateCombatVisuals(frameDtS: number): void {
   }
 }
 
-// --- render wizualiów świata (faza 14): wybuchy, dym uszkodzeń, błysk luf własnego samolotu ---
+/**
+ * Dawkuje emisję kłębów danego tieru do jego interwału (akumulator czasu). Zwraca nowy stan
+ * akumulatora; `tier === null` zeruje dług (nieuszkodzone źródło nie kumuluje go do kolejnego
+ * trafienia). `pos` to gotowa pozycja świata (emit dorzuca własny rozrzut wokół niej).
+ */
+function pumpEmit(acc: number, tier: SmokeTier | null, pos: Vector3, dtS: number): number {
+  if (tier === null) return 0;
+  let a = acc + dtS;
+  while (a >= tier.intervalS) {
+    a -= tier.intervalS;
+    smoke.emit(pos, tier.profile);
+  }
+  return a;
+}
+
+/** Przelicza kotwicę body frame (silnik/skrzydło) na pozycję świata bieżącego mesha → scratchAnchor. */
+function worldAnchor(bodyAnchor: Vector3, mesh: { position: Vector3; quaternion: Quaternion }): void {
+  scratchAnchor.copy(bodyAnchor).applyQuaternion(mesh.quaternion).add(mesh.position);
+}
+
+// --- render wizualiów świata (faza 14 + uszkodzenia 22 cz.4): wybuchy, dym/ogień, błysk luf ---
 function updateWorldVisuals(frameDtS: number): void {
   explosions.update(frameDtS);
 
-  // dym: spadający wrak ('dying') ciągnie gęstą czarną smugę (WRECK_TIER); żywa, trafiona
-  // maszyna dymi tym mocniej/ciemniej, im mniej HP (próg w damageSmokeTier). healthFrac jest
-  // ułamkiem 0..1, więc maxHp = 1. Punkt emisji cofnięty ZA ogon (mesh już zinterpolowany).
+  // Dym/ogień uszkodzeń z poziomów stref (snapshot v8) + integralności (HP). Spadający wrak ('dying')
+  // ciągnie gęstą czarną smugę; żywa maszyna dymi tym mocniej, im gorszy SILNIK/HP; pożar dokłada
+  // języki ognia u silnika i czerni dym; ciężko uszkodzona KOŃCÓWKA skrzydła dymi osobno (czytelna
+  // asymetria — tę samą, którą czuć w roll biasie). Zwęglony wrak na lądzie — lekki, stały dym.
   for (const [id, m] of meshes) {
     const life = lifeById.get(id);
-    let tier: SmokeTier | null = null;
-    if (life === 'dying') tier = WRECK_TIER;
-    else if (life === 'alive') tier = damageSmokeTier(healthFracById.get(id) ?? 1, 1);
-    else if (burningWreckIds.has(id)) tier = GROUND_FIRE_TIER; // zwęglony wrak na lądzie — lekki, stały dym
-    if (tier === null) {
-      smokeAccumById.set(id, 0); // nieuszkodzony — nie kumuluj długu do kolejnego trafienia
-      continue;
-    }
-    let acc = (smokeAccumById.get(id) ?? 0) + frameDtS;
-    if (acc < tier.intervalS) {
-      smokeAccumById.set(id, acc);
-      continue;
-    }
+    const acc = ensureEmitAccum(id);
+    const dmg = life === 'alive' ? damageById.get(id) : undefined;
+
+    // smuga kadłuba (cofnięta za ogon — mesh już zinterpolowany)
+    let bodyTier: SmokeTier | null = null;
+    if (life === 'dying') bodyTier = WRECK_TIER;
+    else if (life === 'alive') {
+      const engineLevel = dmg?.onFire ? 3 : (dmg?.levels[ENGINE_ZONE] ?? 0); // pożar → czarny dym
+      bodyTier = livingSmokeTier(healthFracById.get(id) ?? 1, engineLevel);
+    } else if (burningWreckIds.has(id)) bodyTier = GROUND_FIRE_TIER;
     getForward(m.object.quaternion, scratchSmokeDir).multiplyScalar(-SMOKE_BACK_OFFSET_M);
     scratchSmokePos.copy(m.object.position).add(scratchSmokeDir);
-    while (acc >= tier.intervalS) {
-      acc -= tier.intervalS;
-      smoke.emit(scratchSmokePos, tier.profile);
+    acc.body = pumpEmit(acc.body, bodyTier, scratchSmokePos, frameDtS);
+
+    // ogień u silnika + dym z końcówek skrzydeł — z DOKŁADNYCH kotwic stref (ten sam JSON co serwer)
+    if (dmg) {
+      const anchors = zoneAnchorsOf(planeTypeById.get(id) ?? DEFAULT_PLANE_TYPE);
+      worldAnchor(anchors.engine, m.object);
+      acc.fire = pumpEmit(acc.fire, dmg.onFire ? FIRE_TIER : null, scratchAnchor, frameDtS);
+      worldAnchor(anchors.wingL, m.object);
+      acc.wingL = pumpEmit(acc.wingL, zoneSmokeTier(dmg.levels[WING_L_ZONE] ?? 0), scratchAnchor, frameDtS);
+      worldAnchor(anchors.wingR, m.object);
+      acc.wingR = pumpEmit(acc.wingR, zoneSmokeTier(dmg.levels[WING_R_ZONE] ?? 0), scratchAnchor, frameDtS);
+    } else {
+      acc.fire = 0;
+      acc.wingL = 0;
+      acc.wingR = 0;
     }
-    smokeAccumById.set(id, acc);
   }
   smoke.update(frameDtS);
 
@@ -1653,7 +1762,7 @@ function updateHudOverlays(): void {
   } else if (wreck) {
     alertEl.style.opacity = '0'; // komunikat i akcje są w nakładce u dołu
   } else if (!localAlive) {
-    alertEl.textContent = deathLabel(localDeathCause); // ZESTRZELONY tylko od ognia; inaczej KOLIZJA/ROZBITY
+    alertEl.textContent = deathLabel(localDeathCause, localDeathModule); // +moduł krytyczny (faza 22 cz.4)
     alertEl.className = 'crash';
     alertEl.style.opacity = '1';
   } else {
@@ -1670,7 +1779,7 @@ function updateHudOverlays(): void {
   // nakładka decyzji po zestrzeleniu (steruj wrakiem / obserwator / tabela / opuść pokój) —
   // dopóki gracz nie wrócił do gry (wrak lub czeka na respawn) i nie ogląda tabeli/wyników
   if (playerDeath === 'wreck' && !scoreboard.visible && !matchResultsShown && !pauseMenuOpen) {
-    downedOverlay.show(canSpectate(), deathLabel(localDeathCause), downedFlyableWreck);
+    downedOverlay.show(canSpectate(), deathLabel(localDeathCause, localDeathModule), downedFlyableWreck);
   } else {
     downedOverlay.hide();
   }
