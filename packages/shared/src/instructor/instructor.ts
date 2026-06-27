@@ -30,6 +30,26 @@ function expoPullGainFactor(errRad: number, expo: number, refRad: number): numbe
 }
 
 /**
+ * Martwa strefa rolla przy nosie: gdy cel jest bliżej nosa niż `deadzoneRad`,
+ * komenda przechylenia jest wygaszona do 0. Tuż przy nosie `atan2(bok, pion)`
+ * jest źle uwarunkowane (pion≈0 → kierunek przechylenia "przeskakuje" przy
+ * mikro-błędzie bocznym), więc regulator P PRZESTEROWUJE: drobne drgnięcie
+ * kursora (1-2 px), szum sensora albo korekta reconcile wywołuje gwałtowny
+ * zamach skrzydłami w locie po prostej (zgłoszenie usera 2026-06-27 — najmocniej
+ * widoczne na Bf 109, bo rolluje 15-35% szybciej, choć model jest symetryczny).
+ * Powyżej deadzone wygładzone (smoothstep) narastanie do pełni przy 2× deadzone —
+ * tłumi tylko mikro-szum, NIE celowanie (kursor >2× deadzone od nosa = pełny
+ * autorytet rolla). `deadzoneRad ≤ 0` wyłącza (zachowanie jak dawniej).
+ */
+function rollDeadzoneGate(thetaRad: number, deadzoneRad: number): number {
+  if (deadzoneRad <= 0) return 1;
+  if (thetaRad <= deadzoneRad) return 0;
+  if (thetaRad >= 2 * deadzoneRad) return 1;
+  const t = (thetaRad - deadzoneRad) / deadzoneRad;
+  return t * t * (3 - 2 * t);
+}
+
+/**
  * Maksymalny clRatio (n_demand / n_avail), do którego instruktor dawkuje G przy
  * wzmocnieniu wykładniczym. Poniżej progu buffetu (0.9) i przeciągnięcia (1.0),
  * więc daleki kursor ciągnie aż do granicy koperty — mocniej, gdy jest zapas
@@ -105,7 +125,8 @@ export class Instructor {
       // przy θ→0 atan2(lateral, vertical) degeneruje się (szum ±90°) —
       // waga min(1, θ/stożek) wygasza roll proporcjonalnie do całego błędu
       const rollRelevance = Math.min(1, thetaTotalRad / Math.max(pushoverConeRad, 1e-6));
-      rollErrorRad = Math.atan2(lateral, vertical) * rollRelevance;
+      const deadzoneGate = rollDeadzoneGate(thetaTotalRad, cfg.aimRollDeadzoneDeg * DEG_TO_RAD);
+      rollErrorRad = Math.atan2(lateral, vertical) * rollRelevance * deadzoneGate;
       const thrRad = cfg.bankThresholdDeg * DEG_TO_RAD;
       const pullScale = Math.min(1, Math.max(0, (2 * thrRad - Math.abs(rollErrorRad)) / thrRad));
       pullErrorRad = thetaTotalRad * pullScale;

@@ -77,6 +77,7 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
       maxYawRateDegS: 8,
       aimExpo: 0, // fizyka liczona ręcznie → liniowy instruktor jak dawniej
       aimExpoRefDeg: 60,
+      aimRollDeadzoneDeg: 0, // martwa strefa wyłączona w harnessie (testy używają dużych kątów)
     },
     wreck: {
       baseLoadG: 0.35,

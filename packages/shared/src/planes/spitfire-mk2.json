@@ -77,7 +77,8 @@
     "yawGain": 0.5,
     "maxYawRateDegS": 10,
     "aimExpo": 1.0,
-    "aimExpoRefDeg": 60
+    "aimExpoRefDeg": 60,
+    "aimRollDeadzoneDeg": 0.6
   },
   "wreck": {
     "baseLoadG": 0.35,

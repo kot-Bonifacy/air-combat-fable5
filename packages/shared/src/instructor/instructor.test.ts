@@ -35,6 +35,34 @@ describe('instruktor — pojedynczy tick (regulator P)', () => {
     expect(demands.nDemandG).toBeCloseTo(1, 2); // poziomo: baza = 1 G
   });
 
+  it('martwa strefa rolla: mikro-offset celownika (< deadzone) → roll ≈ 0', () => {
+    // 0,3° w bok (≈2 px) przy nosie: bez martwej strefy atan2(bok, pion≈0)≈90°
+    // wywołałoby kilka °/s rolla (gwałtowny zamach skrzydłami w locie prostym).
+    const dz = plane.instructor.aimRollDeadzoneDeg;
+    expect(dz).toBeGreaterThan(0.3); // założenie testu: 0,3° leży w strefie
+    const sim = levelSim();
+    const instructor = new Instructor();
+    const demands = createPilotDemands();
+    const target = new Vector3(-Math.sin(0.3 * DEG), 0, Math.cos(0.3 * DEG)).normalize();
+    for (let i = 0; i < 120; i++) {
+      instructor.update(sim.state, plane, target, FIXED_DT_S, demands);
+    }
+    expect(demands.rollRateRadS).toBeCloseTo(0, 5);
+  });
+
+  it('martwa strefa rolla: offset poza strefą (> 2× deadzone) → pełny autorytet rolla', () => {
+    // 3° w bok: powyżej 2× deadzone → brama otwarta, roll nasyca krzywą koperty
+    const sim = levelSim();
+    const instructor = new Instructor();
+    const demands = createPilotDemands();
+    const target = new Vector3(-Math.sin(3 * DEG), 0, Math.cos(3 * DEG)).normalize();
+    for (let i = 0; i < 120; i++) {
+      instructor.update(sim.state, plane, target, FIXED_DT_S, demands);
+    }
+    expect(demands.rollRateRadS).toBeGreaterThan(0);
+    expect(demands.rollRateRadS).toBeCloseTo(maxRollRateRadS(sim.state.iasMs, plane), 3);
+  });
+
   it('cel w prawo → roll w prawo nasycony krzywą koperty', () => {
     const sim = levelSim();
     const instructor = new Instructor();

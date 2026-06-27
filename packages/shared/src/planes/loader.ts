@@ -204,6 +204,13 @@ export interface InstructorConfig {
   aimExpo: number;
   /** Oddalenie kursora [°], przy którym boost krzywej osiąga pełnię (1 + aimExpo). */
   aimExpoRefDeg: number;
+  /**
+   * Martwa strefa rolla [°]: błąd celownika bliżej nosa niż ta wartość NIE wywołuje
+   * przechylenia (osobliwość atan2 przy nosie przesterowywała roll przy mikro-błędzie —
+   * gwałtowny zamach skrzydłami od drgnięcia kursora / reconcile w locie prostym).
+   * Pełny autorytet rolla wraca przy 2× tej wartości. 0 = wyłączone (jak dawniej).
+   */
+  aimRollDeadzoneDeg: number;
 }
 
 type NumericKey = Exclude<
@@ -310,6 +317,7 @@ const INSTRUCTOR_RANGES: Record<keyof InstructorConfig, readonly [min: number, m
   smoothingTauS: [0.01, 2],
   aimExpo: [0, 4],
   aimExpoRefDeg: [5, 120],
+  aimRollDeadzoneDeg: [0, 5],
   yawGain: [0, 10],
   maxYawRateDegS: [0, 45],
 };
