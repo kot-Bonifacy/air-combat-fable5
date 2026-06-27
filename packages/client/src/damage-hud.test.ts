@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ZONE_ROLES, type EntityDamage, type ZoneRole } from '@air-combat/shared';
-import { zoneLevelColor, damageFlags, criticalZoneLabel } from './damage-hud';
+import {
+  zoneLevelColor,
+  damageFlags,
+  criticalZoneLabel,
+  integrityColor,
+  integrityStrokeWidth,
+} from './damage-hud';
 import { damageSmokeTier, livingSmokeTier, zoneSmokeTier, FIRE_TIER } from './smoke';
 
 /** Buduje EntityDamage z poziomami per rola (brakujące = 0). */
@@ -62,6 +68,39 @@ describe('damage-hud: moduł krytyczny (przyczyna śmierci)', () => {
   it('same lekkie uszkodzenia (<2) → null (zostaje „ZESTRZELONY")', () => {
     expect(criticalZoneLabel(dmg({ engine: 1, tank: 1 }))).toBeNull();
     expect(criticalZoneLabel(dmg({}))).toBeNull();
+  });
+});
+
+describe('damage-hud: integralność konstrukcji (osobny kanał, obrys sylwetki)', () => {
+  it('barwa obrysu: stal→bursztyn→pomarańcz→czerwień wg progów', () => {
+    expect(integrityColor(1)).toBe('#9fb0bd'); // pełna — stal
+    expect(integrityColor(0.75)).toBe('#9fb0bd'); // próg pełnej (inclusive)
+    expect(integrityColor(0.6)).toBe('#e6b800'); // nadwerężona — bursztyn
+    expect(integrityColor(0.3)).toBe('#e8741f'); // poważna — pomarańcz
+    expect(integrityColor(0.1)).toBe('#d0322f'); // krytyczna — czerwień
+  });
+
+  it('integralność NIE używa zieleni stref (osobny kanał wizualny)', () => {
+    // przy pełnej integralności obrys jest stalowy, a NIE zielony jak strefa poziomu 0 — by się nie zlewały
+    expect(integrityColor(1)).not.toBe(zoneLevelColor(0));
+  });
+
+  it('barwa obrysu klampuje ułamek poza [0,1]', () => {
+    expect(integrityColor(1.5)).toBe('#9fb0bd');
+    expect(integrityColor(-0.2)).toBe('#d0322f');
+  });
+
+  it('grubość obrysu: cienki przy pełnej, grubszy przy zniszczeniu, monotoniczna', () => {
+    expect(integrityStrokeWidth(1)).toBeCloseTo(0.8);
+    expect(integrityStrokeWidth(0)).toBeCloseTo(2.8);
+    expect(integrityStrokeWidth(0.5)).toBeCloseTo(1.8);
+    // im niższa integralność, tym grubszy obrys (narastające „pęknięcia")
+    expect(integrityStrokeWidth(0.3)).toBeGreaterThan(integrityStrokeWidth(0.7));
+  });
+
+  it('grubość obrysu klampuje ułamek poza [0,1]', () => {
+    expect(integrityStrokeWidth(2)).toBeCloseTo(0.8);
+    expect(integrityStrokeWidth(-1)).toBeCloseTo(2.8);
   });
 });
 

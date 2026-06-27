@@ -495,7 +495,8 @@ interface KillFeedLine {
   ageS: number;
 }
 const killFeed: KillFeedLine[] = [];
-/** Ułamek HP własnego samolotu z ostatniego snapshotu (HUD) — HP jest autorytetem serwera. */
+/** Ułamek integralności konstrukcji własnego samolotu z ostatniego snapshotu (HUD sylwetki) —
+ *  to autorytatywne serwerowe `health` (dawne „globalne HP"); 1 = nienaruszona, 0 = rozpad. */
 let localHealthFrac = 1;
 /** Ułamek amunicji własnego samolotu z ostatniego snapshotu (HUD) — ogień liczy serwer (faza 14). */
 let localAmmoFrac = 1;
@@ -1547,23 +1548,24 @@ function updateHud(frameDtS: number): void {
   });
 
   // HUD sylwetki uszkodzeń — własna encja, tylko w locie (martwy / obserwator → ukryty). Poziomy
-  // stref ze snapshotu v8 (te same, którymi predykcja liczy modyfikatory → HUD zgodny z lotem).
+  // stref ze snapshotu v8 (te same, którymi predykcja liczy modyfikatory → HUD zgodny z lotem) +
+  // integralność konstrukcji (`localHealthFrac`) na obrysie/odczycie sylwetki (dawny wiersz „HP").
   const localId = net?.localPlayerId ?? null;
-  damageHud.update(localAlive && localId !== null ? (damageById.get(localId) ?? null) : null);
+  damageHud.update(
+    localAlive && localId !== null ? (damageById.get(localId) ?? null) : null,
+    localHealthFrac,
+  );
 }
 
-/** Wiersze dodatkowe HUD online: HP, ping, FPS.
+/** Wiersze dodatkowe HUD online: ping, FPS.
+ *  Integralność konstrukcji (dawny wiersz „HP") przeniesiona na sylwetkę uszkodzeń (obrys + „integr. NN%").
  *  Kod pokoju celowo NIEpokazywany w HUD (życzenie usera) — widnieje w poczekalni.
  *  Licznik zestrzeleń też NIEpokazywany — widnieje już przy nicku gracza w liście
  *  uczestników (lewy górny róg, `RosterOverlay`); redundancja usunięta na życzenie usera. */
 function hudExtraLines(): string[] {
   const lines: string[] = [''];
   // klawiszologia żyje w ekranie „Jak grać" (lobby); status celowania pokazuje już wiersz „ster"
-  lines.push(
-    hudRow('HP', (localHealthFrac * 100).toFixed(0), '%'),
-    hudRow('ping', String(displayedPingMs), 'ms'),
-    fpsHudLine(fpsValue),
-  );
+  lines.push(hudRow('ping', String(displayedPingMs), 'ms'), fpsHudLine(fpsValue));
   return lines;
 }
 

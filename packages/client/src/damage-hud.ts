@@ -19,6 +19,34 @@ export function zoneLevelColor(level: number): string {
   return ZONE_LEVEL_COLORS[i < 0 ? 0 : i > 3 ? 3 : i]!;
 }
 
+// --- integralność konstrukcji (dawne „globalne HP") jako OSOBNY kanał wizualny ---
+//
+// Strefy kolorują WNĘTRZE sylwetki (lokalne moduły, zielony→czerwony). Integralność konstrukcji =
+// globalny backstop płatowca (serwerowe `health`): skumulowane obrażenia kadłuba/pożar, które i tak
+// dobijają. Pokazujemy ją na RAMCE/obrysie całej sylwetki, by się NIE zlewała z kolorami stref —
+// obrys stalowy przy 100% → bursztyn → pomarańcz → czerwień, i GRUBIEJE, gdy integralność spada
+// (czytelne „narastające pęknięcia konstrukcji"). Pod sylwetką liczbowo „integr. NN%".
+
+/** Progi i barwy obrysu integralności (osobny kanał od stref → stal przy pełnej, NIE zielony). */
+const INTEGRITY_BANDS = [
+  { min: 0.75, color: '#9fb0bd' }, // pełna — stalowy, neutralny
+  { min: 0.5, color: '#e6b800' }, // nadwerężona — bursztyn
+  { min: 0.25, color: '#e8741f' }, // poważna — pomarańcz
+  { min: -Infinity, color: '#d0322f' }, // krytyczna — czerwień
+] as const;
+
+/** Barwa obrysu/odczytu integralności wg ułamka 0..1 (stal→bursztyn→pomarańcz→czerwień). */
+export function integrityColor(frac: number): string {
+  const f = frac < 0 ? 0 : frac > 1 ? 1 : frac;
+  return INTEGRITY_BANDS.find((b) => f >= b.min)!.color;
+}
+
+/** Grubość obrysu integralności: cienki gdy zdrowy, grubszy gdy nadwerężony (0.8 px @100% → 2.8 px @0%). */
+export function integrityStrokeWidth(frac: number): number {
+  const f = frac < 0 ? 0 : frac > 1 ? 1 : frac;
+  return 0.8 + (1 - f) * 2.0;
+}
+
 const COCKPIT_IDX = ZONE_ROLES.indexOf('cockpit');
 const TANK_IDX = ZONE_ROLES.indexOf('tank');
 
@@ -137,6 +165,9 @@ export class DamageHud {
   private readonly root: HTMLElement;
   private readonly svg: SVGSVGElement;
   private readonly shapes: ZoneShape[] = [];
+  /** Stroke-only nakładka obrysu integralności (kadłub+skrzydła+ogon) — kolor/grubość z update(). */
+  private readonly integrityOutline: SVGPathElement[] = [];
+  private readonly integrityReadout: HTMLElement;
   private readonly fireEl: HTMLElement;
   private readonly leakEl: HTMLElement;
   private readonly pilotEl: HTMLElement;
@@ -149,6 +180,12 @@ export class DamageHud {
     this.svg = svg;
     this.root.appendChild(svg);
     this.buildSilhouette();
+
+    // liczbowy odczyt integralności pod sylwetką (precyzyjny % — przeniesiony z dawnego wiersza „HP")
+    const readout = document.createElement('div');
+    readout.className = 'integrity-readout';
+    this.integrityReadout = readout;
+    this.root.appendChild(readout);
 
     const flags = document.createElement('div');
     flags.className = 'damage-flags';
@@ -199,6 +236,17 @@ export class DamageHud {
 
     // owiewka (sam kontur — pod spodem widać kolor strefy `cockpit`)
     this.makePath(CANOPY, 'none', DETAIL_STROKE, '1');
+
+    // obrys integralności konstrukcji (osobny kanał) — stroke-only nakładka na obwód płatowca, NAD
+    // strefami; reużywa geometrii kadłuba/skrzydeł/ogona. Kolor i grubość ustawia update() z `health`.
+    const wingL = ZONE_PATHS.find((z) => z.role === 'wingL')!.d;
+    const wingR = ZONE_PATHS.find((z) => z.role === 'wingR')!.d;
+    const tail = ZONE_PATHS.find((z) => z.role === 'tail')!.d;
+    for (const d of [FUSELAGE, wingL, wingR, tail]) {
+      this.integrityOutline.push(
+        this.makePath(d, 'none', integrityColor(1), String(integrityStrokeWidth(1))),
+      );
+    }
   }
 
   private static makeFlag(parent: HTMLElement, text: string, cls: string): HTMLElement {
@@ -216,9 +264,10 @@ export class DamageHud {
 
   /**
    * Maluje sylwetkę ze stanu uszkodzeń lokalnej encji. `null` → ukrycie (martwy / brak danych).
-   * Sylwetka jest wspólna dla obu samolotów — kolorujemy tylko strefy wg poziomów.
+   * Sylwetka jest wspólna dla obu samolotów — strefy kolorujemy wg poziomów, a obrys (ramka) +
+   * odczyt liczbowy wg `integrityFrac` (ułamek `health` 0..1 = integralność konstrukcji).
    */
-  update(damage: EntityDamage | null): void {
+  update(damage: EntityDamage | null, integrityFrac = 1): void {
     if (!damage) {
       this.setVisible(false);
       return;
@@ -228,6 +277,15 @@ export class DamageHud {
       const idx = ZONE_ROLES.indexOf(shape.role);
       shape.el.setAttribute('fill', zoneLevelColor(damage.levels[idx] ?? 0));
     }
+    // integralność konstrukcji (osobny kanał): obrys czerwienieje + grubieje, liczba pod sylwetką
+    const integrityCol = integrityColor(integrityFrac);
+    const integrityW = String(integrityStrokeWidth(integrityFrac));
+    for (const el of this.integrityOutline) {
+      el.setAttribute('stroke', integrityCol);
+      el.setAttribute('stroke-width', integrityW);
+    }
+    this.integrityReadout.textContent = `integr. ${Math.round(integrityFrac * 100)}%`;
+    this.integrityReadout.style.color = integrityCol;
     const flags = damageFlags(damage);
     this.fireEl.style.display = flags.fire ? 'inline' : 'none';
     this.leakEl.style.display = flags.leak ? 'inline' : 'none';

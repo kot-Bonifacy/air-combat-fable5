@@ -242,6 +242,23 @@ strefa 0,5 m/s; `online-main.ts` EMA `varioSmoothedMs` z `velocity.y`, τ=0,4 s)
 zielone. **Zacommitowane `893ab3c` + push** (deploy front+back razem — jeszcze NIEWDROŻONE). ⏳ user: playtest czy bleed
 adekwatny + czy wariometr rozwiewa wrażenie (knoby `dragHighClK`/`dragStallK` strojalne bez kodu).
 
+**„Globalne HP" → „integralność konstrukcji" + obrys sylwetki 2026-06-27 (życzenie usera, czysto klienckie, 611
+testów zielone, BEZ protokołu — v8, NIE wymaga deployu backendu):** user: „przemianuj globalne HP (realizm) na
+integralność konstrukcji i pokaż na sylwetce HUD". Decyzje usera (AskUserQuestion): (1) zakres = **tylko UI +
+komentarze** (wewnętrzne `health`/`healthFrac`/`hpPool` NIETKNIĘTE → zero ryzyka dla protokołu v8/reconcile/testów;
+koncept w docs i tak nazywał się „integralność"); (2) wizualizacja = **obrys sylwetki czerwienieje + grubieje**
+(odrzucone: łuk/pierścień, winieta — winieta zlewałaby się z czerwienią uszkodzonych stref). Zmiany: (a)
+`online-main.ts` — USUNIĘTY wiersz `HP %` z tekstowego HUD (`hudExtraLines`, redundantny), `damageHud.update(...)`
+dostaje `localHealthFrac`; komentarz `localHealthFrac` przemianowany. (b) `damage-hud.ts` — czyste helpery
+`integrityColor(frac)` (progi: ≥0,75 stal `#9fb0bd` → ≥0,5 bursztyn → ≥0,25 pomarańcz → <0,25 czerwień; **stal, NIE
+zieleń stref** = osobny kanał, brak zlewania) + `integrityStrokeWidth(frac)` (0,8 px @100% → 2,8 px @0%, monotoniczna);
+**stroke-only nakładka obrysu** (reużywa geometrii `FUSELAGE`+skrzydła+ogon, NAD strefami) malowana w `update`;
+liczbowo „integr. NN%" pod sylwetką w tym samym kolorze. Strefy nadal kolorują WNĘTRZE (lokalne moduły) → integralność
+(globalny backstop = `health`) i uszkodzenia stref to **dwa rozłączne kanały wizualne**. (c) `index.html` — styl
+`.integrity-readout`. `damage-hud.test.ts` +5 czystych testów (kolor progi/clamp/„nie zieleń stref", grubość
+monotoniczność/clamp). typecheck/611 testów/lint/build zielone. ⏳ user: weryfikacja wzrokowa (kolory/progi/grubość =
+subiektywne knoby, łatwo strojalne) + fps RTX.
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu
