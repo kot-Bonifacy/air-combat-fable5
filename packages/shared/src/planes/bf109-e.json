@@ -92,5 +92,28 @@
   "wreck": {
     "baseLoadG": 0.35,
     "pitchAuthority": 0.3
+  },
+  "zones": [
+    { "role": "engine", "shape": { "kind": "sphere", "center": [0, 0.1, 2.1], "radius": 1.2 }, "maxHp": 48 },
+    { "role": "cockpit", "shape": { "kind": "sphere", "center": [0, 0.45, -0.3], "radius": 0.75 }, "maxHp": 58 },
+    { "role": "tank", "shape": { "kind": "sphere", "center": [0, -0.2, -0.9], "radius": 0.85 }, "maxHp": 38 },
+    { "role": "wingL", "shape": { "kind": "capsule", "a": [0.8, -0.1, 0.3], "b": [4.6, -0.1, -0.2], "radius": 0.65 }, "maxHp": 42 },
+    { "role": "wingR", "shape": { "kind": "capsule", "a": [-0.8, -0.1, 0.3], "b": [-4.6, -0.1, -0.2], "radius": 0.65 }, "maxHp": 42 },
+    { "role": "tail", "shape": { "kind": "capsule", "a": [0, 0.1, -1.4], "b": [0, 0.45, -4.2], "radius": 0.55 }, "maxHp": 38 }
+  ],
+  "damage": {
+    "lightFrac": 0.66,
+    "heavyFrac": 0.33,
+    "enginePowerMid": 0.6,
+    "enginePowerLow": 0.3,
+    "wingClMaxLossFull": 0.35,
+    "wingCd0AddFull": 0.02,
+    "wingRollBiasFullRadS": 0.6,
+    "tailAuthorityFloor": 0.35,
+    "tankLeakDrainFactor": 4,
+    "fireIgniteChanceMg": 0.008,
+    "fireIgniteChanceCannon": 0.1,
+    "fireDotPerS": 4,
+    "fireSelfExtinguishS": 12
   }
 }

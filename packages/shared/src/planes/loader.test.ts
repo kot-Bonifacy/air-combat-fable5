@@ -80,7 +80,35 @@ function validRaw(): Record<string, unknown> {
       baseLoadG: 0.35,
       pitchAuthority: 0.25,
     },
+    zones: [
+      { role: 'engine', shape: { kind: 'sphere', center: [0, 0, 2.3], radius: 1.3 }, maxHp: 50 },
+      { role: 'cockpit', shape: { kind: 'sphere', center: [0, 0.4, -0.4], radius: 0.8 }, maxHp: 60 },
+      { role: 'tank', shape: { kind: 'sphere', center: [0, -0.1, 1.0], radius: 0.9 }, maxHp: 40 },
+      { role: 'wingL', shape: { kind: 'capsule', a: [0.9, -0.15, 0.2], b: [5.2, -0.15, -0.3], radius: 0.7 }, maxHp: 45 },
+      { role: 'wingR', shape: { kind: 'capsule', a: [-0.9, -0.15, 0.2], b: [-5.2, -0.15, -0.3], radius: 0.7 }, maxHp: 45 },
+      { role: 'tail', shape: { kind: 'capsule', a: [0, 0.1, -1.6], b: [0, 0.5, -4.6], radius: 0.6 }, maxHp: 40 },
+    ],
+    damage: {
+      lightFrac: 0.66,
+      heavyFrac: 0.33,
+      enginePowerMid: 0.6,
+      enginePowerLow: 0.3,
+      wingClMaxLossFull: 0.35,
+      wingCd0AddFull: 0.02,
+      wingRollBiasFullRadS: 0.6,
+      tailAuthorityFloor: 0.35,
+      tankLeakDrainFactor: 4,
+      fireIgniteChanceMg: 0.008,
+      fireIgniteChanceCannon: 0.1,
+      fireDotPerS: 4,
+      fireSelfExtinguishS: 12,
+    },
   };
+}
+
+/** Strefy z surowego configu (do mutacji w testach walidacji). */
+function rawZones(raw: Record<string, unknown>): Record<string, unknown>[] {
+  return raw['zones'] as Record<string, unknown>[];
 }
 
 describe('loader konfiguracji samolotu', () => {
@@ -206,5 +234,51 @@ describe('loader konfiguracji samolotu', () => {
   it('K = 1/(π·e·AR)', () => {
     const config = loadPlaneConfig(validRaw());
     expect(inducedDragFactor(config)).toBeCloseTo(1 / (Math.PI * 0.8 * 5.6), 12);
+  });
+
+  it('zones: poprawne strefy zachowują role, bryły i HP', () => {
+    const config = loadPlaneConfig(validRaw());
+    expect(config.zones).toHaveLength(6);
+    const wing = config.zones.find((z) => z.role === 'wingL');
+    expect(wing?.shape.kind).toBe('capsule');
+    expect(wing?.maxHp).toBe(45);
+    expect(SPITFIRE_MK2.zones).toHaveLength(6);
+    expect(BF109_E.zones).toHaveLength(6);
+  });
+
+  it('zones: brak wymaganej strefy → PlaneConfigError', () => {
+    const raw = validRaw();
+    raw['zones'] = rawZones(raw).filter((z) => z['role'] !== 'tail');
+    expect(() => loadPlaneConfig(raw)).toThrowError(/brak wymaganej strefy 'tail'/);
+  });
+
+  it('zones: powtórzona rola → PlaneConfigError', () => {
+    const raw = validRaw();
+    rawZones(raw)[0]!['role'] = 'cockpit'; // dwie kabiny, brak silnika
+    expect(() => loadPlaneConfig(raw)).toThrowError(/powtórzona rola 'cockpit'/);
+  });
+
+  it('zones: nieznany kształt → PlaneConfigError', () => {
+    const raw = validRaw();
+    (rawZones(raw)[0]!['shape'] as Record<string, unknown>)['kind'] = 'pudełko';
+    expect(() => loadPlaneConfig(raw)).toThrowError(/shape\.kind/);
+  });
+
+  it('zones: promień poza zakresem → PlaneConfigError', () => {
+    const raw = validRaw();
+    (rawZones(raw)[0]!['shape'] as Record<string, unknown>)['radius'] = 0;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/shape\.radius/);
+  });
+
+  it('damage: literówka w sekcji → PlaneConfigError ze ścieżką', () => {
+    const raw = validRaw();
+    (raw['damage'] as Record<string, unknown>)['fireDot'] = 4;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/damage\.fireDot/);
+  });
+
+  it('damage: wartość poza zakresem → PlaneConfigError', () => {
+    const raw = validRaw();
+    (raw['damage'] as Record<string, unknown>)['fireIgniteChanceCannon'] = 2;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/damage\.fireIgniteChanceCannon/);
   });
 });

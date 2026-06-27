@@ -1,5 +1,10 @@
 import { Vector3 } from 'three';
 import type { PilotDemands } from '../instructor/instructor';
+import {
+  computeDamageModifiers,
+  NO_DAMAGE_MODIFIERS,
+  type DamageModifiers,
+} from '../combat/damage-model';
 import { GRAVITY_MS2 } from '../constants';
 import { getRight } from '../math/frame';
 import type { PlaneConfig } from '../planes/loader';
@@ -26,6 +31,15 @@ export interface SimPlane {
   gLoadEffects: GLoadEffects;
   /** Bufor poprawek weathervane (bez alokacji per tick). */
   weathervane: AngularRates;
+  /**
+   * Poziomy uszkodzeń stref (faza 22; indeks = ZONE_ROLES, 0..3) albo null = sprawny.
+   * Modyfikatory lotu (moc/clMax/cd0/roll bias/autorytet ogona/wyciek) liczone TYLKO z poziomów,
+   * bo klient zna ze snapshotu tylko poziomy (2 bity/strefa) — serwer i predykcja klienta liczą
+   * to samo (spójny reconcile). null → modyfikatory neutralne (złote testy nietknięte).
+   */
+  damageLevels: number[] | null;
+  /** Bufor policzonych modyfikatorów uszkodzeń (no-alloc per tick). */
+  damageMods: DamageModifiers;
 }
 
 export function createSimPlane(stallSeed: number): SimPlane {
@@ -36,6 +50,26 @@ export function createSimPlane(stallSeed: number): SimPlane {
     gLoadMachine: new GLoadMachine(),
     gLoadEffects: createGLoadEffects(),
     weathervane: { pitch: 0, roll: 0, yaw: 0 },
+    damageLevels: null,
+    damageMods: { ...NO_DAMAGE_MODIFIERS },
+  };
+}
+
+/**
+ * Efektywna konfiguracja po uszkodzeniach: klon bazy z nadpisanymi polami AERO/silnika (moc,
+ * ciąg statyczny, clMax, cd0). Pozostałe pola (i obiekty zagnieżdżone) współdzielone przez
+ * referencję. Alokuje TYLKO gdy któreś pole faktycznie zmienione — sprawny samolot zwraca bazę
+ * (zero kosztu, ścieżka złotych testów bez zmian). Roll bias / autorytet ogona / wyciek paliwa
+ * NIE są tu — aplikowane osobno na poziomie rate'ów/paliwa w pilotStep.
+ */
+function effectivePlaneConfig(base: PlaneConfig, mods: DamageModifiers): PlaneConfig {
+  if (mods.enginePowerFactor === 1 && mods.clMaxFactor === 1 && mods.cd0Add === 0) return base;
+  return {
+    ...base,
+    enginePowerW: base.enginePowerW * mods.enginePowerFactor,
+    staticThrustN: base.staticThrustN * mods.enginePowerFactor,
+    clMax: base.clMax * mods.clMaxFactor,
+    cd0: base.cd0 + mods.cd0Add,
   };
 }
 
@@ -69,20 +103,41 @@ export function pilotStep(
 ): PilotTickResult {
   const { state } = sim;
 
+  // (0) modyfikatory uszkodzeń (faza 22): z poziomów stref → efektywna konfiguracja AERO/silnika
+  // + osobne skutki na rate'y/paliwo. Sprawny samolot (damageLevels=null) → tożsamość, baza configu.
+  let mods: DamageModifiers | null = null;
+  let effPlane = plane;
+  if (sim.damageLevels) {
+    mods = computeDamageModifiers(sim.damageLevels, plane.damage, sim.damageMods);
+    effPlane = effectivePlaneConfig(plane, mods);
+  }
+  const pitchAuth = mods ? mods.pitchAuthorityFactor : 1;
+  const yawAuth = mods ? mods.yawAuthorityFactor : 1;
+  const rollBias = mods ? mods.rollBiasRadS : 0;
+  const fuelDrainFactor = mods ? mods.fuelDrainFactor : 1;
+  // autorytet ogona: degraduje ZADANE n i yaw (mnożnik na komendę ponad neutralne 1 G)
+  const nDemandAdj = 1 + (demands.nDemandG - 1) * pitchAuth;
+  const yawDemandAdj = demands.yawRateRadS * yawAuth;
+
   // paliwo: spala się proporcjonalnie do gazu (pełny bak przy 100% starcza na
   // fuelEnduranceFullThrottleS sekund). Po wyczerpaniu silnik gaśnie — thrustForce daje
   // T=0 przy fuelFrac=0. Liczone przed siłami, by ciąg tego ticku znał już pusty bak.
-  // stepWreck wymusza throttle=0 PRZED pilotStep, więc wrak nie pali paliwa.
+  // stepWreck wymusza throttle=0 PRZED pilotStep, więc wrak nie pali paliwa. Wyciek z
+  // przebitego zbiornika (fuelDrainFactor>1) przyspiesza deplecję.
   if (state.fuelFrac > 0) {
-    state.fuelFrac = Math.max(0, state.fuelFrac - (state.throttle * dtS) / plane.fuelEnduranceFullThrottleS);
+    state.fuelFrac = Math.max(
+      0,
+      state.fuelFrac - (state.throttle * dtS * fuelDrainFactor) / plane.fuelEnduranceFullThrottleS,
+    );
   }
 
   const tasMs = state.velocity.length();
   const qPa = dynamicPressurePa(airDensityKgM3(state.position.y), tasMs);
 
-  // (1) koperta
-  const nAvail = nAvailG(qPa, plane);
-  const nEnvelopeG = clampLoadFactorG(demands.nDemandG, qPa, plane);
+  // (1) koperta — clMax (a więc nAvail) i clamp n liczone na EFEKTYWNYM configu (uszkodzone
+  // skrzydło → mniejsze clMax → mniejsze dostępne n). Krzywa roll rate nie jest modyfikowana.
+  const nAvail = nAvailG(qPa, effPlane);
+  const nEnvelopeG = clampLoadFactorG(nDemandAdj, qPa, effPlane);
   const maxRoll = maxRollRateRadS(state.iasMs, plane);
   const rollClamped = Math.min(maxRoll, Math.max(-maxRoll, demands.rollRateRadS));
 
@@ -99,7 +154,7 @@ export function pilotStep(
   // |clRatio| (znak bez znaczenia — przeciągnięcie i pchanie symetryczne);
   // liczymy go ze znakiem tylko po to, by przy q→0 (nAvail=0) ±Infinity
   // zachowało sens dla obu kierunków
-  const nStructG = Math.min(plane.nMaxG, Math.max(plane.nMinG, demands.nDemandG));
+  const nStructG = Math.min(effPlane.nMaxG, Math.max(effPlane.nMinG, nDemandAdj));
   const clRatio =
     nAvail > 0 ? nStructG / nAvail : nStructG === 0 ? 0 : Infinity * Math.sign(nStructG);
   sim.stallMachine.update(clRatio, plane, dtS, sim.stallEffects);
@@ -107,17 +162,18 @@ export function pilotStep(
 
   // (3) kinematyczne prędkości kątowe; α_implied liczona z n PO kopercie
   // (ten sam wzór co w lift.ts — tu potrzebna PRZED stepPlane dla weathervane)
-  const qS = qPa * plane.wingAreaM2;
+  const qS = qPa * effPlane.wingAreaM2;
   const clNow =
     qS > 0
-      ? Math.min(plane.clMax, Math.max(-plane.clMax, (nClampedG * plane.massKg * GRAVITY_MS2) / qS))
+      ? Math.min(effPlane.clMax, Math.max(-effPlane.clMax, (nClampedG * effPlane.massKg * GRAVITY_MS2) / qS))
       : 0;
-  const alphaImpliedRad = clNow / plane.clAlphaPerRad;
+  const alphaImpliedRad = clNow / effPlane.clAlphaPerRad;
   const pathPitchRate = pitchRateForLoadFactor(state, nClampedG);
   weathervaneRates(state, alphaImpliedRad, plane, sim.weathervane);
   state.angularRates.pitch = pathPitchRate + sim.weathervane.pitch;
-  state.angularRates.roll = rollClamped * stall.aileronFactor + stall.rollRateOffsetRadS;
-  state.angularRates.yaw = demands.yawRateRadS + sim.weathervane.yaw;
+  // bias roll z asymetrii skrzydeł (faza 22): stały offset, który gracz MUSI kontrować lotką
+  state.angularRates.roll = rollClamped * stall.aileronFactor + stall.rollRateOffsetRadS + rollBias;
+  state.angularRates.yaw = yawDemandAdj + sim.weathervane.yaw;
 
   // (4) fizyka translacji
   // koordynacja zakrętu (feed-forward, nie regulator): w przechyleniu grawitacja
@@ -129,7 +185,8 @@ export function pilotStep(
     state.angularRates.yaw += (-GRAVITY_MS2 * scratchRightCoord.y) / tasMs;
   }
 
-  const tick = stepPlane(state, plane, nClampedG, dtS);
+  // siły (nośna/opór/ciąg) na EFEKTYWNYM configu — degradacja silnika i skrzydeł działa tu
+  const tick = stepPlane(state, effPlane, nClampedG, dtS);
   state.stalled = stall.phase === 'stalled';
 
   // (5) koordynacja yaw

@@ -33,6 +33,8 @@ export * from './world/scoreboard';
 export * from './world/emplacement';
 export * from './combat/ballistics';
 export * from './combat/hit';
+export * from './combat/capsule';
+export * from './combat/damage-model';
 export * from './combat/collision';
 export * from './combat/health';
 export * from './combat/fire';

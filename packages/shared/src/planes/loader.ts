@@ -1,4 +1,5 @@
 import { PlaneConfigError } from '../errors';
+import { ZONE_ROLES, type DamageTuning, type HitZone } from '../combat/damage-model';
 import spitfireMk2Raw from './spitfire-mk2.json';
 import bf109Raw from './bf109-e.json';
 
@@ -59,9 +60,16 @@ export interface PlaneConfig {
   sideslipDampingS: number;
   /** Limit przyspieszenia bocznego od siły kadłuba gaszącej ślizg [G]. */
   sideslipMaxAccelG: number;
-  /** Globalna pula HP płatowca (model bezstrefowy MVP; strefy → faza 17). */
+  /**
+   * Globalna „integralność" strukturalna [HP] — backstop hybrydowego modelu uszkodzeń
+   * (faza 22): skumulowane obrażenia kadłuba/pożar nadal zabijają, obok krytycznych skutków
+   * stref. To wciąż `Health` w snapshocie (healthFrac). Nazwa `hpPool` historyczna (faza 5).
+   */
   hpPool: number;
-  /** Promień sfery trafień płatowca [m] (model jednosferowy MVP; strefy → faza 17). */
+  /**
+   * Promień sfery trafień płatowca [m]. Od fazy 22 = BROAD-PHASE (zgrubne odrzucenie): pocisk
+   * poza tą sferą na pewno nie trafia żadnej strefy; wewnątrz serwer iteruje strefy (zones).
+   */
   hitRadiusM: number;
   /**
    * Promień sfery KOLIZJI płatowiec↔płatowiec [m]. Dwa samoloty zderzają się, gdy
@@ -75,6 +83,10 @@ export interface PlaneConfig {
   instructor: InstructorConfig;
   armament: Armament;
   wreck: WreckConfig;
+  /** Strefy trafień (faza 22): 6 brył (kapsuły+sfery) per płatowiec, kanoniczne role ZONE_ROLES. */
+  zones: readonly HitZone[];
+  /** Parametry strojeniowe skutków uszkodzeń (faza 22) — magnitudy/progi poza kodem (niezm. nr 3). */
+  damage: DamageTuning;
 }
 
 /** Parametry tolerancji przeciążenia pilota / G-LOC (physics/g-load.ts). */
@@ -196,7 +208,15 @@ export interface InstructorConfig {
 
 type NumericKey = Exclude<
   keyof PlaneConfig,
-  'name' | 'rollRateCurve' | 'stall' | 'gTolerance' | 'instructor' | 'armament' | 'wreck'
+  | 'name'
+  | 'rollRateCurve'
+  | 'stall'
+  | 'gTolerance'
+  | 'instructor'
+  | 'armament'
+  | 'wreck'
+  | 'zones'
+  | 'damage'
 >;
 
 /** Pola skalarne grupy broni (bez `name`/`muzzles`, walidowanych osobno). */
@@ -261,6 +281,27 @@ const WRECK_RANGES: Record<keyof WreckConfig, readonly [min: number, max: number
   pitchAuthority: [0, 1],
 };
 
+const DAMAGE_RANGES: Record<keyof DamageTuning, readonly [min: number, max: number]> = {
+  lightFrac: [0.3, 0.95],
+  heavyFrac: [0.05, 0.6],
+  enginePowerMid: [0.2, 0.95],
+  enginePowerLow: [0, 0.6],
+  wingClMaxLossFull: [0, 0.8],
+  wingCd0AddFull: [0, 0.2],
+  wingRollBiasFullRadS: [0, 3],
+  tailAuthorityFloor: [0.05, 1],
+  tankLeakDrainFactor: [1, 10],
+  fireIgniteChanceMg: [0, 0.2],
+  fireIgniteChanceCannon: [0, 1],
+  fireDotPerS: [0, 50],
+  fireSelfExtinguishS: [1, 60],
+};
+
+/** Zakres sanity HP strefy [HP] i promienia bryły [m]. */
+const ZONE_MAX_HP_RANGE: readonly [number, number] = [1, 1000];
+const ZONE_RADIUS_RANGE: readonly [number, number] = [0.1, 12];
+const ZONE_COORD_RANGE: readonly [number, number] = [-15, 15];
+
 const INSTRUCTOR_RANGES: Record<keyof InstructorConfig, readonly [min: number, max: number]> = {
   aggressivenessRoll: [0.1, 30],
   aggressivenessPitch: [0.1, 30],
@@ -281,6 +322,8 @@ const KNOWN_KEYS = new Set<string>([
   'instructor',
   'armament',
   'wreck',
+  'zones',
+  'damage',
   ...Object.keys(NUMERIC_RANGES),
 ]);
 
@@ -310,7 +353,7 @@ function checkNumericFields(
 
 function checkSection(
   obj: Record<string, unknown>,
-  key: 'stall' | 'gTolerance' | 'instructor' | 'wreck',
+  key: 'stall' | 'gTolerance' | 'instructor' | 'wreck' | 'damage',
   ranges: Record<string, readonly [number, number]>,
   problems: string[],
 ): void {
@@ -409,6 +452,89 @@ function checkArmament(obj: Record<string, unknown>, problems: string[]): void {
   }
 }
 
+/** Waliduje trójkę współrzędnych [x,y,z] w body frame [m]. */
+function checkCoordTriple(value: unknown, label: string, problems: string[]): void {
+  if (!Array.isArray(value) || value.length !== 3) {
+    problems.push(`${label}: oczekiwano trójki [x,y,z]`);
+    return;
+  }
+  (value as unknown[]).forEach((v, axis) => {
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < ZONE_COORD_RANGE[0] || v > ZONE_COORD_RANGE[1]) {
+      problems.push(`${label}[${String(axis)}]: ${JSON.stringify(v)} poza [${String(ZONE_COORD_RANGE[0])}, ${String(ZONE_COORD_RANGE[1])}] m`);
+    }
+  });
+}
+
+function checkInRange(value: unknown, range: readonly [number, number], label: string, problems: string[]): void {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    problems.push(`${label}: oczekiwano skończonej liczby, jest ${JSON.stringify(value)}`);
+  } else if (value < range[0] || value > range[1]) {
+    problems.push(`${label}: ${String(value)} poza zakresem sanity [${String(range[0])}, ${String(range[1])}]`);
+  }
+}
+
+function checkZoneShape(shape: unknown, prefix: string, problems: string[]): void {
+  if (typeof shape !== 'object' || shape === null || Array.isArray(shape)) {
+    problems.push(`${prefix}shape: oczekiwano obiektu bryły (sphere/capsule)`);
+    return;
+  }
+  const s = shape as Record<string, unknown>;
+  const kind = s['kind'];
+  if (kind === 'sphere') {
+    checkCoordTriple(s['center'], `${prefix}shape.center`, problems);
+    checkInRange(s['radius'], ZONE_RADIUS_RANGE, `${prefix}shape.radius`, problems);
+    for (const k of Object.keys(s)) {
+      if (k !== 'kind' && k !== 'center' && k !== 'radius') problems.push(`${prefix}shape.${k}: nieznane pole (sphere)`);
+    }
+  } else if (kind === 'capsule') {
+    checkCoordTriple(s['a'], `${prefix}shape.a`, problems);
+    checkCoordTriple(s['b'], `${prefix}shape.b`, problems);
+    checkInRange(s['radius'], ZONE_RADIUS_RANGE, `${prefix}shape.radius`, problems);
+    for (const k of Object.keys(s)) {
+      if (k !== 'kind' && k !== 'a' && k !== 'b' && k !== 'radius') problems.push(`${prefix}shape.${k}: nieznane pole (capsule)`);
+    }
+  } else {
+    problems.push(`${prefix}shape.kind: oczekiwano 'sphere' albo 'capsule', jest ${JSON.stringify(kind)}`);
+  }
+}
+
+/**
+ * Walidacja stref trafień (faza 22): dokładnie ZONE_ROLES.length stref, każda rola obecna raz,
+ * poprawna bryła i maxHp. Komplet ról wymagany — model uszkodzeń i bity snapshotu zakładają 6 stref.
+ */
+function checkZones(obj: Record<string, unknown>, problems: string[]): void {
+  const zones = obj['zones'];
+  if (!Array.isArray(zones)) {
+    problems.push('zones: oczekiwano tablicy stref trafień');
+    return;
+  }
+  const seen = new Set<string>();
+  zones.forEach((z, i) => {
+    const prefix = `zones[${String(i)}].`;
+    if (typeof z !== 'object' || z === null || Array.isArray(z)) {
+      problems.push(`${prefix.slice(0, -1)}: oczekiwano obiektu strefy`);
+      return;
+    }
+    const zone = z as Record<string, unknown>;
+    const role = zone['role'];
+    if (typeof role !== 'string' || !(ZONE_ROLES as readonly string[]).includes(role)) {
+      problems.push(`${prefix}role: oczekiwano jednej z [${ZONE_ROLES.join(', ')}], jest ${JSON.stringify(role)}`);
+    } else if (seen.has(role)) {
+      problems.push(`${prefix}role: powtórzona rola '${role}'`);
+    } else {
+      seen.add(role);
+    }
+    checkZoneShape(zone['shape'], prefix, problems);
+    checkInRange(zone['maxHp'], ZONE_MAX_HP_RANGE, `${prefix}maxHp`, problems);
+    for (const k of Object.keys(zone)) {
+      if (k !== 'role' && k !== 'shape' && k !== 'maxHp') problems.push(`${prefix}${k}: nieznane pole (literówka?)`);
+    }
+  });
+  for (const role of ZONE_ROLES) {
+    if (!seen.has(role)) problems.push(`zones: brak wymaganej strefy '${role}'`);
+  }
+}
+
 /**
  * Walidacja schematu przy ładowaniu: wymagane pola, typy, zakresy sanity,
  * brak nieznanych kluczy. Wszystkie problemy zbierane do jednego wyjątku.
@@ -431,7 +557,9 @@ export function loadPlaneConfig(raw: unknown, source = 'konfiguracja samolotu'):
   checkSection(obj, 'gTolerance', G_TOLERANCE_RANGES, problems);
   checkSection(obj, 'instructor', INSTRUCTOR_RANGES, problems);
   checkSection(obj, 'wreck', WRECK_RANGES, problems);
+  checkSection(obj, 'damage', DAMAGE_RANGES, problems);
   checkArmament(obj, problems);
+  checkZones(obj, problems);
 
   const nMin = obj['nMinG'];
   if (typeof nMin === 'number' && nMin >= 0) {
