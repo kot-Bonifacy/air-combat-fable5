@@ -1681,14 +1681,14 @@ function updateHud(frameDtS: number): void {
     extraLines: hudExtraLines(),
   });
 
-  // HUD sylwetki uszkodzeń — własna encja, tylko w locie (martwy / obserwator → ukryty). Poziomy
-  // stref ze snapshotu v8 (te same, którymi predykcja liczy modyfikatory → HUD zgodny z lotem) +
-  // integralność konstrukcji (`localHealthFrac`) na obrysie/odczycie sylwetki (dawny wiersz „HP").
+  // HUD sylwetki uszkodzeń — własna encja: w locie ORAZ podczas spadania zestrzelonym wrakiem
+  // ('dying'), by gracz do końca widział, co go dobiło (życzenie usera 2026-06-28: nie znikać przy
+  // zestrzeleniu). Znika dopiero przy uderzeniu w ziemię/wodę ('dead') albo po wejściu w tryb
+  // obserwatora. Poziomy stref ze snapshotu v8 (te same, którymi predykcja liczy modyfikatory → HUD
+  // zgodny z lotem) + integralność konstrukcji (`localHealthFrac`) na obrysie/odczycie sylwetki.
   const localId = net?.localPlayerId ?? null;
-  damageHud.update(
-    localAlive && localId !== null ? (damageById.get(localId) ?? null) : null,
-    localHealthFrac,
-  );
+  const showOwnDamage = (localAlive || s.life === 'dying') && !isSpectating() && localId !== null;
+  damageHud.update(showOwnDamage ? (damageById.get(localId) ?? null) : null, localHealthFrac);
 }
 
 /** Wiersze dodatkowe HUD online: ping, FPS.
