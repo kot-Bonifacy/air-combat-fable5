@@ -7,6 +7,7 @@ import {
   LAGCOMP_HISTORY_TICKS,
   LAGCOMP_MAX_REWIND_MS,
   MATCH_END_VIEW_DELAY_S,
+  MATCH_END_WRECK_SETTLE_MAX_S,
   MAX_EVENTS_PER_FRAME,
   MAX_PLAYERS_PER_ROOM,
   PHYSICS_HZ,
@@ -322,10 +323,10 @@ export class GameRoom {
 
   // --- pętla meczu (faza 13; P1 2026-06-19: oba tryby eliminacyjne jak SP) ---
   /**
-   * Mecz rozstrzygnięty, ale matchEnded WSTRZYMANE na MATCH_END_VIEW_DELAY_S: pokój zostaje
-   * 'playing' (fizyka + snapshoty lecą), więc klienci widzą, jak ostatni pokonany wróg dymi
-   * i spada, zanim dostaną tabelę. null = brak oczekującego końca; werdykt zamrożony przy
-   * rozstrzygnięciu. Parytet z SP (matchEndPending w main.ts).
+   * Mecz rozstrzygnięty, ale matchEnded WSTRZYMANE (≥ MATCH_END_VIEW_DELAY_S, dłużej póki wraki
+   * spadają): pokój zostaje 'playing' (fizyka + snapshoty lecą), więc klienci widzą, jak ostatni
+   * pokonany wróg dymi i spada AŻ DO UDERZENIA, zanim dostaną tabelę. null = brak oczekującego końca;
+   * werdykt zamrożony przy rozstrzygnięciu. Parytet z SP (matchEndPending w main.ts).
    */
   private pendingEnd: { winnerId: number | null; winningFaction: number | null; reason: MatchEndReason } | null = null;
   private pendingEndTimerS = 0;
@@ -1207,19 +1208,35 @@ export class GameRoom {
     // 6) rozstrzygnięcie końca meczu (po rozliczeniu trafień tego ticku) — strefa albo eliminacja
     this.checkMatchEnd();
 
-    // 7) zwłoka przed tabelą wyników: gdy mecz rozstrzygnięty, matchEnded wstrzymujemy o
-    // MATCH_END_VIEW_DELAY_S (pokój wciąż 'playing' → fizyka i snapshoty lecą, widać upadek wroga).
+    // 7) zwłoka przed tabelą wyników: gdy mecz rozstrzygnięty, matchEnded wstrzymujemy co najmniej o
+    // MATCH_END_VIEW_DELAY_S i dłużej, póki wraki spadają (pokój wciąż 'playing' → fizyka i snapshoty
+    // lecą, widać CAŁY upadek wroga aż do uderzenia, nie zawisłe w powietrzu po zamrożeniu świata).
     this.advancePendingEnd(dtS);
   }
 
-  /** Po rozstrzygnięciu odlicza zwłokę i — po jej upływie — faktycznie kończy mecz (matchEnded). */
+  /**
+   * Po rozstrzygnięciu odlicza zwłokę i — po jej upływie — faktycznie kończy mecz (matchEnded).
+   * Zwłoka to MINIMUM MATCH_END_VIEW_DELAY_S, ale jest WYDŁUŻANA, dopóki jakikolwiek wrak jeszcze
+   * spada ('dying') — bo w 'ended' świat zamarza (snapshoty stają) i niedokończony upadek zawisłby
+   * w powietrzu u klienta (interpolator bez nowych snapshotów trzyma ostatnią pozycję). Twardy sufit
+   * MATCH_END_WRECK_SETTLE_MAX_S chroni przed wrakiem z bardzo wysoka, który nie zdąży spaść.
+   */
   private advancePendingEnd(dtS: number): void {
     if (!this.pendingEnd) return;
     this.pendingEndTimerS += dtS;
     if (this.pendingEndTimerS < MATCH_END_VIEW_DELAY_S) return;
+    if (this.pendingEndTimerS < MATCH_END_WRECK_SETTLE_MAX_S && this.anyWreckFalling()) return;
     const e = this.pendingEnd;
     this.pendingEnd = null;
     this.endMatch(e.winnerId, e.winningFaction, e.reason);
+  }
+
+  /** Czy jakakolwiek encja jest wciąż spadającym wrakiem ('dying') — gate dla zamrożenia świata. */
+  private anyWreckFalling(): boolean {
+    for (const p of this.players.values()) {
+      if (p.sim.state.life === 'dying') return true;
+    }
+    return false;
   }
 
   /**
@@ -1917,9 +1934,10 @@ export class GameRoom {
   }
 
   /**
-   * Planuje koniec meczu z 5-sekundową zwłoką (MATCH_END_VIEW_DELAY_S): pokój zostaje 'playing',
-   * więc fizyka i snapshoty lecą dalej (klienci widzą upadek ostatniego wroga), a matchEnded
-   * pójdzie dopiero po upływie zwłoki (advancePendingEnd). Idempotentne — werdykt ustalany raz.
+   * Planuje koniec meczu ze zwłoką (MATCH_END_VIEW_DELAY_S jako minimum, dłużej póki wraki spadają):
+   * pokój zostaje 'playing', więc fizyka i snapshoty lecą dalej (klienci widzą CAŁY upadek ostatniego
+   * wroga), a matchEnded pójdzie dopiero po upływie zwłoki (advancePendingEnd). Idempotentne — werdykt
+   * ustalany raz.
    */
   private scheduleEnd(winnerId: number | null, winningFaction: number | null, reason: MatchEndReason): void {
     if (this.pendingEnd) return;

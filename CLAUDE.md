@@ -284,6 +284,23 @@ auto-powrotu po 1800 tickach + `returnToWaiting` flip + no-op poza `'ended'`). *
 (nowa semantyka końca meczu rozjechana między wersjami). ⏳ user: smoke (koniec meczu → tabela zostaje;
 „Wróć do poczekalni" działa; 2 ludzi zamykają niezależnie). **NIEZACOMMITOWANE.**
 
+**Wraki zawisają przy końcu meczu — fix 2026-06-28 (zgłoszenie usera, 616 testów zielone, BEZ bumpu protokołu —
+v8, czysto serwerowe, NIE wymaga deployu frontu):** user: dwa wrogie Bf 109 zderzyły się i po chwili spadania ich
+wraki **zawisły w powietrzu** zamiast spaść do uderzenia. **Korzeń:** gdy zderzona para była ostatnią żywą frakcją,
+eliminacja → `scheduleEnd` (`pendingEnd`) → po stałych `MATCH_END_VIEW_DELAY_S=5 s` `endMatch` → `state='ended'`,
+w którym `step()` i `sendSnapshots()` są no-opem (świat/snapshoty zamarzają). Klient pozycjonuje zdalne encje
+WYŁĄCZNIE z interpolatora (`online-main.ts` `interpolator.sample`) → bez nowych snapshotów zamraża wrak w ostatniej
+pozycji = w powietrzu, jeśli nie zdążył spaść w 5 s (własny wrak klient predykuje lokalnie nawet w 'ended', zdalny
+tylko interpoluje). **Decyzja usera (AskUserQuestion):** „Czekaj aż wraki spadną (limit)". **Fix (`game-room.ts`):**
+`advancePendingEnd` kończy mecz dopiero gdy `pendingEndTimerS ≥ MATCH_END_VIEW_DELAY_S` (minimum) **ORAZ**
+`!anyWreckFalling()` (żadna encja nie jest `'dying'`), albo po twardym suficie **`MATCH_END_WRECK_SETTLE_MAX_S=12 s`**
+(nowa stała; wrak z bardzo wysoka i tak zamarznie — rzadkie, akceptowane). Nowy helper `anyWreckFalling()`. Klient
+bez zmian (matchEnded przychodzi później; `maybeRevealResults` i tak czeka na lokalne uderzenie + 5 s). Testy:
+zmodyfikowany 1v1 drużynowy (sprowadza wrak nisko, by wylądował w oknie zwłoki) + 2 nowe w `team-mode.test.ts`
+(wydłużanie póki wrak spada; sufit domyka mecz). Knoby `MATCH_END_VIEW_DELAY_S`/`MATCH_END_WRECK_SETTLE_MAX_S`
+strojalne bez kodu. typecheck/616 testów/lint/build zielone. **NIEZACOMMITOWANE.** ⏳ user: playtest (zestrzel
+ostatniego wroga wysoko → wrak spada aż do uderzenia, nie zawisa).
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu

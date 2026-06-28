@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { FIXED_DT_S, MATCH_END_VIEW_DELAY_S, MATCH_LIVES, type InputFrame, type PlaneState } from '@air-combat/shared';
+import {
+  FIXED_DT_S,
+  MATCH_END_VIEW_DELAY_S,
+  MATCH_END_WRECK_SETTLE_MAX_S,
+  MATCH_LIVES,
+  type InputFrame,
+  type PlaneState,
+} from '@air-combat/shared';
 import { GameRoom } from './game-room';
 
 // Po rozstrzygnięciu mecz wisi MATCH_END_VIEW_DELAY_S (widać upadek wroga), zanim wejdzie w 'ended'.
@@ -175,11 +182,64 @@ describe('serwer — tryb drużynowy: eliminacja kończy mecz (faza 18)', () => 
     fireUntilDown(room, a, b, poses);
     // mecz rozstrzygnięty, ale 'ended' dopiero po zwłoce widoku (widać upadek ostatniego wroga)
     expect(room.state).toBe('playing');
+    // sprowadź wrak nisko, by wylądował w oknie zwłoki — inaczej zwłoka jest WYDŁUŻANA, póki wrak
+    // spada (advancePendingEnd czeka na upadek, by nie zawisł w 'ended'). Tu testujemy ścieżkę
+    // „wrak wylądował → tabela po minimum"; sam mechanizm wydłużania ma osobny test niżej.
+    const bs = stateOf(room, b);
+    bs.position.set(0, 30, 0);
+    bs.velocity.set(0, -30, 0);
+    bs.iasMs = 30;
     hold(room, poses, END_DELAY_TICKS + 5);
     expect(room.state).toBe('ended');
     expect(room.winningFaction).toBe(0); // ostatnia drużyna z samolotami
     expect(room.winnerId).toBe(a); // najlepszy gracz zwycięskiej drużyny
     expect(room.lastEndReason).toBe('score');
+  });
+
+  // 2026-06-28 (zgłoszenie usera): wrak ostatniego wroga zestrzelonego wysoko zawisał w powietrzu,
+  // bo świat zamarzał w 'ended' (snapshoty stają), zanim wrak dotknął ziemi. Fix: advancePendingEnd
+  // WYDŁUŻA zwłokę, póki jakikolwiek wrak spada (do MATCH_END_WRECK_SETTLE_MAX_S).
+  it('wrak ostatniego wroga zestrzelonego wysoko WYDŁUŻA zwłokę końca, póki spada', () => {
+    const { room, ids } = teamRoom(2);
+    const [a, b] = ids as [number, number];
+    const poses = new Map<number, Pose>([
+      [a, [0, 5000, 0]],
+      [b, [0, 5000, 200]],
+    ]);
+    hold(room, poses, 200);
+    fireUntilDown(room, a, b, poses);
+    expect(room.state).toBe('playing');
+
+    // minimum zwłoki minęło, ale wrak b wciąż spada z ~5 km → mecz NIE kończy się (inaczej wrak
+    // zawisłby w powietrzu po zamrożeniu świata w 'ended'). Świat żyje, snapshoty lecą.
+    hold(room, poses, END_DELAY_TICKS + 30);
+    expect(room.state).toBe('playing');
+    expect(stateOf(room, b).life).toBe('dying');
+
+    // sprowadź wrak nisko → po jego uderzeniu mecz domyka się (minimum zwłoki dawno za nami)
+    const bs = stateOf(room, b);
+    bs.position.set(0, 30, 0);
+    bs.velocity.set(0, -30, 0);
+    bs.iasMs = 30;
+    hold(room, poses, 180);
+    expect(room.state).toBe('ended');
+    expect(room.winningFaction).toBe(0);
+  });
+
+  it('twardy limit MATCH_END_WRECK_SETTLE_MAX_S domyka mecz, gdy wrak nie zdąży spaść', () => {
+    const { room, ids } = teamRoom(2);
+    const [a, b] = ids as [number, number];
+    const poses = new Map<number, Pose>([
+      [a, [0, 5000, 0]],
+      [b, [0, 5000, 200]],
+    ]);
+    hold(room, poses, 200);
+    fireUntilDown(room, a, b, poses);
+    // wrak z 5 km nie wyląduje w limicie, ale twardy sufit i tak kończy mecz (tabela nie czeka w nieskończoność)
+    const capTicks = Math.ceil(MATCH_END_WRECK_SETTLE_MAX_S / FIXED_DT_S);
+    hold(room, poses, capTicks + 5);
+    expect(stateOf(room, b).life).toBe('dying'); // wrak wciąż spadał, gdy sufit domknął mecz
+    expect(room.state).toBe('ended');
   });
 
   it('zestrzelony w drużynowym NIE respawnuje (1 życie jak SP), choć mecz trwa', () => {

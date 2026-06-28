@@ -158,13 +158,23 @@ export const ZONE_POINTS_PER_SECOND = 1;
 // (wiadomość returnToWaiting; każdy zamyka tabelę niezależnie). Patrz GameRoom.returnToWaiting.
 
 /**
- * Zwłoka między rozstrzygnięciem meczu a pokazaniem tabeli wyników [s]. W tym czasie
+ * MINIMALNA zwłoka między rozstrzygnięciem meczu a pokazaniem tabeli wyników [s]. W tym czasie
  * świat WCIĄŻ żyje (fizyka + render + snapshoty), więc widać, jak ostatni pokonany
  * przeciwnik dymi i spada / rozbija się — satysfakcjonujące domknięcie zamiast natychmiastowego
  * modala. Stosowane przy KAŻDYM naturalnym końcu meczu (eliminacja/strefa, zwycięstwo i porażka),
  * w SP i na serwerze. NIE dotyczy ręcznego „zakończ misję" (gracz świadomie przerywa — od razu).
+ * Zwłoka jest WYDŁUŻANA, dopóki jakikolwiek wrak jeszcze spada (do MATCH_END_WRECK_SETTLE_MAX_S),
+ * bo w 'ended' świat zamarza (snapshoty stają) i niedokończony upadek zawisłby w powietrzu u klienta.
  */
 export const MATCH_END_VIEW_DELAY_S = 5;
+
+/**
+ * Górny limit zwłoki końca meczu [s] (twardy sufit MATCH_END_VIEW_DELAY_S + czekania na upadek
+ * wraków). Wrak zderzonych na dużym pułapie spada dłużej niż minimum — trzymamy świat żywy, by
+ * dokończył upadek, ale nie w nieskończoność: po tym czasie pokazujemy tabelę nawet jeśli coś
+ * jeszcze leci (rzadki przypadek wraku z bardzo wysoka). Liczone od rozstrzygnięcia, nie od minimum.
+ */
+export const MATCH_END_WRECK_SETTLE_MAX_S = 12;
 
 /**
  * Czas nietykalności po (re)spawnie [s] — chroni przed spawn-killem (faza-13.md).
