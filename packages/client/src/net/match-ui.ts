@@ -234,6 +234,7 @@ export class ResultsOverlay {
   private readonly bannerEl: HTMLDivElement;
   private readonly tableEl: HTMLDivElement;
   private readonly hintEl: HTMLDivElement;
+  private shown = false;
 
   constructor(private readonly actions: ResultsActions) {
     injectStyles();
@@ -291,11 +292,18 @@ export class ResultsOverlay {
 
     this.tableEl.replaceChildren(...standingsNodes(rows, localId, localFaction, mode));
 
-    this.hintEl.textContent = 'Wróć do poczekalni, by zagrać ponownie, albo opuść pokój.';
+    this.hintEl.textContent = 'Wróć do poczekalni, by zagrać ponownie, albo opuść pokój. [Tab] chowa/pokazuje tabelę.';
+    this.shown = true;
     this.root.classList.add('show');
   }
 
+  /** Czy ekran wyników jest widoczny — Tab po końcu meczu chowa/przywraca go (toggle), zob. online-main. */
+  get visible(): boolean {
+    return this.shown;
+  }
+
   hide(): void {
+    this.shown = false;
     this.root.classList.remove('show');
   }
 }

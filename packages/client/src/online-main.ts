@@ -372,17 +372,23 @@ window.addEventListener('blur', () => {
 });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') triggerKey = true;
-  // Tab (przytrzymanie) = tabela wyników w trakcie meczu; blokujemy domyślną zmianę fokusu
+  // Tab: w trakcie meczu / podczas spadania (przed odsłonięciem wyników) PRZYTRZYMANIE podgląda tabelę
+  // wyników; po odsłonięciu ekranu „KONIEC MECZU" wciśnięcie CHOWA/PRZYWRACA go (toggle — odsłania widok).
+  // Blokujemy domyślną zmianę fokusu.
   if (e.code === 'Tab') {
     e.preventDefault();
-    if (phase === 'playing' && !matchResultsShown) scoreboard.show();
+    if (matchResultsShown) {
+      if (!e.repeat) toggleResultsVisible();
+    } else if (phase === 'playing') {
+      scoreboard.show();
+    }
   }
 });
 window.addEventListener('keyup', (e) => {
   if (e.code === 'Space') triggerKey = false;
   if (e.code === 'Tab') {
     e.preventDefault();
-    scoreboard.hide();
+    if (!matchResultsShown) scoreboard.hide(); // koniec podglądu (w fazie wyników Tab działa jak toggle)
   }
 });
 function triggerHeld(): boolean {
@@ -757,6 +763,8 @@ function resetGameState(): void {
   }
   localDeathCause = null; // nowy mecz — zapomnij przyczynę śmierci z poprzedniego
   localDeathModule = null;
+  matchEndData = null; // świeży mecz — żadnych odłożonych/aktywnych wyników z poprzedniego
+  sinceLocalImpactS = null;
   latestStandings = null;
   matchMode = 'ffa';
   factionById.clear();
@@ -1096,8 +1104,21 @@ function returnToWaitingFromResults(): void {
 }
 /** Ostatnia tabela wyników z serwera (HUD + scoreboard); null poza meczem. */
 let latestStandings: StandingsMessage | null = null;
-/** Czy widać ekran wyników (blokuje scoreboard na Tab — tabela jest już na ekranie). */
+/** Czy ekran wyników jest już ODSŁONIĘTY (od tego momentu Tab go CHOWA/PRZYWRACA, a nie podgląda scoreboard). */
 let matchResultsShown = false;
+/**
+ * Finalne dane meczu z `matchEnded`, trzymane do odsłonięcia/togglowania ekranu wyników (null poza fazą
+ * końca). Ekranu NIE pokazujemy od razu (życzenie usera 2026-06-28): póki gracz spada własnym wrakiem
+ * ('dying'), zasłaniałby upadek; po uderzeniu w ziemię/wodę odczekujemy RESULTS_AFTER_IMPACT_S. W całym
+ * tym oknie tabelę można podejrzeć Tabem (matchResultsShown=false). maybeRevealResults pilnuje timingu. */
+let matchEndData: { msg: MatchEndedMessage; localId: number | null; localFaction: number } | null = null;
+/**
+ * Czas [s] od ostatniego LOKALNEGO uderzenia w teren/wodę (życie 'dead'); null = w powietrzu (alive/dying,
+ * brak świeżego upadku do odliczania). Świat zamarza serwerowo w 'ended', ale klient predykuje wrak dalej
+ * (brak snapshotów = brak reconcile), więc wrak uderza lokalnie i licznik rusza. Steruje opóźnieniem wyników. */
+let sinceLocalImpactS: number | null = null;
+/** Ekran wyników pojawia się dopiero tyle sekund PO uderzeniu wraku w ziemię/wodę (życzenie usera). */
+const RESULTS_AFTER_IMPACT_S = 5;
 
 // --- tryb meczu + frakcje (faza 18 cz.2): serwer NIE niesie frakcji w snapshocie binarnym
 //     (bez bumpu protokołu), więc czytamy je z tabeli wyników (standings, JSON 2 Hz). Kolory
@@ -1312,11 +1333,11 @@ function createNet(nick: string, token: string | null): NetClient {
     } else if (msg.state === 'waiting') {
       // bieżący mecz się skończył (też dla wycofanego) → znów normalny uczestnik poczekalni
       withdrawnToWaiting = false;
-      // Tabela wyników NIE znika sama (2026-06-27): jeśli gracz wciąż ją czyta, NIE wyrzucaj go z niej
-      // tym roomUpdate (pokój mógł wrócić do 'waiting' bo INNY gracz zamknął tabelę). roomView już
-      // zaktualizowane → po kliknięciu „Wróć do poczekalni" zobaczy świeży skład. Gracz przejdzie do
-      // poczekalni dopiero własnym przyciskiem (returnToWaitingFromResults).
-      if (matchResultsShown) return;
+      // Tabela wyników NIE znika sama (2026-06-27): jeśli gracz wciąż ją czyta LUB czeka na jej odsłonięcie
+      // (matchEndData — spada/odlicza 5 s po uderzeniu), NIE wyrzucaj go z fazy końca tym roomUpdate (pokój
+      // mógł wrócić do 'waiting' bo INNY gracz zamknął tabelę). roomView już zaktualizowane → po kliknięciu
+      // „Wróć do poczekalni" zobaczy świeży skład. Gracz przejdzie do poczekalni dopiero własnym przyciskiem.
+      if (matchResultsShown || matchEndData) return;
       results.hide();
       if (phase === 'playing') enterWaiting(roomView);
       else if (phase === 'lobby') lobby.updateWaiting(roomView);
@@ -1324,10 +1345,10 @@ function createNet(nick: string, token: string | null): NetClient {
     // 'ended' obsługuje onMatchEnded (overlay wyników); roomView już zaktualizowane
   };
   c.onMatchStarted = () => {
-    // Gracz mógł zostać na tabeli wyników (każdy zamyka ją sam), gdy host wystartował nowy mecz z
-    // poczekalni. phase jest wtedy wciąż 'playing' (nie wyszliśmy), więc enterPlaying miałby
-    // early-return — wymuś świeże wejście, jak przy wznowieniu (patrz onRoomJoined).
-    if (matchResultsShown) phase = 'lobby';
+    // Gracz mógł zostać na tabeli wyników (każdy zamyka ją sam) lub czekać na jej odsłonięcie
+    // (matchEndData), gdy host wystartował nowy mecz z poczekalni. phase jest wtedy wciąż 'playing'
+    // (nie wyszliśmy), więc enterPlaying miałby early-return — wymuś świeże wejście (patrz onRoomJoined).
+    if (matchResultsShown || matchEndData) phase = 'lobby';
     enterPlaying();
   };
   c.onStandings = (msg) => {
@@ -1344,7 +1365,9 @@ function createNet(nick: string, token: string | null): NetClient {
     serverWentAway = true;
     stopAutoReconnect();
     // status 'error' (ustawiony w NetClient) wyświetli komunikat zamiast spinnera;
-    // chowamy nakładki meczu, żeby nie zasłaniały
+    // chowamy nakładki meczu, żeby nie zasłaniały, i kasujemy odłożone wyniki (serwer zniknął)
+    matchEndData = null;
+    sinceLocalImpactS = null;
     scoreboard.hide();
     results.hide();
   };
@@ -1418,12 +1441,36 @@ function onMatchEnded(msg: MatchEndedMessage): void {
   if (phase !== 'playing') return;
   pauseMenuOpen = false;
   pauseMenu.hide(); // gdyby gracz trzymał otwarte menu pauzy w chwili naturalnego końca meczu
-  scoreboard.hide();
-  matchResultsShown = true;
   const localId = net?.localPlayerId ?? null;
   // własna frakcja z finalnej tabeli (robustnie — gdyby standings nie dotarły tuż przed końcem)
   const localFac = msg.rows.find((r) => r.id === localId)?.faction ?? localFaction;
-  results.show(msg, localId, localFac);
+  // Nie pokazujemy ekranu od razu: maybeRevealResults odsłoni go, gdy gracz nie spada już własnym wrakiem
+  // i minęło RESULTS_AFTER_IMPACT_S od uderzenia (zwycięzca w locie / dawno martwy → natychmiast).
+  matchEndData = { msg, localId, localFaction: localFac };
+  maybeRevealResults();
+}
+
+/**
+ * Odsłania ekran wyników z właściwym opóźnieniem (życzenie usera 2026-06-28): póki gracz spada własnym
+ * wrakiem ('dying') — czeka (tabelę widać tylko Tabem, by nie zasłaniać upadku); po uderzeniu w teren/wodę
+ * — czeka RESULTS_AFTER_IMPACT_S od uderzenia; brak upadku (zwycięzca w locie / dawno martwy) — od razu.
+ * Wołane co klatkę po updateDeathState oraz raz z onMatchEnded. Idempotentne (matchResultsShown bramkuje).
+ */
+function maybeRevealResults(): void {
+  if (!matchEndData || matchResultsShown) return;
+  const life = predictor.ready ? predictor.sim.state.life : 'alive';
+  if (life === 'dying') return; // wciąż spada — czekaj na uderzenie (Tab podejrzy)
+  if (sinceLocalImpactS !== null && sinceLocalImpactS < RESULTS_AFTER_IMPACT_S) return; // odczekaj 5 s od uderzenia
+  matchResultsShown = true;
+  scoreboard.hide();
+  results.show(matchEndData.msg, matchEndData.localId, matchEndData.localFaction);
+}
+
+/** Tab w fazie wyników: chowa/przywraca ekran „KONIEC MECZU" (odsłania widok bez utraty danych). */
+function toggleResultsVisible(): void {
+  if (!matchEndData) return;
+  if (results.visible) results.hide();
+  else results.show(matchEndData.msg, matchEndData.localId, matchEndData.localFaction);
 }
 
 function onRoomJoined(msg: RoomJoinedMessage): void {
@@ -1500,6 +1547,8 @@ function enterLobby(): void {
 function enterWaiting(view: WaitingView): void {
   phase = 'lobby';
   matchResultsShown = false;
+  matchEndData = null; // wyjście z fazy końca (enterWaiting omija resetGameState)
+  sinceLocalImpactS = null;
   stopRoomPolling(); // jesteśmy już w pokoju — przestań odpytywać listę otwartych gier
   // z meczu do poczekalni („zakończ misję"/wycofanie): usuń encje i ZATRZYMAJ ich silniki/świst — inaczej
   // pętle audio grają dalej w poczekalni (render bramkuje audio przez phase==='playing', ale pętle żyją same).
@@ -1864,8 +1913,16 @@ function updateHudOverlays(): void {
   }
 
   // nakładka decyzji po zestrzeleniu (steruj wrakiem / obserwator / tabela / opuść pokój) —
-  // dopóki gracz nie wrócił do gry (wrak lub czeka na respawn) i nie ogląda tabeli/wyników
-  if (playerDeath === 'wreck' && !scoreboard.visible && !matchResultsShown && !pauseMenuOpen) {
+  // dopóki gracz nie wrócił do gry (wrak lub czeka na respawn) i nie ogląda tabeli/wyników. Po
+  // KOŃCU meczu (matchEndData) chowamy ją także w oknie odliczania, by widok upadku był czysty
+  // (wyniki i tak nadejdą; akcje końca są bez sensu w zamrożonym pokoju 'ended').
+  if (
+    playerDeath === 'wreck' &&
+    !scoreboard.visible &&
+    !matchResultsShown &&
+    !matchEndData &&
+    !pauseMenuOpen
+  ) {
     downedOverlay.show(canSpectate(), deathLabel(localDeathCause, localDeathModule), downedFlyableWreck);
   } else {
     downedOverlay.hide();
@@ -2109,6 +2166,13 @@ renderer.setAnimationLoop(() => {
       lifeById.set(id, newLife);
     }
     updateDeathState();
+
+    // odliczanie od lokalnego uderzenia w teren/wodę (steruje opóźnieniem ekranu wyników): 'dead' →
+    // narasta, w powietrzu (alive/dying) → null. Po końcu meczu maybeRevealResults odsłoni tabelę 5 s
+    // po uderzeniu (a póki gracz spada — dopiero po uderzeniu), nie zasłaniając widoku upadku.
+    const localLife = predictor.ready ? predictor.sim.state.life : 'alive';
+    sinceLocalImpactS = localLife === 'dead' ? (sinceLocalImpactS ?? 0) + frameDtS : null;
+    maybeRevealResults();
 
     if (predictor.ready) {
       const s = predictor.sim.state;
