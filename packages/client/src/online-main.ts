@@ -342,6 +342,13 @@ renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefa
 // w pointer lock i NIE strzela (triggerHeld bramkuje LPM na mouseAim.locked) — jak offline.
 let triggerMouse = false; // LPM trzymany (spust)
 let triggerKey = false; // Spacja trzymana (spust z klawiatury)
+// Spust zbramkowany aż do PUSZCZENIA LPM, gdy ten sam klik dopiero przejął mysz (odsłonił celownik):
+// samo `mouseAim.locked` nie wystarcza, bo wstaje async (pointerlockchange) JESZCZE PODCZAS trzymania
+// LPM → przy zwykłym kliknięciu lock zdąży wstać przed puszczeniem przycisku i pierwszy klik mimo
+// wszystko strzelał. Pierwszy klik ma tylko ujawnić celownik (strzał byłby niewycelowany); dopiero
+// kolejne wciśnięcie — z widocznym już celownikiem — strzela. Ustawiane w pointerdown, czyszczone
+// w syncMouseButtons (puszczenie LPM), uwzględniane w triggerHeld.
+let suppressFireUntilRelease = false;
 // Stan przycisków myszy czytamy z BITMASKI e.buttons (bit0 = LPM, bit1 = PPM), NIE z e.button
 // (to tylko przycisk, który się zmienił w danym zdarzeniu). Powód: gdy LPM jest wciskany RAZEM
 // z już trzymanym PPM (przybliżenie), przeglądarka pod pointer lockiem potrafi NIE dostarczyć
@@ -350,13 +357,19 @@ let triggerKey = false; // Spacja trzymana (spust z klawiatury)
 // i jego `buttons` ma zawsze aktualny stan, więc spust łapie LPM nawet bez osobnego pointerdown.
 // PPM (przybliżenie) czytamy z tej samej bitmaski.
 function syncMouseButtons(buttons: number): void {
-  triggerMouse = (buttons & 1) !== 0;
+  const lmb = (buttons & 1) !== 0;
+  if (!lmb) suppressFireUntilRelease = false; // LPM puszczony → spust gotowy na następne (wycelowane) wciśnięcie
+  triggerMouse = lmb;
   rmbZoomHeld = (buttons & 2) !== 0;
 }
 renderer.domElement.addEventListener('pointerdown', (e) => {
   // w trybie obserwatora LPM przełącza oglądany samolot (akcja na wciśnięcie, nie stan trzymania);
   // żywy gracz: stan spustu/zoomu bierzemy z bitmaski poniżej.
   if (e.button === 0 && isSpectating()) cycleSpectatorTarget(1);
+  // Klik LPM, który dopiero PRZEJMUJE mysz (celownik jeszcze niewidoczny → !mouseAim.locked): bramkuj
+  // spust do puszczenia LPM. requestPointerLock z mouse-aim leci async, więc tu lock jest jeszcze false
+  // i wiemy, że to ten klik odsłania celownik — strzał byłby niewycelowany.
+  if (e.button === 0 && !mouseAim.locked) suppressFireUntilRelease = true;
   syncMouseButtons(e.buttons);
 });
 window.addEventListener('pointerup', (e) => syncMouseButtons(e.buttons));
@@ -393,7 +406,7 @@ window.addEventListener('keyup', (e) => {
 });
 function triggerHeld(): boolean {
   if (pauseMenuOpen) return false; // menu pauzy otwarte — nie strzelaj (kursor klika przyciski)
-  return (mouseAim.locked && triggerMouse) || triggerKey;
+  return (mouseAim.locked && triggerMouse && !suppressFireUntilRelease) || triggerKey;
 }
 
 // kamera: C przełącza pościgową ↔ orbitalną (parytet z SP). Orbitalna = rozglądanie myszą,

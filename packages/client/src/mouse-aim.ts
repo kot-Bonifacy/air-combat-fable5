@@ -38,8 +38,9 @@ export class MouseAim {
     // (a `click` LPM wręcz tłumiony przy trzymanym PPM) → mysz się nie przejmuje: widać kursor systemowy
     // i nie da się strzelać. Zakładając lock na pierwszym, „czystym" wciśnięciu (także PPM), przejmujemy
     // mysz od razu, a kolejne przyciski już tylko działają. enabled = tylko tryb pościgowy (sterowanie
-    // myszą); w orbitalnym mysz obraca kamerą i lock jest wyłączony. Pierwsze wciśnięcie NIE strzela
-    // (triggerHeld bramkuje ogień na mouseAim.locked, które wstaje po pointerlockchange — patrz online-main).
+    // myszą); w orbitalnym mysz obraca kamerą i lock jest wyłączony. Pierwsze wciśnięcie (to odsłaniające
+    // celownik) NIE strzela — bramkuje je `suppressFireUntilRelease` w online-main aż do puszczenia LPM
+    // (samo `mouseAim.locked` nie wystarcza, bo wstaje async i zdąża przed puszczeniem przycisku).
     dom.addEventListener('pointerdown', () => this.requestLock());
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.dom;
