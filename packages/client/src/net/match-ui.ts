@@ -10,7 +10,9 @@ import {
 // dopiero, gdy vanilla zaboli). Dwie nakładki:
 //  • ScoreboardOverlay — tabela wyników na Tab (zestrzelenia / śmierci / asysty / ping),
 //    podświetlenie własnego wiersza, zegar meczu. Dane są AUTORYTETEM serwera (standings).
-//  • ResultsOverlay — ekran końca meczu: zwycięzca + finalna tabela + rewanż / wyjście.
+//  • ResultsOverlay — ekran końca meczu: zwycięzca + finalna tabela. NIE znika sam (2026-06-27):
+//    każdy gracz zamyka go SAM przyciskiem „Wróć do poczekalni" (ended→waiting, rewanż przez Start
+//    w poczekalni) albo „Opuść pokój". Bez auto-powrotu po czasie.
 // Nicki innych graczy trafiają do DOM → ZAWSZE przez textContent (XSS). Moduł nie zna
 // sieci: woła callbacki (rewanż/wyjście), a online-main spina go z NetClient.
 //
@@ -221,7 +223,9 @@ export class ScoreboardOverlay {
 }
 
 export interface ResultsActions {
-  onRematch(): void;
+  /** „Wróć do poczekalni" — zamyka tabelę i wraca do poczekalni tego pokoju (ended→waiting). */
+  onReturnToWaiting(): void;
+  /** „Opuść pokój" — wychodzi z pokoju do listy pokoi. */
   onLeave(): void;
 }
 
@@ -230,7 +234,6 @@ export class ResultsOverlay {
   private readonly bannerEl: HTMLDivElement;
   private readonly tableEl: HTMLDivElement;
   private readonly hintEl: HTMLDivElement;
-  private readonly rematchBtn: HTMLButtonElement;
 
   constructor(private readonly actions: ResultsActions) {
     injectStyles();
@@ -241,22 +244,25 @@ export class ResultsOverlay {
     this.bannerEl = el('div', 'mui-banner');
     this.tableEl = el('div', 'mui-table');
     this.hintEl = el('div', 'mui-hint');
-    this.rematchBtn = button('Rewanż', 'mui-btn mui-btn-primary', () => this.actions.onRematch());
-    const leaveBtn = button('Do lobby', 'mui-btn', () => this.actions.onLeave());
+    // Tabela NIE znika sama (2026-06-27): gracz wychodzi z niej WYŁĄCZNIE przyciskiem. Rewanż
+    // przeniesiony do poczekalni (Start) — tu zostają „Wróć do poczekalni" (główny) i „Opuść pokój".
+    const waitingBtn = button('Wróć do poczekalni', 'mui-btn mui-btn-primary', () =>
+      this.actions.onReturnToWaiting(),
+    );
+    const leaveBtn = button('Opuść pokój', 'mui-btn', () => this.actions.onLeave());
     const btnRow = el('div', 'mui-btn-row');
-    btnRow.append(this.rematchBtn, leaveBtn);
+    btnRow.append(waitingBtn, leaveBtn);
     panel.append(title, this.bannerEl, this.tableEl, this.hintEl, btnRow);
     this.root.append(panel);
     document.body.appendChild(this.root);
   }
 
   /**
-   * Pokazuje ekran wyników. `isHost` decyduje o dostępności przycisku rewanżu (rewanż
-   * startuje tylko host); pozostali czekają, aż host zagra ponownie (albo wychodzą).
+   * Pokazuje ekran wyników. NIE znika sam — gracz zamyka go przyciskiem (każdy niezależnie).
    * W trybie drużynowym zwycięstwo jest DRUŻYNOWE (`winningFaction`) — baner i tabela
    * mówią o drużynie, nie o pojedynczym pilocie.
    */
-  show(msg: MatchEndedMessage, localId: number | null, localFaction: number, isHost: boolean): void {
+  show(msg: MatchEndedMessage, localId: number | null, localFaction: number): void {
     const { mode, winnerId, winningFaction, reason, rows } = msg;
     const reasonStr = reasonText(reason, mode);
 
@@ -285,10 +291,7 @@ export class ResultsOverlay {
 
     this.tableEl.replaceChildren(...standingsNodes(rows, localId, localFaction, mode));
 
-    this.rematchBtn.style.display = isHost ? '' : 'none';
-    this.hintEl.textContent = isHost
-      ? 'Zagraj rewanż albo wróć do lobby.'
-      : 'Czekaj, aż host zagra rewanż… (albo wróć do lobby)';
+    this.hintEl.textContent = 'Wróć do poczekalni, by zagrać ponownie, albo opuść pokój.';
     this.root.classList.add('show');
   }
 

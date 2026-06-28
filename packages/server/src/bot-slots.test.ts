@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_PLAYERS_PER_ROOM, type ControlMessage } from '@air-combat/shared';
+import { MAX_PLAYERS_PER_ROOM, PLANE_TYPES, type ControlMessage } from '@air-combat/shared';
 import { GameRoom } from './game-room';
 import { MAX_BOTS_PER_ROOM } from './bot-manager';
 
@@ -96,6 +96,26 @@ describe('lobby slotowe RTS — dowolne składy drużyn', () => {
     room.hostAddBot(1, 'trudny');
     const bots = room.roomPlayers().filter((p) => p.isBot);
     expect(bots.map((b) => b.botDifficulty).sort()).toEqual(['latwy', 'trudny']);
+  });
+
+  it('hostAddBot wymusza model samolotu nowego bota (host wybiera typ przy „+ dodaj bota")', () => {
+    const room = new GameRoom('PLANE');
+    room.mode = 'team';
+    room.hostAddBot(0, 'normalny', 'bf109');
+    room.hostAddBot(1, 'trudny', 'spitfire');
+    const bots = room.roomPlayers().filter((p) => p.isBot);
+    const types = new Set(bots.map((b) => b.planeType));
+    expect(types.has('bf109')).toBe(true);
+    expect(types.has('spitfire')).toBe(true);
+  });
+
+  it('hostAddBot bez modelu (Losowy) → bot dostaje prawidłowy typ z puli (serwer losuje)', () => {
+    const room = new GameRoom('RND');
+    room.mode = 'team';
+    room.hostAddBot(0, 'normalny'); // brak modelu = „Losowy"
+    const bot = room.roomPlayers().find((p) => p.isBot);
+    expect(bot).toBeDefined();
+    expect(PLANE_TYPES).toContain(bot!.planeType);
   });
 
   it('roster: botDifficulty obecne TYLKO dla botów (ludzie bez pola)', () => {

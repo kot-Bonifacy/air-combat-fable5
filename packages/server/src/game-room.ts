@@ -7,7 +7,6 @@ import {
   LAGCOMP_HISTORY_TICKS,
   LAGCOMP_MAX_REWIND_MS,
   MATCH_END_VIEW_DELAY_S,
-  MATCH_RESULTS_LINGER_S,
   MAX_EVENTS_PER_FRAME,
   MAX_PLAYERS_PER_ROOM,
   PHYSICS_HZ,
@@ -322,8 +321,6 @@ export class GameRoom {
   private snapshotSources: SnapshotEntitySource[] = [];
 
   // --- pętla meczu (faza 13; P1 2026-06-19: oba tryby eliminacyjne jak SP) ---
-  /** Czas spędzony w stanie 'ended' [s] — po MATCH_RESULTS_LINGER_S pokój wraca do 'waiting'. */
-  private endedTimerS = 0;
   /**
    * Mecz rozstrzygnięty, ale matchEnded WSTRZYMANE na MATCH_END_VIEW_DELAY_S: pokój zostaje
    * 'playing' (fizyka + snapshoty lecą), więc klienci widzą, jak ostatni pokonany wróg dymi
@@ -792,14 +789,16 @@ export class GameRoom {
   /**
    * HOST dodaje pojedynczego bota do slotu (lobby slotowe RTS 2026-06-26). W trybie drużynowym do
    * wskazanej `team` (jawny teamPref → honorowany przez assignFactions, dowolne składy jak „2 vs 6"),
-   * w FFA bez drużyny. Klamp pojemności: pełny pokój / limit botów = no-op. Tylko w 'waiting'
+   * w FFA bez drużyny. `planeType` wymusza samolot nowego bota (host wybiera w poczekalni; brak →
+   * serwer losuje typ z id). Klamp pojemności: pełny pokój / limit botów = no-op. Tylko w 'waiting'
    * (egzekucja host/stan w connection). Po dodaniu rebalansujemy frakcje, by poczekalnia == start
    * (WYSIWYG: wypełniacze ułożą się wokół jawnie postawionych slotów).
    */
-  hostAddBot(team: number | null, difficulty: DifficultyLevel): void {
+  hostAddBot(team: number | null, difficulty: DifficultyLevel, planeType?: PlaneType): void {
     if (this.state !== 'waiting') return;
     if (this.players.size >= MAX_PLAYERS_PER_ROOM || this.botCount >= MAX_BOTS_PER_ROOM) return;
-    this.addBot(difficulty, undefined, team ?? undefined);
+    // planeType brak → addBot losuje typ z id (różnorodność w pokoju; host wybrał „Losowy" w poczekalni)
+    this.addBot(difficulty, planeType, team ?? undefined);
     if (this.mode === 'team') this.assignFactions();
     this.broadcastRoomUpdate();
   }
@@ -898,7 +897,6 @@ export class GameRoom {
   start(): void {
     if (this.state !== 'waiting' && this.state !== 'ended') return;
     this.state = 'playing';
-    this.endedTimerS = 0;
     this.pendingEnd = null; // świeży mecz — bez zalegającej zwłoki końca z poprzedniego
     this.pendingEndTimerS = 0;
     this.winnerId = null;
@@ -945,7 +943,6 @@ export class GameRoom {
   abortMatch(): void {
     if (this.state !== 'playing') return;
     this.state = 'waiting';
-    this.endedTimerS = 0;
     this.pendingEnd = null;
     this.pendingEndTimerS = 0;
     this.winnerId = null;
@@ -1154,14 +1151,9 @@ export class GameRoom {
     return this.players.get(id)?.lastProcessedSeq ?? 0;
   }
 
-  /** Jeden krok fizyki świata (stały dt). No-op poza stanem 'playing' (poza odliczaniem 'ended'). */
+  /** Jeden krok fizyki świata (stały dt). No-op poza stanem 'playing'. W 'ended' świat jest zamrożony
+   *  (tabela wyników nie znika sama — pokój czeka na returnToWaiting od gracza, 2026-06-27). */
   step(dtS: number): void {
-    if (this.state === 'ended') {
-      // ekran wyników utrzymujemy MATCH_RESULTS_LINGER_S, potem pokój wraca do poczekalni
-      this.endedTimerS += dtS;
-      if (this.endedTimerS >= MATCH_RESULTS_LINGER_S) this.returnToWaiting();
-      return;
-    }
     if (this.state !== 'playing') return;
     this.tick = (this.tick + 1) >>> 0;
 
@@ -1948,7 +1940,6 @@ export class GameRoom {
   /** Kończy mecz: playing → ended, gasi walkę, rozsyła finalną tabelę i loguje wynik. */
   private endMatch(winnerId: number | null, winningFaction: number | null, reason: MatchEndReason): void {
     this.state = 'ended';
-    this.endedTimerS = 0;
     this.pendingEnd = null; // zwłoka domknięta (advancePendingEnd) — wyczyść defensywnie
     this.pendingEndTimerS = 0;
     this.winnerId = winnerId;
@@ -1973,10 +1964,15 @@ export class GameRoom {
     );
   }
 
-  /** Po wygaśnięciu ekranu wyników: ended → waiting (pokój znów dołączalny). */
-  private returnToWaiting(): void {
+  /**
+   * Gracz zamknął tabelę wyników → pokój wraca do poczekalni (2026-06-27: „każdy zamyka SAM").
+   * Idempotentne: pierwszy członek budzi pokój (ended → waiting, znów dołączalny), reszta = no-op.
+   * Tabela NIE znika sama — bez tego wywołania pokój wisi w 'ended', aż wszyscy się rozłączą
+   * (sprzątanie po humanCount). Dowolny członek może zawołać (bez wymogu hosta).
+   */
+  returnToWaiting(): void {
+    if (this.state !== 'ended') return;
     this.state = 'waiting';
-    this.endedTimerS = 0;
     this.broadcastRoomUpdate();
   }
 

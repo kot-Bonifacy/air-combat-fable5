@@ -280,7 +280,9 @@ export class Connection implements RoomMember {
           this.sendControl({ t: 'error', code: 'notHost', message: 'tylko host może dodawać boty' });
           return;
         }
-        this.room.hostAddBot(clampTeam(msg.team), validDifficulty(msg.difficulty));
+        // plane obecne → klamp do znanego typu (niezm. nr 11); brak → undefined = serwer losuje typ
+        const plane = msg.plane !== undefined ? clampPlaneType(msg.plane) : undefined;
+        this.room.hostAddBot(clampTeam(msg.team), validDifficulty(msg.difficulty), plane);
         return;
       }
       case 'removeBot': {
@@ -343,6 +345,12 @@ export class Connection implements RoomMember {
         // gracz wycofuje się z meczu, zostając w pokoju (poczekalnia); mecz trwa dla pozostałych
         if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
         this.room.withdrawToLobby(this.playerId);
+        return;
+      case 'returnToWaiting':
+        // gracz zamknął tabelę wyników → pokój wraca do poczekalni (każdy zamyka SAM, 2026-06-27).
+        // Idempotentne i bez wymogu hosta: dowolny członek budzi pokój ended→waiting. No-op poza 'ended'.
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        this.room.returnToWaiting();
         return;
       case 'leaveRoom':
         this.leaveRoom();

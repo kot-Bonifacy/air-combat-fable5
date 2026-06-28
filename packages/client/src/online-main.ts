@@ -1011,7 +1011,7 @@ const lobby = new LobbyUI({
   onSelectTeam: (team) => net?.selectTeam(team), // wybór drużyny (rozdzielenie drużyna↔samolot 2026-06-25)
   onSetReady: (ready) => net?.setReady(ready), // gotowość do startu (system „Gotów" 2026-06-26)
   onUpdateRoom: (opts) => net?.updateRoom(opts), // host: zmiana trybu/botów/poziomu w poczekalni
-  onAddBot: (team, difficulty) => net?.addBot(team ?? undefined, difficulty), // host: dodaj bota do slotu (lobby RTS)
+  onAddBot: (team, difficulty, plane) => net?.addBot(team ?? undefined, difficulty, plane), // host: dodaj bota do slotu (lobby RTS) — z modelem+poziomem
   onRemoveBot: (botId) => net?.removeBot(botId), // host: usuń bota ze slotu
   onEditBot: (botId, opts) => net?.editBot(botId, opts), // host: przenieś bota / zmień jego poziom
   onSendChat: (text) => net?.sendChat(text), // czat poczekalni
@@ -1020,12 +1020,28 @@ const lobby = new LobbyUI({
 // --- nakładki pętli meczu (faza 13): scoreboard (Tab) + ekran wyników z rewanżem ---
 const scoreboard = new ScoreboardOverlay();
 const results = new ResultsOverlay({
-  onRematch: () => net?.startMatch(), // host: ended → playing (start() na serwerze)
+  onReturnToWaiting: () => returnToWaitingFromResults(), // każdy zamyka tabelę SAM → poczekalnia
   onLeave: () => {
     net?.leaveRoom();
     enterLobby();
   },
 });
+
+/**
+ * „Wróć do poczekalni" z tabeli wyników (2026-06-27): tabela NIE znika sama — każdy gracz zamyka ją
+ * niezależnie. Prosimy serwer o powrót pokoju ended→waiting (idempotentne; dowolny członek budzi pokój)
+ * i od razu pokazujemy poczekalnię. roomView ustawiamy optymistycznie na 'waiting' (serwer potwierdzi
+ * roomUpdate), żeby poczekalnia nie mignęła w stanie „mecz w toku".
+ */
+function returnToWaitingFromResults(): void {
+  if (!roomView) {
+    enterLobby();
+    return;
+  }
+  net?.returnToWaiting();
+  roomView = { ...roomView, state: 'waiting' };
+  enterWaiting(roomView);
+}
 /** Ostatnia tabela wyników z serwera (HUD + scoreboard); null poza meczem. */
 let latestStandings: StandingsMessage | null = null;
 /** Czy widać ekran wyników (blokuje scoreboard na Tab — tabela jest już na ekranie). */
@@ -1244,14 +1260,24 @@ function createNet(nick: string, token: string | null): NetClient {
     } else if (msg.state === 'waiting') {
       // bieżący mecz się skończył (też dla wycofanego) → znów normalny uczestnik poczekalni
       withdrawnToWaiting = false;
-      // ekran wyników wygasł na serwerze → powrót do poczekalni (z meczu albo z lobby)
+      // Tabela wyników NIE znika sama (2026-06-27): jeśli gracz wciąż ją czyta, NIE wyrzucaj go z niej
+      // tym roomUpdate (pokój mógł wrócić do 'waiting' bo INNY gracz zamknął tabelę). roomView już
+      // zaktualizowane → po kliknięciu „Wróć do poczekalni" zobaczy świeży skład. Gracz przejdzie do
+      // poczekalni dopiero własnym przyciskiem (returnToWaitingFromResults).
+      if (matchResultsShown) return;
       results.hide();
       if (phase === 'playing') enterWaiting(roomView);
       else if (phase === 'lobby') lobby.updateWaiting(roomView);
     }
     // 'ended' obsługuje onMatchEnded (overlay wyników); roomView już zaktualizowane
   };
-  c.onMatchStarted = () => enterPlaying();
+  c.onMatchStarted = () => {
+    // Gracz mógł zostać na tabeli wyników (każdy zamyka ją sam), gdy host wystartował nowy mecz z
+    // poczekalni. phase jest wtedy wciąż 'playing' (nie wyszliśmy), więc enterPlaying miałby
+    // early-return — wymuś świeże wejście, jak przy wznowieniu (patrz onRoomJoined).
+    if (matchResultsShown) phase = 'lobby';
+    enterPlaying();
+  };
   c.onStandings = (msg) => {
     latestStandings = msg;
     matchMode = msg.mode;
@@ -1342,11 +1368,10 @@ function onMatchEnded(msg: MatchEndedMessage): void {
   pauseMenu.hide(); // gdyby gracz trzymał otwarte menu pauzy w chwili naturalnego końca meczu
   scoreboard.hide();
   matchResultsShown = true;
-  const isHost = roomView.youId === roomView.hostId;
   const localId = net?.localPlayerId ?? null;
   // własna frakcja z finalnej tabeli (robustnie — gdyby standings nie dotarły tuż przed końcem)
   const localFac = msg.rows.find((r) => r.id === localId)?.faction ?? localFaction;
-  results.show(msg, localId, localFac, isHost);
+  results.show(msg, localId, localFac);
 }
 
 function onRoomJoined(msg: RoomJoinedMessage): void {
@@ -1371,6 +1396,13 @@ function onRoomJoined(msg: RoomJoinedMessage): void {
     if (wasReconnecting) phase = 'lobby';
     enterPlaying();
   } else {
+    // Pokój w 'ended' (np. reconnect po tokenem podczas oglądania tabeli wyników — od 2026-06-27 pokój
+    // NIE wraca sam do 'waiting'): obudź go do poczekalni, inaczej widok pokazałby „mecz w toku" bez
+    // Startu (ślepy zaułek dla hosta solo). Idempotentne (returnToWaiting); roomView optymistycznie.
+    if (msg.state === 'ended') {
+      net?.returnToWaiting();
+      roomView = { ...roomView, state: 'waiting' };
+    }
     enterWaiting(roomView);
   }
 }

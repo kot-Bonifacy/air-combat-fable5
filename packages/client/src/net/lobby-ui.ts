@@ -28,6 +28,15 @@ const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   trudny: 'trudny',
 };
 
+/** Wartość sentinel selektora modelu nowego bota = „Losowy" (host nie wymusza typu → serwer losuje
+ *  z id). Pusty string nie koliduje z żadnym PlaneType, więc bezpiecznie odróżnia „brak wyboru". */
+const RANDOM_PLANE_VALUE = '';
+/** Opcje selektora modelu przy „+ dodaj bota" (2026-06-27): „Losowy" + konkretne typy samolotów. */
+const ADD_BOT_PLANE_OPTIONS: readonly { value: string; label: string }[] = [
+  { value: RANDOM_PLANE_VALUE, label: 'Losowy' },
+  ...PLANE_TYPES.map((t) => ({ value: t, label: planeLabelOf(t) })),
+];
+
 /** Tryby meczu w kolejności wyboru (faza 18) + ich etykiety dla selecta. */
 const MODE_OPTIONS: readonly { value: MatchMode; label: string }[] = [
   { value: 'ffa', label: 'FFA (każdy na każdego)' },
@@ -86,8 +95,9 @@ export interface LobbyCallbacks {
   /** Host zmienia ustawienia pokoju w poczekalni (tryb / liczba botów / poziom trudności). Pola
    *  opcjonalne — w trybie drużynowym wysyłamy sam `mode` (boty/poziom są per slot, nie globalne). */
   onUpdateRoom(opts: { mode?: MatchMode; bots?: number; difficulty?: DifficultyLevel }): void;
-  /** Host: dodaj bota do slotu (lobby slotowe RTS 2026-06-26). `team` w trybie drużynowym; FFA → null. */
-  onAddBot(team: number | null, difficulty?: DifficultyLevel): void;
+  /** Host: dodaj bota do slotu (lobby slotowe RTS 2026-06-26). `team` w trybie drużynowym; FFA → null.
+   *  `difficulty`/`plane` = wybór hosta z kontrolek przy „+ dodaj bota" (brak `plane` → serwer losuje typ). */
+  onAddBot(team: number | null, difficulty?: DifficultyLevel, plane?: PlaneType): void;
   /** Host: usuń konkretnego bota ze slotu. */
   onRemoveBot(botId: number): void;
   /** Host: edytuj slot bota — przenieś do drużyny i/lub zmień poziom. */
@@ -145,6 +155,13 @@ export class LobbyUI {
   private readonly readyBtn: HTMLButtonElement;
   /** Bieżąca gotowość lokalnego gracza (z WaitingView) — do etykiety przycisku i toggle. */
   private myReady = false;
+  // konfiguracja KOLEJNEGO dodawanego bota (kontrolki przy „+ dodaj bota", host, tryb drużynowy).
+  // Zapamiętana między dodaniami: po dodaniu bota następny podpowiada się taki sam (życzenie usera
+  // 2026-06-27). Wspólna dla obu drużyn (updateWaiting przerysowuje kolumny → selektory czytają stąd).
+  /** Model nowego bota; `null` = „Losowy" (serwer losuje typ z id). Domyślnie losowy. */
+  private pendingBotPlane: PlaneType | null = null;
+  /** Poziom trudności nowego bota; domyślnie „normalny" (życzenie usera). */
+  private pendingBotDifficulty: DifficultyLevel = 'normalny';
   // ustawienia pokoju w poczekalni: host steruje selektorami; reszta widzi podsumowanie tekstowe
   private readonly settingsRow: HTMLDivElement;
   private readonly settingsSummary: HTMLDivElement;
@@ -516,6 +533,43 @@ export class LobbyUI {
     return box;
   }
 
+  /** Kontrolki „+ dodaj bota" dla HOSTA (per drużyna, lobby slotowe RTS): selektory modelu samolotu
+   *  i poziomu trudności nowego bota + przycisk dodania. Wybór jest WSPÓLNY i zapamiętany
+   *  (`pendingBot*`) — po dodaniu bota kolejny podpowiada się taki sam (życzenie usera 2026-06-27).
+   *  „Losowy" model → onAddBot bez `plane` (serwer losuje typ z id). Selektory inicjalizowane bieżącym
+   *  zapamiętanym wyborem, bo updateWaiting przerysowuje kolumny przy każdym roomUpdate. */
+  private buildAddBotRow(faction: number, roomFull: boolean): HTMLDivElement {
+    const wrap = el('div', 'lobby-add-bot-box');
+    const plane = selectEl(
+      'lobby-select lobby-bot-diff',
+      ADD_BOT_PLANE_OPTIONS,
+      this.pendingBotPlane ?? RANDOM_PLANE_VALUE,
+    );
+    plane.title = 'Model nowego bota';
+    plane.addEventListener('change', () => {
+      this.pendingBotPlane = plane.value === RANDOM_PLANE_VALUE ? null : (plane.value as PlaneType);
+    });
+    const diff = selectEl(
+      'lobby-select lobby-bot-diff',
+      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: DIFFICULTY_LABELS[lvl] })),
+      this.pendingBotDifficulty,
+    );
+    diff.title = 'Poziom trudności nowego bota';
+    diff.addEventListener('change', () => {
+      this.pendingBotDifficulty = diff.value as DifficultyLevel;
+    });
+    const selectors = el('div', 'lobby-add-bot-selectors');
+    selectors.append(plane, diff);
+    // brak modelu (Losowy) → onAddBot bez plane (undefined) → serwer losuje typ
+    const add = button('+ dodaj bota', 'lobby-btn lobby-btn-small lobby-add-bot', () =>
+      this.cb.onAddBot(faction, this.pendingBotDifficulty, this.pendingBotPlane ?? undefined),
+    );
+    add.disabled = roomFull;
+    if (roomFull) add.title = 'Pokój pełny';
+    wrap.append(selectors, add);
+    return wrap;
+  }
+
   updateWaiting(view: WaitingView): void {
     this.localId = view.youId;
     this.waitingCodeEl.textContent = view.code;
@@ -545,15 +599,11 @@ export class LobbyUI {
         const head = el('div', 'lobby-team-head');
         head.textContent = `${teamLabel(faction)} (${String(members.length)})`;
         col.append(head);
-        // sloty RTS: host dorzuca boty do KONKRETNEJ drużyny (dowolne składy). „+ dodaj bota" NAD listą,
-        // żeby po dodaniu bota przycisk został pod kursorem (lista rośnie w dół, nie spycha przycisku).
+        // sloty RTS: host dorzuca boty do KONKRETNEJ drużyny (dowolne składy). Kontrolki (model+poziom)
+        // i „+ dodaj bota" NAD listą, żeby po dodaniu bota przycisk został pod kursorem (lista rośnie
+        // w dół, nie spycha przycisku).
         if (isHost && !matchInProgress) {
-          const add = button('+ dodaj bota', 'lobby-btn lobby-btn-small lobby-add-bot', () =>
-            this.cb.onAddBot(faction),
-          );
-          add.disabled = roomFull;
-          if (roomFull) add.title = 'Pokój pełny';
-          col.append(add);
+          col.append(this.buildAddBotRow(faction, roomFull));
         }
         const body = el('div', 'lobby-team-body');
         for (const p of members) body.append(this.buildPlayerRow(p, view));
@@ -908,7 +958,11 @@ const LOBBY_CSS = `
 .lobby-btn-icon { min-width: auto; padding: 4px 8px; font-size: 13px; line-height: 1; }
 .lobby-btn-danger { border-color: #8c4a4a; color: #ffb0b0; }
 .lobby-btn-danger:hover { background: rgba(108,56,56,0.95); }
-.lobby-add-bot { margin: 0 0 2px; align-self: stretch; }
+/* „+ dodaj bota": selektory modelu+poziomu nad przyciskiem (host wybiera, jaki bot dojdzie) */
+.lobby-add-bot-box { display: flex; flex-direction: column; gap: 4px; margin-bottom: 2px; }
+.lobby-add-bot-selectors { display: flex; gap: 4px; }
+.lobby-add-bot-selectors .lobby-select { flex: 1 1 0; min-width: 0; }
+.lobby-add-bot { margin: 0; align-self: stretch; }
 .lobby-ffa-bots { display: inline-flex; align-items: center; gap: 8px; }
 .lobby-settings-row { flex-wrap: wrap; justify-content: center; }
 .lobby-settings-summary { font-size: 13px; color: #cde; }

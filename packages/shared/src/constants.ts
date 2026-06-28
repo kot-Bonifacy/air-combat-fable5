@@ -153,12 +153,9 @@ export const ZONE_POINTS_PER_SECOND = 1;
 // --- pętla meczu sieciowego (faza 13: scoreboard + respawn; P1 2026-06-19: oba tryby
 //     eliminacyjne jak SP — bez limitu zestrzeleń i czasu, last-man-standing / ostatnia drużyna) ---
 
-/**
- * Czas wyświetlania ekranu wyników w stanie 'ended', zanim pokój sam wróci do
- * poczekalni [s]. Host może w tym czasie zagrać rewanż (od razu 'playing'); po upływie
- * pokój staje się znów dołączalny (state 'waiting').
- */
-export const MATCH_RESULTS_LINGER_S = 15;
+// Uwaga (2026-06-27): tabela wyników NIE znika sama — usunięto auto-powrót 'ended'→'waiting'
+// po MATCH_RESULTS_LINGER_S. Pokój wisi w 'ended', aż gracz wróci do poczekalni własnym przyciskiem
+// (wiadomość returnToWaiting; każdy zamyka tabelę niezależnie). Patrz GameRoom.returnToWaiting.
 
 /**
  * Zwłoka między rozstrzygnięciem meczu a pokazaniem tabeli wyników [s]. W tym czasie

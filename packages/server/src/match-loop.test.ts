@@ -172,6 +172,45 @@ describe('FFA — eliminacja (P1: last-man-standing jak SP)', () => {
     expect(room.livesOf(b)).toBe(1); // pełna pula żyć po rewanżu
     expect(room.winnerId).toBeNull();
   });
+
+  // 2026-06-27: tabela wyników NIE znika sama — pokój NIE wraca do 'waiting' po czasie. Powrót robi
+  // dopiero gracz (returnToWaiting), gdy zamknie tabelę. Każdy zamyka ją niezależnie.
+  it('po końcu meczu pokój wisi w ended (brak auto-powrotu); returnToWaiting wraca do waiting', () => {
+    const room = new GameRoom('ABCD');
+    const aMember = recordingMember();
+    const a = add(room, aMember, 'A');
+    const b = add(room, recordingMember(), 'B');
+    room.start();
+    const aPos: [number, number, number] = [0, 5000, 0];
+    const bPos: [number, number, number] = [0, 5000, 12];
+    room.applyInput(a, input({ fire: true, aimZ: 1 }));
+    let ticks = 0;
+    while (room.state === 'playing' && ticks < 1000) {
+      repose(room, a, aPos, false);
+      repose(room, b, bPos, true);
+      room.step(FIXED_DT_S);
+      ticks++;
+    }
+    expect(room.state).toBe('ended');
+
+    // odczekaj DUŻO ponad dawny próg 15 s (60 Hz × 30 s = 1800 ticków) — pokój NIE wraca sam
+    for (let i = 0; i < 1800; i++) room.step(FIXED_DT_S);
+    expect(room.state).toBe('ended');
+
+    // gracz zamyka tabelę → powrót do poczekalni + broadcast roomUpdate('waiting')
+    aMember.controls.length = 0;
+    room.returnToWaiting();
+    expect(room.state).toBe('waiting');
+    const upd = aMember.controls.find((m) => m.t === 'roomUpdate');
+    expect(upd).toBeDefined();
+    if (upd && upd.t === 'roomUpdate') expect(upd.state).toBe('waiting');
+
+    // idempotentne / bezpieczne poza 'ended' (np. w trakcie meczu) — no-op
+    room.start();
+    expect(room.state).toBe('playing');
+    room.returnToWaiting();
+    expect(room.state).toBe('playing');
+  });
 });
 
 describe('FFA — respawn z ochroną i wyborem miejsca', () => {

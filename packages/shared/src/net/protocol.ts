@@ -854,6 +854,8 @@ export interface AddBotMessage {
   team?: number;
   /** Poziom nowego bota; brak/nieznany → serwerowy domyślny. */
   difficulty?: DifficultyLevel;
+  /** Samolot nowego bota (host wybiera przy „+ dodaj bota"); brak → serwer losuje typ z id (jak dotąd). */
+  plane?: PlaneType;
 }
 
 /** Klient → serwer: HOST usuwa konkretnego bota ze slotu (lobby slotowe RTS 2026-06-26). Tylko host
@@ -913,6 +915,15 @@ export interface EndMatchMessage {
  */
 export interface LeaveMatchMessage {
   t: 'leaveMatch';
+}
+
+/**
+ * Klient → serwer: gracz zamknął tabelę wyników i wraca do poczekalni (2026-06-27). Tabela NIE znika
+ * sama — każdy gracz zamyka ją własnym przyciskiem. Serwer: 'ended' → 'waiting' (idempotentne, dowolny
+ * członek „budzi" pokój → znów dołączalny). No-op poza 'ended'. Bez bumpu wersji (addytywna wiadomość).
+ */
+export interface ReturnToWaitingMessage {
+  t: 'returnToWaiting';
 }
 
 // --- serwer → klient ---
@@ -1078,6 +1089,7 @@ export type ControlMessage =
   | LeaveRoomMessage
   | EndMatchMessage
   | LeaveMatchMessage
+  | ReturnToWaitingMessage
   | WelcomeMessage
   | RoomListMessage
   | RoomJoinedMessage
@@ -1107,6 +1119,7 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'leaveRoom',
   'endMatch',
   'leaveMatch',
+  'returnToWaiting',
   'welcome',
   'roomList',
   'roomJoined',

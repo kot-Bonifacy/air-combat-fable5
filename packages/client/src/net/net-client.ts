@@ -248,9 +248,10 @@ export class NetClient {
     this.sendControl({ t: 'updateRoom', ...opts });
   }
 
-  /** Host: dodaj bota do slotu (lobby slotowe RTS 2026-06-26). `team` w trybie drużynowym (FFA pomija). */
-  addBot(team?: number, difficulty?: DifficultyLevel): void {
-    this.sendControl({ t: 'addBot', team, difficulty });
+  /** Host: dodaj bota do slotu (lobby slotowe RTS 2026-06-26). `team` w trybie drużynowym (FFA pomija);
+   *  `plane` wymusza samolot bota (brak → serwer losuje typ). */
+  addBot(team?: number, difficulty?: DifficultyLevel, plane?: PlaneType): void {
+    this.sendControl({ t: 'addBot', team, difficulty, plane });
   }
 
   /** Host: usuń konkretnego bota ze slotu (lobby slotowe RTS). */
@@ -290,6 +291,11 @@ export class NetClient {
   /** Wycofaj się z trwającego meczu, zostając w pokoju (powrót do poczekalni; reszta gra dalej). */
   leaveMatch(): void {
     this.sendControl({ t: 'leaveMatch' });
+  }
+
+  /** Gracz zamknął tabelę wyników i wraca do poczekalni (2026-06-27). Serwer: ended→waiting (idempotentne). */
+  returnToWaiting(): void {
+    this.sendControl({ t: 'returnToWaiting' });
   }
 
   /** Wysyła ramkę INPUT (symulator TX: opóźnia/odrzuca). No-op poza połączeniem. */

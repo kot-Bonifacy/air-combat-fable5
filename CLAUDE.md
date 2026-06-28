@@ -259,6 +259,31 @@ liczbowo „integr. NN%" pod sylwetką w tym samym kolorze. Strefy nadal koloruj
 monotoniczność/clamp). typecheck/611 testów/lint/build zielone. ⏳ user: weryfikacja wzrokowa (kolory/progi/grubość =
 subiektywne knoby, łatwo strojalne) + fps RTX.
 
+**Tabela wyników nie znika sama 2026-06-28 (życzenie usera, 614 testów zielone, BEZ bumpu protokołu — v8,
+addytywna wiadomość JSON):** user: „tabela wyników po walce nie powinna znikać samoczynnie i zamieniać się na
+poczekalnię; przejście do poczekalni dopiero po wciśnięciu przycisku". Decyzje usera (AskUserQuestion): (1)
+**każdy gracz zamyka tabelę SAM, niezależnie**; (2) przyciski: **„Wróć do poczekalni" + „Opuść pokój"** (BEZ
+rewanżu — rewanż przez Start w poczekalni). **Korzeń:** serwer po `endMatch` ustawiał pokój w `'ended'` i po
+`MATCH_RESULTS_LINGER_S=15 s` SAM wracał do `'waiting'` (`step()` odliczał `endedTimerS`) → klient na
+`roomUpdate 'waiting'` chował tabelę i wchodził do poczekalni. **Fix serwer (`game-room.ts`):** USUNIĘTY
+auto-timer (pole `endedTimerS` + odliczanie w `step()`; pokój wisi w `'ended'`, świat zamrożony, sprzątanie i tak
+po `humanCount`); `returnToWaiting()` upublicznione z gardą `if (state!=='ended') return` (idempotentne, dowolny
+członek „budzi" pokój — pierwszy robi `'ended'→'waiting'`, reszta no-op; bez wymogu hosta). Stała
+`MATCH_RESULTS_LINGER_S` usunięta z `constants.ts`. **Protokół (BEZ bumpu, addytywne):** nowa wiadomość
+klient→serwer `returnToWaiting` (interfejs + union + `CONTROL_TAGS`); `connection.ts` `case 'returnToWaiting'`
+(tylko członek pokoju, no-op poza `'ended'`). **Klient:** `NetClient.returnToWaiting()`; `match-ui.ts`
+`ResultsOverlay` — `ResultsActions{onReturnToWaiting,onLeave}` (usunięty `onRematch`/`rematchBtn`/param `isHost`),
+przyciski „Wróć do poczekalni" (primary) + „Opuść pokój"; `online-main.ts` `returnToWaitingFromResults()`
+(wysyła `returnToWaiting` + `roomView.state='waiting'` optymistycznie + `enterWaiting`). **Bramki przeciw
+wyrzuceniu z tabeli:** `onRoomUpdate 'waiting'` → `if (matchResultsShown) return` (inny gracz zamknął tabelę i
+pokój wrócił do `'waiting'` — NIE wyrzucaj czytającego); `onMatchStarted` → gdy `matchResultsShown`, `phase='lobby'`
+przed `enterPlaying` (host wystartował nowy mecz, gdy gracz wisiał na wynikach — ominięcie early-return);
+`onRoomJoined` state `'ended'` (reconnect tokenem podczas tabeli) → wyślij `returnToWaiting`+optymistyczny
+`'waiting'` (inaczej poczekalnia pokazałaby „mecz w toku" bez Startu). Nowy test w `match-loop.test.ts` (brak
+auto-powrotu po 1800 tickach + `returnToWaiting` flip + no-op poza `'ended'`). **Deploy front+back RAZEM**
+(nowa semantyka końca meczu rozjechana między wersjami). ⏳ user: smoke (koniec meczu → tabela zostaje;
+„Wróć do poczekalni" działa; 2 ludzi zamykają niezależnie). **NIEZACOMMITOWANE.**
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu
