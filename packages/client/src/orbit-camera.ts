@@ -15,12 +15,21 @@ export class OrbitCamera {
   private distanceM = 30;
   private dragging = false;
   private readonly offset = new Vector3();
+  /**
+   * Aktywna tylko w trybie kamery swobodnej (orbitalnej) — w pościgowej kamerą rządzi ChaseCamera
+   * i mysz celuje samolotem (MouseAim). KRYTYCZNE: bez tej bramki listener `pointerdown` reagował
+   * w KAŻDYM trybie i na wciśnięciu PPM (przybliżenie, zanim mysz przejęta) robił setPointerCapture,
+   * co BLOKOWAŁO późniejszy requestPointerLock z LPM → strzał nie wchodził, gdy PPM był pierwszy.
+   * online-main ustawia tę flagę przy zmianie trybu kamery (klawisz C / reset / start meczu).
+   */
+  enabled = false;
 
   constructor(
     private readonly camera: PerspectiveCamera,
     dom: HTMLElement,
   ) {
     dom.addEventListener('pointerdown', (event) => {
+      if (!this.enabled) return;
       this.dragging = true;
       // setPointerCapture rzuca DOMException, gdy pointer jest w stanie locked
       // (po pointer lock z celownika myszy) — bez przechwycenia obsłużymy ruch
@@ -39,7 +48,7 @@ export class OrbitCamera {
       }
     });
     dom.addEventListener('pointermove', (event) => {
-      if (!this.dragging) return;
+      if (!this.enabled || !this.dragging) return;
       this.yawRad -= event.movementX * 0.005;
       this.pitchRad = Math.min(
         MAX_PITCH_RAD,
@@ -49,6 +58,7 @@ export class OrbitCamera {
     dom.addEventListener(
       'wheel',
       (event) => {
+        if (!this.enabled) return; // w pościgowej kółkiem rządzi ChaseCamera (dolly)
         event.preventDefault();
         this.distanceM = Math.min(
           MAX_DISTANCE_M,

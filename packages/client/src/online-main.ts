@@ -206,8 +206,18 @@ renderer.domElement.addEventListener('webglcontextrestored', () => {
   document.getElementById('webgl-error')?.classList.remove('show');
 });
 
+// Przybliżenie pod prawym przyciskiem myszy (tylko tryb sterowania myszą = kamera pościgowa):
+// zawężenie FOV (efekt lunety) zamiast dolly — kółko nadal robi dolly, więc funkcje się nie
+// dublują. Trzymanie PPM przybliża, puszczenie płynnie wraca; celowanie myszą staje się przy
+// zoomie proporcjonalnie precyzyjniejsze (mouseAim.aimSensitivityScale = fov/BASE_FOV). W kamerze
+// orbitalnej PPM zostaje bez zmian (OrbitCamera: przeciąganie = obrót). FOV wygładzane co klatkę.
+const BASE_FOV = 60;
+const ZOOM_FOV = 30; // 2× powiększenie
+const ZOOM_FOV_TAU_S = 0.1; // stała czasowa płynnego wchodzenia/wychodzenia z zoomu [s]
+let rmbZoomHeld = false; // prawy przycisk wciśnięty = żądanie przybliżenia
+
 const scene = new Scene();
-const camera = new PerspectiveCamera(60, 1, 0.5, 30000);
+const camera = new PerspectiveCamera(BASE_FOV, 1, 0.5, 30000);
 camera.position.set(0, 1500, -1000);
 camera.lookAt(0, 800, 0);
 const chaseCamera = new ChaseCamera(camera, renderer.domElement);
@@ -330,17 +340,35 @@ renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefa
 
 // spust (faza 11): LPM przy aktywnej myszy albo Spacja. Pierwsze kliknięcie wchodzi
 // w pointer lock i NIE strzela (triggerHeld bramkuje LPM na mouseAim.locked) — jak offline.
-let triggerMouse = false;
-let triggerKey = false;
+let triggerMouse = false; // LPM trzymany (spust)
+let triggerKey = false; // Spacja trzymana (spust z klawiatury)
+// Stan przycisków myszy czytamy z BITMASKI e.buttons (bit0 = LPM, bit1 = PPM), NIE z e.button
+// (to tylko przycisk, który się zmienił w danym zdarzeniu). Powód: gdy LPM jest wciskany RAZEM
+// z już trzymanym PPM (przybliżenie), przeglądarka pod pointer lockiem potrafi NIE dostarczyć
+// osobnego `pointerdown` dla LPM (akord przycisków) — przez co stary kod nie ustawiał spustu i
+// nie dało się strzelać podczas zoomu. `pointermove` pod pointer lockiem leci stale przy celowaniu
+// i jego `buttons` ma zawsze aktualny stan, więc spust łapie LPM nawet bez osobnego pointerdown.
+// PPM (przybliżenie) czytamy z tej samej bitmaski.
+function syncMouseButtons(buttons: number): void {
+  triggerMouse = (buttons & 1) !== 0;
+  rmbZoomHeld = (buttons & 2) !== 0;
+}
 renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0) return;
-  // w trybie obserwatora LPM przełącza oglądany samolot; żywy gracz: spust (po przejęciu
-  // pointer locka). Wrak ma kursor wolny (mysz wyłączona) → triggerMouse i tak nie strzela.
-  if (isSpectating()) cycleSpectatorTarget(1);
-  else triggerMouse = true;
+  // w trybie obserwatora LPM przełącza oglądany samolot (akcja na wciśnięcie, nie stan trzymania);
+  // żywy gracz: stan spustu/zoomu bierzemy z bitmaski poniżej.
+  if (e.button === 0 && isSpectating()) cycleSpectatorTarget(1);
+  syncMouseButtons(e.buttons);
 });
-window.addEventListener('pointerup', (e) => {
-  if (e.button === 0) triggerMouse = false;
+window.addEventListener('pointerup', (e) => syncMouseButtons(e.buttons));
+// Ruch myszy jest źródłem prawdy o trzymanych przyciskach (akord LPM+PPM pod pointer lockiem).
+// Słuchamy OBU zdarzeń ruchu: `pointermove` (Chrome) i `mousemove` (Firefox pod pointer lockiem na
+// pewno je emituje — to na nim działa celowanie); sync jest idempotentny, więc redundancja niegroźna.
+window.addEventListener('pointermove', (e) => syncMouseButtons(e.buttons));
+window.addEventListener('mousemove', (e) => syncMouseButtons(e.buttons));
+window.addEventListener('blur', () => {
+  // utrata fokusu zostawiłaby „wciśnięte" przyciski (spust/zoom)
+  triggerMouse = false;
+  rmbZoomHeld = false;
 });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') triggerKey = true;
@@ -368,7 +396,11 @@ function triggerHeld(): boolean {
 window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyC' && phase === 'playing' && !pauseMenuOpen) {
     cameraMode = cameraMode === 'pościgowa' ? 'orbitalna' : 'pościgowa';
+    orbit.enabled = cameraMode === 'orbitalna'; // w pościgowej OrbitCamera ignoruje mysz (patrz klasa)
     updateMouseAimEnabled();
+    // powrót do sterowania myszą: przejmij ją od razu (klawisz C to gest) — bez tego po C↔C
+    // kursor Windows zostawał widoczny aż do kliknięcia
+    if (cameraMode === 'pościgowa') mouseAim.requestLock();
   }
 });
 
@@ -430,11 +462,30 @@ function enterWaitingFromWithdraw(): void {
   enterWaiting(roomView);
 }
 
+/** Czy aktywne jest przybliżenie PPM (luneta): tylko w kamerze pościgowej (mysz steruje samolotem),
+ *  gdy gracz żyje i nie ma menu pauzy. W kamerze orbitalnej PPM służy do obrotu kamery → zoom OFF. */
+function aimZoomActive(): boolean {
+  return (
+    rmbZoomHeld &&
+    cameraMode === 'pościgowa' &&
+    phase === 'playing' &&
+    playerDeath === 'none' &&
+    !pauseMenuOpen
+  );
+}
+
 /** Mysz-celownik aktywna tylko w kamerze pościgowej, gdy gracz żyje (nie wrak/obserwator) i nie
  *  jest otwarte menu pauzy (Esc zwalnia kursor do kliknięcia przycisków). */
 function updateMouseAimEnabled(): void {
   const wantEnabled = cameraMode === 'pościgowa' && playerDeath === 'none' && !pauseMenuOpen;
   mouseAim.enabled = wantEnabled;
+  // Ukryj systemowy kursor NAD widokiem gry przez CAŁY aktywny lot — w OBU trybach kamery (życzenie
+  // usera: także w swobodnej/orbitalnej, sterowanej klawiaturą). W pościgowej mysz celuje (pointer lock
+  // sam chowa kursor; to zasłania luki tuż po spawnie/utracie fokusu), w orbitalnej mysz przeciąga widok.
+  // Ustawiamy na CANVAS, nie na całej stronie — nakładki (menu pauzy/wyniki/poczekalnia) to osobne
+  // elementy DOM z własnym kursorem, więc pozostają klikalne. Kursor wraca po śmierci/pauzie (UI/wrak).
+  const hideCursor = phase === 'playing' && playerDeath === 'none' && !pauseMenuOpen;
+  renderer.domElement.style.cursor = hideCursor ? 'none' : '';
   if (!wantEnabled && document.pointerLockElement) document.exitPointerLock();
 }
 
@@ -717,6 +768,7 @@ function resetGameState(): void {
   spectatorTargetId = null;
   spectatedValid = false;
   cameraMode = 'pościgowa';
+  orbit.enabled = false; // start meczu w pościgowej — OrbitCamera nie łapie myszy (nie blokuje pointer locka)
   // świeży mecz / wyjście: zamknij menu pauzy i wyczyść stan wycofania (nowy mecz wciąga z powrotem)
   pauseMenuOpen = false;
   pauseMenu.hide();
@@ -1456,6 +1508,7 @@ function enterWaiting(view: WaitingView): void {
   scoreboard.hide();
   results.hide();
   hideCombatOverlays(); // z meczu do poczekalni: zgaś markery/roster/horyzont/alert (render staje)
+  renderer.domElement.style.cursor = ''; // poczekalnia: przywróć kursor (enterWaiting omija resetGameState)
   lobby.showWaiting(view);
   document.getElementById('loading')?.classList.add('hidden');
 }
@@ -1952,6 +2005,16 @@ renderer.setAnimationLoop(() => {
     fpsFrames = 0;
     fpsWindowS = 0;
   }
+
+  // Przybliżenie PPM (luneta): płynnie prowadź FOV do celu i skaluj czułość celowania myszą wprost
+  // proporcjonalnie do FOV. Liczone co klatkę (także poza 'playing'), by zoom zawsze wracał do bazy.
+  const targetFov = aimZoomActive() ? ZOOM_FOV : BASE_FOV;
+  if (camera.fov !== targetFov) {
+    camera.fov += (targetFov - camera.fov) * -Math.expm1(-frameDtS / ZOOM_FOV_TAU_S);
+    if (Math.abs(camera.fov - targetFov) < 0.05) camera.fov = targetFov;
+    camera.updateProjectionMatrix();
+  }
+  mouseAim.aimSensitivityScale = camera.fov / BASE_FOV;
 
   if (phase === 'playing') {
     inputAccumS = Math.min(inputAccumS + frameDtS, 0.25);
