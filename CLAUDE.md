@@ -298,8 +298,8 @@ tylko interpoluje). **Decyzja usera (AskUserQuestion):** „Czekaj aż wraki spa
 bez zmian (matchEnded przychodzi później; `maybeRevealResults` i tak czeka na lokalne uderzenie + 5 s). Testy:
 zmodyfikowany 1v1 drużynowy (sprowadza wrak nisko, by wylądował w oknie zwłoki) + 2 nowe w `team-mode.test.ts`
 (wydłużanie póki wrak spada; sufit domyka mecz). Knoby `MATCH_END_VIEW_DELAY_S`/`MATCH_END_WRECK_SETTLE_MAX_S`
-strojalne bez kodu. typecheck/616 testów/lint/build zielone. **NIEZACOMMITOWANE.** ⏳ user: playtest (zestrzel
-ostatniego wroga wysoko → wrak spada aż do uderzenia, nie zawisa).
+strojalne bez kodu. typecheck/616 testów/lint/build zielone. **Zacommitowane `d4429fb` + push** (backend-only,
+front bez zmian). ⏳ user: playtest (zestrzel ostatniego wroga wysoko → wrak spada aż do uderzenia, nie zawisa).
 
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
