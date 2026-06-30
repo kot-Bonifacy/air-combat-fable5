@@ -42,6 +42,14 @@ export interface PlaneState {
    * klient predykuje lokalnie, reconcile resetuje do 1 tylko przy świeżym spawnie.
    */
   fuelFrac: number;
+  /**
+   * Temperatura silnika jako ułamek względem „czerwonej linii" (ENGINE_HEAT_REDLINE = 1): 0 = zimny,
+   * 1 = próg przegrzania, >1 = przegrzany (silnik bierze obrażenia). Rośnie z gazem (∝ gaz²), spada z
+   * opływem chłodnicy (∝ IAS) — patrz physics/engine-heat.ts. Ukryty stan fizyki jak `stalled`/G-LOC:
+   * NIE jest w snapshocie (klient predykuje lokalnie pod wskaźnik HUD; realna konsekwencja — utrata mocy
+   * — idzie autorytatywnie przez poziomy uszkodzeń strefy 'silnik'). Reset do 0 przy (re)spawnie.
+   */
+  engineHeatFrac: number;
   /** Prędkość wskazywana [m/s] (pochodna, liczona od fazy 2). */
   iasMs: number;
   /** Bieżące przeciążenie [G] (pochodne, liczone od fazy 2). */
@@ -60,6 +68,7 @@ export function createPlaneState(): PlaneState {
     angularRates: { pitch: 0, roll: 0, yaw: 0 },
     throttle: 0,
     fuelFrac: 1,
+    engineHeatFrac: 0,
     iasMs: 0,
     loadFactor: 1,
     stalled: false,
@@ -78,6 +87,7 @@ export function copyPlaneState(src: PlaneState, dst: PlaneState): PlaneState {
   dst.angularRates.yaw = src.angularRates.yaw;
   dst.throttle = src.throttle;
   dst.fuelFrac = src.fuelFrac;
+  dst.engineHeatFrac = src.engineHeatFrac;
   dst.iasMs = src.iasMs;
   dst.loadFactor = src.loadFactor;
   dst.stalled = src.stalled;

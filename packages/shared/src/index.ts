@@ -6,6 +6,7 @@ export * from './physics/envelope';
 export * from './physics/stall';
 export * from './physics/g-load';
 export * from './physics/pilot-step';
+export * from './physics/engine-heat';
 export * from './instructor/instructor';
 export * from './input/mouse-aim-core';
 export * from './input/pilot-control';

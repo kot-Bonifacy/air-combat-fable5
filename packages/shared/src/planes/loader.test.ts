@@ -19,6 +19,16 @@ function validRaw(): Record<string, unknown> {
     propEfficiency: 0.8,
     staticThrustN: 13000,
     fuelEnduranceFullThrottleS: 900,
+    engineThermal: {
+      overheatTimeFullS: 300,
+      coolTimeS: 200,
+      fullThrottleEqHeat: 1.25,
+      speedCoolingK: 0.35,
+      speedCoolingRefKmh: 350,
+      overheatDamagePerS: 2.5,
+      coldTempC: 40,
+      redlineTempC: 120,
+    },
     nMaxG: 8,
     nMinG: -4,
     rollRateCurve: [
@@ -186,6 +196,18 @@ describe('loader konfiguracji samolotu', () => {
     const raw = validRaw();
     raw['nMinG'] = 0;
     expect(() => loadPlaneConfig(raw)).toThrowError(/nMinG/);
+  });
+
+  it('engineThermal.fullThrottleEqHeat ≤ 1 → PlaneConfigError (equilibrium 100% musi przebić czerwoną linię)', () => {
+    const raw = validRaw();
+    (raw['engineThermal'] as Record<string, unknown>)['fullThrottleEqHeat'] = 1.0;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/engineThermal\.fullThrottleEqHeat/);
+  });
+
+  it('literówka w sekcji engineThermal → PlaneConfigError z pełną ścieżką', () => {
+    const raw = validRaw();
+    (raw['engineThermal'] as Record<string, unknown>)['overheatTimeSec'] = 300;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/engineThermal\.overheatTimeSec/);
   });
 
   /** Grupy broni z surowego configu (do mutacji w testach walidacji). */

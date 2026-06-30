@@ -34,6 +34,35 @@ export const THRUST_V_EPS_MS = 1;
 /** Konwersja m/s → km/h (HUD i cele osiągów podawane w km/h). */
 export const MS_TO_KMH = 3.6;
 
+// --- przegrzewanie silnika (limit czasu na 100% gazu; kalibracja do realnych limitów WEP) ---
+
+/**
+ * „Czerwona linia" temperatury silnika (engineHeatFrac, bezwymiarowo): od tej wartości w górę silnik
+ * się PRZEGRZEWA i bierze realne obrażenia strefy 'silnik' (serwer, autorytatywnie). 1.0 z definicji
+ * modelu — equilibrium dobrane tak, że gaz „mocy ciągłej" osiada poniżej, a 100% gazu wypełza powyżej
+ * (patrz physics/engine-heat.ts: heatEq = fullThrottleEqHeat·gaz²/chłodzenie).
+ */
+export const ENGINE_HEAT_REDLINE = 1;
+
+/** Próg „gorąco" (bezwymiarowo): HUD ostrzega (bursztyn) między tym a czerwoną linią — jeszcze bez obrażeń. */
+export const ENGINE_HEAT_WARN = 0.85;
+
+/** Górny clamp temperatury silnika — equilibrium na 100% gazu w wolnym locie nie ucieka w nieskończoność. */
+export const ENGINE_HEAT_MAX = 2;
+
+/**
+ * Łączny czas lotu z PRZEGRZANYM silnikiem (engineHeatFrac ≥ czerwona linia), po którym następuje
+ * katastrofalna awaria: silnik staje i bucha pożar [s]. Akumulowany z przerwami przez całe życie
+ * samolotu (życzenie usera 2026-06-30: „nawet jeżeli wykonywał przerwy i schodził w międzyczasie").
+ * Niewidoczny dla gracza, liczony i egzekwowany autorytatywnie na serwerze (tylko ludzie — boty
+ * przegrzania nie odczuwają poważnie). Reset do 0 przy (re)spawnie.
+ */
+export const OVERHEAT_FAILURE_TIME_S = 60;
+
+/** Clamp mnożnika chłodzenia chłodnicą od opływu: lot bardzo wolny ≥0.6×, bardzo szybki ≤1.4× (referencja = 1×). */
+export const ENGINE_SPEED_COOL_MIN = 0.6;
+export const ENGINE_SPEED_COOL_MAX = 1.4;
+
 // --- świat (faza 4) ---
 
 /** Bok kwadratowej areny [m] (PLAN.md: 20×20 km, bez streamingu mapy). */

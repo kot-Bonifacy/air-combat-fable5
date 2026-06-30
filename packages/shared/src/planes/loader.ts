@@ -40,6 +40,8 @@ export interface PlaneConfig {
    * Po wyczerpaniu silnik gaśnie (T=0). 900 = 15 min na pełnym gazie.
    */
   fuelEnduranceFullThrottleS: number;
+  /** Model termiczny silnika (przegrzewanie na wysokim gazie) — patrz physics/engine-heat.ts. */
+  engineThermal: EngineThermalConfig;
   /** Limit strukturalny przeciążenia dodatniego [G]. */
   nMaxG: number;
   /** Limit strukturalny przeciążenia ujemnego [G] (liczba ujemna). */
@@ -87,6 +89,40 @@ export interface PlaneConfig {
   zones: readonly HitZone[];
   /** Parametry strojeniowe skutków uszkodzeń (faza 22) — magnitudy/progi poza kodem (niezm. nr 3). */
   damage: DamageTuning;
+}
+
+/**
+ * Model termiczny silnika (physics/engine-heat.ts): limit czasu lotu na wysokim gazie. Temperatura
+ * (engineHeatFrac) relaksuje do equilibrium zależnego od gazu (∝ gaz²) i chłodzenia chłodnicą (∝ IAS);
+ * 1.0 = czerwona linia (powyżej silnik bierze obrażenia). Kalibracja do realnych limitów WEP:
+ * Spitfire/Merlin ~5 min na 100%, Bf 109/DB 601 krócej i z gorszym chłodzeniem (marginalne chłodnice).
+ */
+export interface EngineThermalConfig {
+  /**
+   * Czas od zimnego silnika do czerwonej linii przy 100% gazu i prędkości referencyjnej [s].
+   * Nagłówkowa liczba historyczna (Spitfire 300 ≈ 5 min WEP). Wewnętrzna stała czasowa grzania
+   * jest z niej wyprowadzana (engine-heat.ts), więc ta wartość to realny, mierzalny limit.
+   */
+  overheatTimeFullS: number;
+  /** Czas schłodzenia od czerwonej linii do ~zimnego na biegu jałowym i prędkości referencyjnej [s]. */
+  coolTimeS: number;
+  /**
+   * Temperatura równowagi przy 100% gazu i prędkości referencyjnej (>1). Steruje DWOMA rzeczami:
+   * jak wysoko silnik się przegrzewa ORAZ gdzie kończy się „zielony" zakres gazu (mocy ciągłej) —
+   * gaz, przy którym equilibrium = czerwona linia, to 1/√(tej wartości). Większa = mniejszy zielony
+   * zakres + szybsze wypełzanie ponad próg (Bf 109 gorętszy niż Spitfire).
+   */
+  fullThrottleEqHeat: number;
+  /** Czułość chłodzenia na opływ: mnożnik chłodzenia = 1 + tym·(IAS/referencja − 1). 0 = niezależne od prędkości. */
+  speedCoolingK: number;
+  /** Prędkość referencyjna chłodzenia [km/h IAS], przy której mnożnik chłodzenia = 1 (kalibracja overheatTimeFullS). */
+  speedCoolingRefKmh: number;
+  /** Obrażenia strefy 'silnik' [HP/s] na jednostkę przekroczenia czerwonej linii (serwer aplikuje, gdy heat>1). */
+  overheatDamagePerS: number;
+  /** Temperatura wskazywana przy zimnym silniku (engineHeatFrac=0) [°C] — dolna kotwica skali HUD. */
+  coldTempC: number;
+  /** Temperatura wskazywana na czerwonej linii (engineHeatFrac=1) [°C] — próg przegrzania na skali HUD. */
+  redlineTempC: number;
 }
 
 /** Parametry tolerancji przeciążenia pilota / G-LOC (physics/g-load.ts). */
@@ -224,6 +260,7 @@ type NumericKey = Exclude<
   | 'wreck'
   | 'zones'
   | 'damage'
+  | 'engineThermal'
 >;
 
 /** Pola skalarne grupy broni (bez `name`/`muzzles`, walidowanych osobno). */
@@ -288,6 +325,21 @@ const WRECK_RANGES: Record<keyof WreckConfig, readonly [min: number, max: number
   pitchAuthority: [0, 1],
 };
 
+const ENGINE_THERMAL_RANGES: Record<keyof EngineThermalConfig, readonly [min: number, max: number]> = {
+  overheatTimeFullS: [30, 1800],
+  coolTimeS: [10, 1800],
+  // > 1 wymagane: equilibrium 100% gazu MUSI przekroczyć czerwoną linię (inaczej nigdy się nie przegrzeje;
+  // log(fullEq/(fullEq−1)) w engine-heat.ts dzieli przez 0/ujemne przy ≤1). Górny 3 = silnik bardzo gorący.
+  fullThrottleEqHeat: [1.02, 3],
+  speedCoolingK: [0, 2],
+  speedCoolingRefKmh: [50, 1000],
+  overheatDamagePerS: [0, 50],
+  // skala °C wskaźnika: zimny < czerwona linia; górne granice z zapasem na realistyczne chłodziwo
+  // (Merlin ~120 °C, DB 601 podobnie) i ekstrapolację przy głębokim przegrzaniu.
+  coldTempC: [-40, 100],
+  redlineTempC: [60, 250],
+};
+
 const DAMAGE_RANGES: Record<keyof DamageTuning, readonly [min: number, max: number]> = {
   lightFrac: [0.3, 0.95],
   heavyFrac: [0.05, 0.6],
@@ -332,6 +384,7 @@ const KNOWN_KEYS = new Set<string>([
   'wreck',
   'zones',
   'damage',
+  'engineThermal',
   ...Object.keys(NUMERIC_RANGES),
 ]);
 
@@ -361,7 +414,7 @@ function checkNumericFields(
 
 function checkSection(
   obj: Record<string, unknown>,
-  key: 'stall' | 'gTolerance' | 'instructor' | 'wreck' | 'damage',
+  key: 'stall' | 'gTolerance' | 'instructor' | 'wreck' | 'damage' | 'engineThermal',
   ranges: Record<string, readonly [number, number]>,
   problems: string[],
 ): void {
@@ -566,6 +619,7 @@ export function loadPlaneConfig(raw: unknown, source = 'konfiguracja samolotu'):
   checkSection(obj, 'instructor', INSTRUCTOR_RANGES, problems);
   checkSection(obj, 'wreck', WRECK_RANGES, problems);
   checkSection(obj, 'damage', DAMAGE_RANGES, problems);
+  checkSection(obj, 'engineThermal', ENGINE_THERMAL_RANGES, problems);
   checkArmament(obj, problems);
   checkZones(obj, problems);
 

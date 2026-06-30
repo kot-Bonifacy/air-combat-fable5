@@ -12,6 +12,8 @@ import {
   MAX_PLAYERS_PER_ROOM,
   PHYSICS_HZ,
   DEFAULT_PLANE_TYPE,
+  ENGINE_HEAT_REDLINE,
+  OVERHEAT_FAILURE_TIME_S,
   PositionHistory,
   SPAWN_PROTECTION_S,
   applyDamage,
@@ -42,6 +44,7 @@ import {
   getForward,
   MATCH_LIVES,
   nearestToroidalImage,
+  overheatDamageHp,
   pilotStep,
   PLANE_TYPES,
   planeConfigOf,
@@ -297,6 +300,15 @@ interface ServerPlayer {
   /** Czy pożar wzniecił pocisk naziemnego stanowiska (flak) — wtedy ewentualne dobicie ogniem nie ma
    *  sprawcy-gracza (kill cause 'flak'). */
   fireFromAa: boolean;
+  /** Czy bieżący pożar to AWARIA Z PRZEGRZANIA (z własnej winy) — wtedy dobicie ogniem nie kredytuje
+   *  nikogo (kill cause 'overheat'). Ma pierwszeństwo przed fireStarterId/fireFromAa. */
+  fireSelfInflicted: boolean;
+  /** Łączny czas [s] lotu z przegrzanym silnikiem (heat ≥ czerwona linia) na BIEŻĄCYM życiu —
+   *  ukryty (poza snapshotem), liczony serwerowo tylko dla ludzi; po OVERHEAT_FAILURE_TIME_S → awaria.
+   *  Reset przy (re)spawnie. */
+  overheatAccumS: number;
+  /** Czy katastrofalna awaria z przegrzania już nastąpiła na tym życiu (raz na życie). */
+  overheatFailed: boolean;
 }
 
 export class GameRoom {
@@ -564,6 +576,9 @@ export class GameRoom {
       damageLevelsBuf: new Array<number>(ZONE_COUNT).fill(0),
       fireStarterId: -1,
       fireFromAa: false,
+      fireSelfInflicted: false,
+      overheatAccumS: 0,
+      overheatFailed: false,
     };
     this.players.set(id, player);
     return player;
@@ -1120,6 +1135,16 @@ export class GameRoom {
     return this.players.get(id)?.damage.onFire ?? false;
   }
 
+  /** Temperatura silnika (0=zimny, 1=czerwona linia, >1=przegrzany) — diagnostyka/testy. */
+  engineHeatOf(id: number): number {
+    return this.players.get(id)?.sim.state.engineHeatFrac ?? 0;
+  }
+
+  /** Łączny czas [s] lotu z przegrzanym silnikiem na bieżącym życiu — diagnostyka/testy. */
+  overheatAccumOf(id: number): number {
+    return this.players.get(id)?.overheatAccumS ?? 0;
+  }
+
   /** Czy modyfikatory uszkodzeń są aktywne (sim.damageLevels≠null), tj. fizyka leci uszkodzona —
    *  diagnostyka/testy zasilenia damageLevels. null = sprawny (tożsamość, złote testy). */
   damageActiveOf(id: number): boolean {
@@ -1136,6 +1161,7 @@ export class GameRoom {
     p.damage.fireTimerS = 0;
     p.fireStarterId = fromAa ? -1 : starterId;
     p.fireFromAa = fromAa;
+    p.fireSelfInflicted = false;
   }
 
   /** Pozostała amunicja gracza — diagnostyka/testy (kadencja i zapas liczone serwerowo). */
@@ -1177,6 +1203,10 @@ export class GameRoom {
         this.spawn(player, true);
       }
     }
+
+    // 1a2) przegrzanie silnika (autorytatywnie): engineHeatFrac policzony w pilotStep tej pętli ruchu;
+    // ponad czerwoną linią silnik bierze obrażenia strefy 'silnik' (utrata mocy → poziom w snapshocie).
+    this.stepOverheatDamage(dtS);
 
     // 1b) kolizje samolot↔samolot (faza 15): zamiatany test prevPos→pozycja; zderzeni → wrak
     // 'dying'. PRZED historią/ogniem, by encja zderzona w tym ticku nie była celem ani nie strzelała.
@@ -1579,6 +1609,7 @@ export class GameRoom {
           if (maybeIgnite(target.damage, target.plane.damage, cannon, this.damageRng)) {
             target.fireStarterId = fromAa ? -1 : b.ownerId;
             target.fireFromAa = fromAa;
+            target.fireSelfInflicted = false; // pożar od pocisku → kredyt strzelcowi/flakowi, nie 'overheat'
           }
         }
 
@@ -1722,13 +1753,72 @@ export class GameRoom {
   }
 
   /**
+   * Przegrzanie silnika (co tick po ruchu), tylko dla LUDZI — boty przegrzania nie odczuwają poważnie
+   * (życzenie usera 2026-06-30: temperatura im rośnie wg fizyki, ale konsekwencji nie ma). Dwa skutki
+   * (decyzja usera: zostaw stopniowy + dodaj awarię):
+   *  (a) STOPNIOWA utrata mocy — obrażenia STREFY 'silnik' proporcjonalne do przekroczenia czerwonej
+   *      linii (poziom 1→2→3 = mid/low/0 ciągu); idą w HP strefy (nie w integralność), więc same nie
+   *      zestrzeliwują.
+   *  (b) Ukryty LICZNIK łącznego czasu lotu z przegrzanym silnikiem; po OVERHEAT_FAILURE_TIME_S (z
+   *      przerwami) → katastrofalna AWARIA (triggerOverheatFailure): silnik staje + pożar.
+   * engineHeatFrac liczy pilotStep autorytatywnie; klient predykuje tę samą temperaturę pod wskaźnik
+   * HUD, a skutki (poziom strefy + bit pożaru) dostaje w snapshocie v8 → predykuje uszkodzony lot spójnie.
+   */
+  private stepOverheatDamage(dtS: number): void {
+    for (const player of this.players.values()) {
+      if (player.sim.state.life !== 'alive' || player.isBot) continue;
+      const heat = player.sim.state.engineHeatFrac;
+      const dmg = overheatDamageHp(heat, player.plane, dtS);
+      if (dmg > 0) {
+        const engineIdx = player.plane.zones.findIndex((z) => z.role === 'engine');
+        if (engineIdx >= 0) applyZoneHit(player.plane.zones, player.damage, engineIdx, dmg);
+      }
+      if (heat >= ENGINE_HEAT_REDLINE) {
+        player.overheatAccumS += dtS;
+        if (player.overheatAccumS >= OVERHEAT_FAILURE_TIME_S && !player.overheatFailed) {
+          this.triggerOverheatFailure(player);
+        }
+      }
+    }
+  }
+
+  /**
+   * Katastrofalna awaria z przegrzania (po OVERHEAT_FAILURE_TIME_S łącznego lotu przegrzanym silnikiem,
+   * decyzja usera 2026-06-30): strefa 'silnik' → 0 HP (poziom 3 → enginePowerFactor 0 = „silnik się
+   * zatrzymuje"), plus POŻAR (DoT do integralności przez istniejący stepFireDamage). Pożar jest
+   * SELF-INFLICTED — gdy dobije, nie kredytuje nikogo (cause 'overheat'), więc statystyki flaka/wroga
+   * zostają czyste (pułapka pominięta w fazie 22 — teraz domknięta). Raz na życie (`overheatFailed`).
+   */
+  private triggerOverheatFailure(player: ServerPlayer): void {
+    player.overheatFailed = true;
+    const engineIdx = player.plane.zones.findIndex((z) => z.role === 'engine');
+    if (engineIdx >= 0) player.damage.zoneHp[engineIdx] = 0; // silnik staje (poziom 3)
+    if (!player.damage.onFire) {
+      player.damage.onFire = true;
+      player.damage.fireTimerS = 0;
+    }
+    player.fireSelfInflicted = true;
+    player.fireStarterId = -1;
+    player.fireFromAa = false;
+  }
+
+  /**
    * Dobicie ogniem (faza 22): wrak spada. Kredyt dla podpalacza (cause 'air'), gdy znamy żywego
    * sprawcę-gracza; gdy ogień wzniecił flak (fireFromAa) albo podpalacza już nie ma — bez kredytu
    * (cause 'flak', jak zestrzelenie z ziemi). Ta sama buchalteria co onAirKill/onAaKill (asysty itp.).
    */
   private onFireKill(victim: ServerPlayer): void {
-    if (!victim.fireFromAa && victim.fireStarterId >= 0) this.onAirKill(victim, victim.fireStarterId);
+    if (victim.fireSelfInflicted) this.onOverheatKill(victim);
+    else if (!victim.fireFromAa && victim.fireStarterId >= 0) this.onAirKill(victim, victim.fireStarterId);
     else this.onAaKill(victim);
+  }
+
+  /** Dobicie pożarem z PRZEGRZANIA (awaria z własnej winy, 2026-06-30): spadający wrak BEZ kredytu dla
+   *  kogokolwiek (cause 'overheat'). Ta sama buchalteria asyst co inne śmierci bez sprawcy. */
+  private onOverheatKill(victim: ServerPlayer): void {
+    this.enterWreck(victim);
+    this.queueEvent({ kind: 'kill', killerId: NO_KILLER, victimId: victim.id, cause: 'overheat' });
+    this.creditAssists(victim, null);
   }
 
   /** Asysta dla każdego WROGA, kto wcześniej trafił ofiarę — poza zabójcą (ma już zestrzelenie).
@@ -1770,6 +1860,7 @@ export class GameRoom {
     state.angularRates.yaw = 0;
     state.throttle = SPAWN_THROTTLE;
     state.fuelFrac = 1; // nowe życie = pełny bak
+    state.engineHeatFrac = 0; // zimny silnik na świeżym życiu
     state.iasMs = SPAWN_SPEED_MS;
     state.loadFactor = 1;
     state.stalled = false;
@@ -1795,6 +1886,9 @@ export class GameRoom {
     resetDamageState(player.damage, player.plane.zones);
     player.fireStarterId = -1;
     player.fireFromAa = false;
+    player.fireSelfInflicted = false;
+    player.overheatAccumS = 0; // świeży silnik: licznik przegrzania od zera
+    player.overheatFailed = false;
     player.sim.damageLevels = null;
     // nietykalność po (re)spawnie (anty-spawn-kill); znika po czasie albo gdy gracz strzeli
     player.protectionTimerS = SPAWN_PROTECTION_S;

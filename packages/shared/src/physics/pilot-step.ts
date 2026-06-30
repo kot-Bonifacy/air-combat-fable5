@@ -6,6 +6,7 @@ import {
   type DamageModifiers,
 } from '../combat/damage-model';
 import { GRAVITY_MS2 } from '../constants';
+import { stepEngineHeat } from './engine-heat';
 import { getRight } from '../math/frame';
 import type { PlaneConfig } from '../planes/loader';
 import { airDensityKgM3, dynamicPressurePa } from './atmosphere';
@@ -130,6 +131,11 @@ export function pilotStep(
       state.fuelFrac - (state.throttle * dtS * fuelDrainFactor) / plane.fuelEnduranceFullThrottleS,
     );
   }
+
+  // temperatura silnika: rośnie z gazem (∝ gaz²), spada z opływem chłodnicy (∝ IAS). Po obu stronach
+  // identycznie (spójny reconcile); przegrzanie (heat>1) serwer karze obrażeniami strefy 'silnik'.
+  // Bazowy `plane` (nie effPlane) — kalibracja termiczna jest niezależna od bieżących uszkodzeń.
+  stepEngineHeat(state, plane, dtS);
 
   const tasMs = state.velocity.length();
   const qPa = dynamicPressurePa(airDensityKgM3(state.position.y), tasMs);

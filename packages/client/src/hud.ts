@@ -1,4 +1,4 @@
-import type { StallPhase } from '@air-combat/shared';
+import { ENGINE_HEAT_REDLINE, ENGINE_HEAT_WARN, type StallPhase } from '@air-combat/shared';
 
 export interface HudData {
   iasKmh: number;
@@ -26,6 +26,14 @@ export interface HudData {
   controlMode: 'mysz' | 'klawiatura';
   /** Zapas paliwa 0..1 (pełny bak = 1). Przy 0 silnik zgasł — HUD ostrzega. */
   fuel01: number;
+  /**
+   * Temperatura silnika względem czerwonej linii (0=zimny, 1=czerwona linia, >1=przegrzewa się i
+   * bierze obrażenia). Bezwymiarowa — steruje KOLOREM wiersza temp. (żółty od „gorąco", czerwony od
+   * czerwonej linii) i pełnoekranowym ostrzeżeniem; wyświetlana wartość °C jest osobno (engineTempC).
+   */
+  engineHeat01: number;
+  /** Temperatura silnika w °C do wyświetlenia (per samolot, z engineDisplayTempC). */
+  engineTempC: number;
   /** Pozostała amunicja (suma luf). */
   ammo: number;
   /** Pełny zapas amunicji (do wyróżnienia stanu niskiego). */
@@ -57,6 +65,29 @@ function fuelWarning(fuel01: number): string {
   if (fuel01 <= 0) return '   *** SILNIK STANĄŁ ***';
   if (fuel01 <= LOW_FUEL_RATIO) return '   ! mało !';
   return '';
+}
+
+/** Sufiks ostrzeżenia o przegrzaniu (sam próg „gorąco" sygnalizuje teraz ŻÓŁTY kolor wiersza —
+ *  napis „! gorąco !" usunięty na życzenie usera 2026-06-30; przy przegrzaniu zostaje „*** PRZEGRZANIE ***"). */
+function engineTempWarning(engineHeat01: number): string {
+  return engineHeat01 >= ENGINE_HEAT_REDLINE ? '   *** PRZEGRZANIE ***' : '';
+}
+
+/**
+ * Kolor wiersza temperatury silnika (życzenie usera 2026-06-30): ŻÓŁTY od progu „gorąco" (silnik
+ * zaczyna się przegrzewać), CZERWONY od czerwonej linii (przegrzany). null poniżej progu → wiersz
+ * dziedziczy domyślny kolor HUD.
+ */
+function engineTempColor(engineHeat01: number): string | null {
+  if (engineHeat01 >= ENGINE_HEAT_REDLINE) return '#ff5a4d';
+  if (engineHeat01 >= ENGINE_HEAT_WARN) return '#ffd24a';
+  return null;
+}
+
+/** Minimalny escape HTML — wiersze HUD trafiają do innerHTML (kolorowany wiersz temp.), a treść jest
+ *  w pełni kontrolowana (liczby/etykiety), ale escapujemy defensywnie, gdyby kiedyś doszedł tekst. */
+function escHtml(s: string): string {
+  return s.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
 }
 
 /** Martwa strefa wariometru [m/s] — poniżej |tego| lot ~poziomy, pokazujemy „·" zamiast
@@ -128,18 +159,24 @@ export class Hud {
         ? hudRow(data.secondaryLabel ?? '20 mm', String(data.secondaryAmmo), `/ ${String(data.secondaryAmmoMax)}`) +
           ammoWarning(data.secondaryAmmo, data.secondaryAmmoMax)
         : null;
-    this.textEl.textContent = [
-      hudRow('IAS', data.iasKmh.toFixed(0), 'km/h'),
-      hudRow('TAS', data.tasKmh.toFixed(0), 'km/h'),
-      hudRow('alt', data.altM.toFixed(0), 'm'),
-      hudRow('wznosz.', varioValue(data.verticalSpeedMs), 'm/s'),
-      hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%'),
-      hudRow('paliwo', (data.fuel01 * 100).toFixed(0), '%') + fuelWarning(data.fuel01),
-      hudRow('n', data.nG.toFixed(1), 'G') + gLocText,
-      hudRow('ster', data.controlMode),
-      hudRow('amun.', String(data.ammo), `/ ${String(data.ammoMax)}`) + ammoWarn,
-      ...(secondaryRow !== null ? [secondaryRow] : []),
-      ...data.extraLines,
+    // wiersz temperatury w °C — kolor (żółty/czerwony) niesie ostrzeżenie o przegrzaniu, więc renderujemy
+    // go jako kolorowany <span> (reszta HUD to zwykły tekst). Stąd cały blok idzie przez innerHTML z escape.
+    const tempLine = hudRow('temp.', data.engineTempC.toFixed(0), '°C') + engineTempWarning(data.engineHeat01);
+    const tempColor = engineTempColor(data.engineHeat01);
+    const tempHtml = tempColor ? `<span style="color:${tempColor}">${escHtml(tempLine)}</span>` : escHtml(tempLine);
+    this.textEl.innerHTML = [
+      escHtml(hudRow('IAS', data.iasKmh.toFixed(0), 'km/h')),
+      escHtml(hudRow('TAS', data.tasKmh.toFixed(0), 'km/h')),
+      escHtml(hudRow('alt', data.altM.toFixed(0), 'm')),
+      escHtml(hudRow('wznosz.', varioValue(data.verticalSpeedMs), 'm/s')),
+      escHtml(hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%')),
+      tempHtml,
+      escHtml(hudRow('paliwo', (data.fuel01 * 100).toFixed(0), '%') + fuelWarning(data.fuel01)),
+      escHtml(hudRow('n', data.nG.toFixed(1), 'G') + gLocText),
+      escHtml(hudRow('ster', data.controlMode)),
+      escHtml(hudRow('amun.', String(data.ammo), `/ ${String(data.ammoMax)}`) + ammoWarn),
+      ...(secondaryRow !== null ? [escHtml(secondaryRow)] : []),
+      ...data.extraLines.map(escHtml),
     ].join('\n');
 
     if (data.stallPhase === 'stalled') {
@@ -156,6 +193,11 @@ export class Hud {
       this.warningEl.textContent = 'SZARZENIE — ODPUŚĆ G';
       this.warningEl.className = 'buffet';
       this.warningEl.style.opacity = String(0.35 + 0.6 * data.blackoutFactor);
+    } else if (data.engineHeat01 >= ENGINE_HEAT_REDLINE) {
+      // przegrzanie: silnik bierze realne obrażenia — zmniejsz gaz (miganie jak przy stallu)
+      this.warningEl.textContent = 'PRZEGRZANIE SILNIKA — ZMNIEJSZ GAZ';
+      this.warningEl.className = 'stall';
+      this.warningEl.style.opacity = Date.now() % 600 < 360 ? '1' : '0.3';
     } else if (data.fuel01 <= 0) {
       // pusty bak — silnik zgasł (najniższy priorytet ostrzeżeń, ale stale widoczne)
       this.warningEl.textContent = 'BRAK PALIWA — SILNIK STANĄŁ';

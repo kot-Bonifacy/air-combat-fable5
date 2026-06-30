@@ -151,6 +151,10 @@ export class Predictor {
     }
 
     const state = this.sim.state;
+    // temperatura silnika NIE jest w snapshocie (jak stall/G-LOC): trzymamy ją sprzed reconcile, bo
+    // replay niepotwierdzonych inputów (niżej) „dopalałby" ją wielokrotnie co snapshot (błąd paliwa
+    // sprzed v7). predict() advances ją raz na tick = zegar ścienny; zmiana fazy → zimny silnik (0).
+    const heatBefore = state.engineHeatFrac;
     const firstState = !this.hasServer;
     // faza życia PRZED przyjęciem autorytetu (decyduje, czy predykcja ma ciągłość)
     const wasAlive = this.hasServer && state.life === 'alive';
@@ -226,6 +230,10 @@ export class Predictor {
     }
 
     this.hasServer = true;
+
+    // temperatura silnika: replay jej nie dotyka (patrz heatBefore) — przy ciągłości fazy zostaje
+    // sprzed reconcile, przy zmianie (spawn/zestrzelenie/respawn) zimny silnik jak na serwerze.
+    state.engineHeatFrac = continues ? heatBefore : 0;
 
     // korekta = rozjazd predykcji: stary predykowany-najnowszy vs nowy (po acku + replay).
     // Mierzalna i wygładzana przy ciągłości fazy (żywy lub wrak); metryki Fazy 9 liczymy

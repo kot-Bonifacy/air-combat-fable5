@@ -14,6 +14,16 @@
   "propEfficiency": 0.8,
   "staticThrustN": 6800,
   "fuelEnduranceFullThrottleS": 900,
+  "engineThermal": {
+    "overheatTimeFullS": 200,
+    "coolTimeS": 280,
+    "fullThrottleEqHeat": 1.3,
+    "speedCoolingK": 0.3,
+    "speedCoolingRefKmh": 350,
+    "overheatDamagePerS": 3.0,
+    "coldTempC": 40,
+    "redlineTempC": 115
+  },
   "nMaxG": 8,
   "nMinG": -4,
   "rollRateCurve": [

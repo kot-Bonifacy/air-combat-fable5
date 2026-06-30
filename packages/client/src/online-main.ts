@@ -33,6 +33,7 @@ import {
   createTerrain,
   distanceToArenaEdgeM,
   dynamicPressurePa,
+  engineDisplayTempC,
   getForward,
   getRight,
   getUp,
@@ -409,18 +410,37 @@ function triggerHeld(): boolean {
   return (mouseAim.locked && triggerMouse && !suppressFireUntilRelease) || triggerKey;
 }
 
-// kamera: C przełącza pościgową ↔ orbitalną (parytet z SP). Orbitalna = rozglądanie myszą,
-// lot tylko z klawiatury (mysz-celownik wyłączona); pościgowa wraca do celowania myszą,
-// gdy gracz żyje. updateMouseAimEnabled spina stan myszy z trybem kamery i stanem śmierci.
+// kamera: C TRZYMANE = chwilowe rozglądanie (kamera orbitalna, lot z klawiatury); puszczenie C
+// samoczynnie wraca do domyślnego sterowania myszą (kamera pościgowa) — życzenie usera 2026-06-30
+// (wcześniej C było przełącznikiem toggle). Orbitalna = rozglądanie/zoom myszą, mysz-celownik
+// wyłączona; pościgowa = celowanie myszą, gdy gracz żyje. updateMouseAimEnabled spina stan myszy
+// z trybem kamery i stanem śmierci.
+/** Włącza/wyłącza chwilową kamerę orbitalną (rozglądanie pod trzymanym C). */
+function setOrbitCamera(active: boolean): void {
+  cameraMode = active ? 'orbitalna' : 'pościgowa';
+  orbit.enabled = active; // w pościgowej OrbitCamera ignoruje mysz (patrz klasa)
+  updateMouseAimEnabled();
+  // powrót do sterowania myszą: przejmij ją od razu (puszczenie C to gest) — bez tego kursor
+  // Windows zostawał widoczny aż do kliknięcia. Pomiń, gdy menu pauzy zwolniło kursor.
+  if (!active && !pauseMenuOpen) mouseAim.requestLock();
+}
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyC' && phase === 'playing' && !pauseMenuOpen) {
-    cameraMode = cameraMode === 'pościgowa' ? 'orbitalna' : 'pościgowa';
-    orbit.enabled = cameraMode === 'orbitalna'; // w pościgowej OrbitCamera ignoruje mysz (patrz klasa)
-    updateMouseAimEnabled();
-    // powrót do sterowania myszą: przejmij ją od razu (klawisz C to gest) — bez tego po C↔C
-    // kursor Windows zostawał widoczny aż do kliknięcia
-    if (cameraMode === 'pościgowa') mouseAim.requestLock();
+  // e.repeat odsiewa autopowtarzanie keydown podczas trzymania (inaczej requestLock w kółko).
+  if (e.code === 'KeyC' && !e.repeat && phase === 'playing' && !pauseMenuOpen) {
+    setOrbitCamera(true);
   }
+});
+window.addEventListener('keyup', (e) => {
+  // Puszczenie C zawsze wraca do pościgowej (także gdy keydown padł przy innym stanie, np. menu
+  // pauzy otwarte z trzymanym C) — nie zostawiaj kamery „zatrzaśniętej" w orbitalnej.
+  if (e.code === 'KeyC' && phase === 'playing' && cameraMode === 'orbitalna') {
+    setOrbitCamera(false);
+  }
+});
+// Utrata fokusu okna (Alt+Tab) podczas trzymania C nie wysyła keyup → ręcznie wracamy do
+// pościgowej, by kamera nie utknęła w orbitalnej.
+window.addEventListener('blur', () => {
+  if (phase === 'playing' && cameraMode === 'orbitalna') setOrbitCamera(false);
 });
 
 // Esc (2026-06-23): menu pauzy w trakcie meczu — zakończenie misji / powrót do poczekalni. Świat
@@ -1010,7 +1030,14 @@ function onKill(killerId: number, victimId: number, cause: KillCause, localId: n
       hitMarkerKill = true;
     }
   } else {
-    const reason = cause === 'collision' ? 'kolizja' : cause === 'flak' ? 'ostrzał z ziemi' : 'rozbicie';
+    const reason =
+      cause === 'collision'
+        ? 'kolizja'
+        : cause === 'flak'
+          ? 'ostrzał z ziemi'
+          : cause === 'overheat'
+            ? 'pożar silnika'
+            : 'rozbicie';
     pushKillFeed(`✕ ${victim} — ${reason}`);
   }
   // efekt śmierci (parytet z SP, faza 15/16): zestrzelenie w locie / kolizja → ofiara staje się
@@ -1064,7 +1091,15 @@ function playerName(id: number): string {
  * „wiem, co mnie zabiło". Dla kolizji/rozbicia moduł pomijamy (to nie strefa dobiła, tylko ziemia).
  */
 function deathLabel(cause: KillCause | null, module: string | null = null): string {
-  const base = cause === 'collision' ? 'KOLIZJA' : cause === 'ground' ? 'ROZBITY' : 'ZESTRZELONY';
+  const base =
+    cause === 'collision'
+      ? 'KOLIZJA'
+      : cause === 'ground'
+        ? 'ROZBITY'
+        : cause === 'overheat'
+          ? 'POŻAR SILNIKA'
+          : 'ZESTRZELONY';
+  // moduł doklejamy tylko przy zestrzeleniach (air/flak); 'overheat' sam mówi o silniku → bez „— SILNIK"
   const showModule = module && (cause === null || cause === 'air' || cause === 'flak');
   return showModule ? `${base} — ${module}` : base;
 }
@@ -1686,6 +1721,10 @@ function updateHud(frameDtS: number): void {
     controlMode: mouseAim.locked ? 'mysz' : 'klawiatura',
     // ostrzeżenie „pusty bak" tylko w locie — wrak/obserwator nie ma silnika do zgaszenia
     fuel01: localAlive ? s.fuelFrac : 1,
+    // temperatura silnika (predykowana lokalnie pod wskaźnik; skutek przegrzania idzie przez poziomy v8)
+    engineHeat01: localAlive ? s.engineHeatFrac : 0,
+    // wartość °C wskaźnika (per samolot: anchory coldTempC/redlineTempC z JSON Merlin/DB 601)
+    engineTempC: engineDisplayTempC(localAlive ? s.engineHeatFrac : 0, localPlane.engineThermal),
     ammo: Math.round(localAmmoFrac * localAmmoMax),
     ammoMax: localAmmoMax,
     // osobny licznik działka 20 mm — tylko dla samolotów z grupą wtórną (Bf 109); HUD domyśla się „20 mm"

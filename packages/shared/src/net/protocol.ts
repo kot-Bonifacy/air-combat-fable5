@@ -470,9 +470,14 @@ export const EV_AA_FIRE = 4;
 /** Zniszczenie naziemnego stanowiska ogniowego (v6) — klient czerni je i dymi. */
 export const EV_AA_DESTROYED = 5;
 
-/** Rodzaj śmierci w zdarzeniu KILL (`'flak'` = zestrzelenie przez naziemne stanowisko, v6). */
-export type KillCause = 'air' | 'ground' | 'collision' | 'flak';
-const KILL_CAUSES: readonly KillCause[] = ['air', 'ground', 'collision', 'flak'];
+/**
+ * Rodzaj śmierci w zdarzeniu KILL (`'flak'` = zestrzelenie przez naziemne stanowisko, v6;
+ * `'overheat'` = awaria z przegrzania silnika, z własnej winy, bez sprawcy — 2026-06-30).
+ * Wartości DOPISYWANE NA KOŃCU (indeks = pozycja w KILL_CAUSES jedzie u8 w EVENT) — nie zmieniać
+ * kolejności istniejących, by nie złamać zgodności drutu.
+ */
+export type KillCause = 'air' | 'ground' | 'collision' | 'flak' | 'overheat';
+const KILL_CAUSES: readonly KillCause[] = ['air', 'ground', 'collision', 'flak', 'overheat'];
 
 export interface MuzzleEvent {
   kind: 'muzzle';

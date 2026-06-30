@@ -301,6 +301,46 @@ zmodyfikowany 1v1 drużynowy (sprowadza wrak nisko, by wylądował w oknie zwło
 strojalne bez kodu. typecheck/616 testów/lint/build zielone. **Zacommitowane `d4429fb` + push** (backend-only,
 front bez zmian). ⏳ user: playtest (zestrzel ostatniego wroga wysoko → wrak spada aż do uderzenia, nie zawisa).
 
+**Przegrzewanie silnika 2026-06-30 (życzenie usera, 628 testów zielone, BEZ bumpu protokołu — v8, czysto
+klienckie/serwerowe + JSON):** user: „dodaj przegrzewający się silnik, żeby nie dało się latać ciągle na 100%
+gazu; dopasuj do realnych danych historycznych". **Decyzje usera (AskUserQuestion):** (1) skutek = **realne
+uszkodzenie silnika** (nie derate/zgaśnięcie); (2) limit ~**5 min** na 100% (realistyczny WEP Merlina); (3)
+**asymetria + chłodzenie opływem** (109 gorzej chłodzony). Model `shared/physics/engine-heat.ts`: ukryty stan
+`PlaneState.engineHeatFrac` (0=zimny, 1=czerwona linia, >1=przegrzany) liczony w `pilotStep` (po paliwie),
+relaksacja 1. rzędu do `heatEq = fullThrottleEqHeat·gaz²/chłodzenie(IAS)` — gaz „mocy ciągłej" (<1/√fullEq)
+osiada pod progiem (lot bez limitu), 100% sięga przegrzania po `overheatTimeFullS` (τ grzania WYPROWADZANA z tej
+nagłówkowej liczby). Konsekwencja **autorytatywnie na serwerze**: `game-room.ts` `stepOverheatDamage` aplikuje
+obrażenia strefy 'silnik' (`overheatDamageHp` ∝ heat−1) → poziom 1→2→3 = mid/low/0 mocy istniejącym mechanizmem
+(snapshot v8). Self-inflicted (nie zabija/nie kredytuje). JSON `engineThermal` per samolot (6 knobów+walidacja):
+Spit overheatTimeFullS 300/coolTimeS 200/fullEq 1.25, Bf 200/280/1.30 (szybciej grzeje, wolniej stygnie).
+**KLUCZOWA PUŁAPKA:** heat w `pilotStep` + reconcile replay = wielokrotne „dopalanie" co snapshot (~3,5× za
+szybko, błąd paliwa <v7). Bo heat to TYLKO wskaźnik (skutek idzie przez poziomy v8), `prediction.ts` reconcile
+**zapamiętuje `heatBefore` i przywraca po replayu** (predict() advances raz/tick = zegar ścienny; zmiana fazy →
+zimny) → **BEZ bumpu protokołu**. HUD: wiersz „temp. NN%" + `! gorąco !`/`*** PRZEGRZANIE ***` + ostrzeżenie
+pełnoekranowe (`hud.ts`/`online-main.ts`). **Efekt uboczny do obserwacji:** boty=ServerPlayer (parytet) — trudny
+bot (gaz 1.0) w DŁUGIM pościgu przegrzeje silnik (patrol 0.85=bursztyn bezpieczny, zbliżenie ×0.5 chłodzi);
+strojalne knobami. **Świadomie pominięty pożar z przegrzania** (self-inflicted pożar mis-kredytowałby 'flak';
+„awaria"=martwy silnik dostarczona) + audio silnika gra mimo level 3 (pre-existing). typecheck/628 testów/lint/
+build zielone. **NIEZACOMMITOWANE.** ⏳ user: playtest (limit ~5 min adekwatny? Bf vs Spit? boty w długim pościgu?).
+
+**Przegrzewanie — rewizja 2026-06-30 (5 zmian usera, 634 testy zielone, BEZ bumpu protokołu — v8, deploy front+back
+razem):** user: temp w **°C nie %**, skasuj „gorąco", **ukryty licznik 60 s** łącznego lotu przegrzanego → pożar+stop,
+**boty bez poważnych uszkodzeń** z przegrzania, wiersz temp. **żółty→czerwony**. **Decyzje (AskUserQuestion):** °C
+**per samolot**; **zostaw** stopniową utratę mocy **+ dodaj** pożar; pożar **może zniszczyć** (śmierć z własnej winy,
+bez kredytu); usuń **tylko „! gorąco !"**. (1) **°C:** `engineDisplayTempC(frac, thermal)` lin. między `coldTempC`
+(0) a `redlineTempC` (1), per samolot w JSON (Spit 40/120, Bf 40/115)+loader; HUD pokazuje °C, ale PROGI koloru/ostrz.
+nadal po bezwymiarowym `engineHeatFrac` (WARN 0.85/REDLINE 1.0). (2) **Kolor wiersza temp.:** `engineTempColor` żółty
+`#ffd24a` od WARN / czerwony `#ff5a4d` od REDLINE → `hud.ts` `textContent`→`innerHTML` (span na temp. + `escHtml`);
+`engineTempWarning` straciło gałąź „gorąco". (3) **Licznik 60 s (serwer, ukryty):** `ServerPlayer.overheatAccumS`/
+`overheatFailed` (reset spawn), `stepOverheatDamage` TYLKO ludzie (`isBot`→continue = **boty immune**) akumuluje dt
+gdy heat≥REDLINE; po `OVERHEAT_FAILURE_TIME_S=60` → `triggerOverheatFailure`: strefa silnik HP→0 (poziom 3=stop) +
+pożar `fireSelfInflicted=true`. (4) **Czysta śmierć (domyka pominięty pożar z 1. sesji):** nowa `KillCause 'overheat'`
+(DOPISANA NA KOŃCU `KILL_CAUSES` → wire u8 zgodny, bez bumpu); `onFireKill`→`onOverheatKill` (NO_KILLER, bez kredytu);
+zapłon od pocisku/`igniteForTest` ustawia `fireSelfInflicted=false`; klient `deathLabel`→„POŻAR SILNIKA", killFeed
+„pożar silnika". **UWAGA playtest:** zostawiona gradacja `overheatDamagePerS` często zabija silnik (~28–50 s) PRZED
+pożarem 60 s → pożar dokłada się do martwego silnika; chcąc „sprawny do 60 s, potem nagła awaria" — obniżyć
+`overheatDamagePerS` (knob JSON). **NIEZACOMMITOWANE.** ⏳ user: playtest (°C czytelne? licznik 60 s adekwatny? boty?).
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu
