@@ -1,5 +1,5 @@
 import { NetError } from '../errors';
-import { BF109_E, SPITFIRE_MK2, type PlaneConfig } from './loader';
+import { A6M2_ZERO, BF109_E, SPITFIRE_MK2, type PlaneConfig } from './loader';
 
 // Rejestr typów samolotów (faza 19b). Drugi samolot (Bf 109) wymaga, by KAŻDA encja
 // niosła swój typ: serwer trzyma per-gracz konfigurację, klient wybiera mesh/HUD, a
@@ -7,13 +7,15 @@ import { BF109_E, SPITFIRE_MK2, type PlaneConfig } from './loader';
 // częścią formatu binarnego — patrz PLANE_TYPES.
 
 /** Typ samolotu wybieralny przez gracza (faza 19). Stabilny identyfikator w protokole. */
-export type PlaneType = 'spitfire' | 'bf109';
+export type PlaneType = 'spitfire' | 'bf109' | 'zero';
 
 /**
  * Kolejność = kod na drucie (bajt typu w snapshocie, protokół v4). NIE zmieniać kolejności
  * ani nie usuwać wpisów bez bumpu protokołu — indeks jest częścią formatu binarnego.
+ * 'zero' DOPISANY NA KOŃCU (kod 2) przy bumpie v9 — stary klient nie zna kodu 2 (dekoder
+ * rzuciłby NetError w locie), stąd bump wersji zamiast cichego dodania.
  */
-export const PLANE_TYPES: readonly PlaneType[] = ['spitfire', 'bf109'];
+export const PLANE_TYPES: readonly PlaneType[] = ['spitfire', 'bf109', 'zero'];
 
 /** Domyślny typ (Spitfire — pierwszy samolot, parytet z SP); fallback walidacji wejścia z sieci. */
 export const DEFAULT_PLANE_TYPE: PlaneType = 'spitfire';
@@ -55,6 +57,15 @@ const PLANE_INFO: Record<PlaneType, PlaneTypeInfo> = {
     traitIcon: '⚡',
     weapons: '2× MG 17 + 2× 20 mm',
     blurb: 'Mocne działka i przewaga w pionie — boom & zoom.',
+  },
+  zero: {
+    config: A6M2_ZERO,
+    label: 'Zero',
+    fullName: 'A6M2 Zero model 21',
+    trait: 'Wiraż',
+    traitIcon: '☄',
+    weapons: '2× 7,7 mm + 2× 20 mm',
+    blurb: 'Bezkonkurencyjny w ciasnym wirażu, lecz kruchy i łatwopalny; przy dużej prędkości lotki sztywnieją.',
   },
 };
 

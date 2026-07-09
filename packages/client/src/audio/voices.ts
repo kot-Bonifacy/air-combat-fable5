@@ -1,5 +1,5 @@
 import { Audio, Object3D, PositionalAudio, Vector3 } from 'three';
-import type { PlaneType } from '@air-combat/shared';
+import { CANNON_DAMAGE_THRESHOLD, planeConfigOf, type PlaneType } from '@air-combat/shared';
 import type { AudioManager } from './audio-manager';
 
 // Głosy ciągłe fazy 21. EngineVoice/GunVoice owijają jedno źródło zapętlone (Three.js Audio dla
@@ -21,10 +21,18 @@ const ENGINE_TAU_S = 0.18; // wygładzanie zmian obrotów (bez „zipper noise")
 // stały (≈±0,5 dB) i z bliska. Pętla 4,0 s (wolna od transientów — omija skrzyp w nagraniu), RMS
 // dopasowane do poprzedniego → mnożnik 1,65 utrzymuje
 // głośność na zaakceptowanym poziomie (master 0,7, czysto). Szczegóły/alternatywy w assets/LICENSES.md.
-const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.65, bf109: 1.0 };
+// zero: TYMCZASOWO ten sam plik co Spitfire (etap 1 trzeciego samolotu) → ten sam mnożnik;
+// po podmianie na sampel gwiazdowego Sakae (etap 2) wyrównać RMS osobno.
+const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.65, bf109: 1.0, zero: 1.65 };
 
 const GUN_RATE_303 = 1.12; // Spitfire: 8× .303 — lekki, szybki grzechot (wyżej)
 const GUN_RATE_MG17 = 0.94; // Bf 109: MG 17 — cięższy ton (niżej)
+const GUN_RATE_TYPE97 = 1.05; // Zero: 2× Typ 97 (7,7 mm jak .303, ale tylko 2 lufy — odrobinę niżej)
+const GUN_RATE_BY_PLANE: Record<PlaneType, number> = {
+  spitfire: GUN_RATE_303,
+  bf109: GUN_RATE_MG17,
+  zero: GUN_RATE_TYPE97,
+};
 const GUN_GAIN = 0.55;
 const GUN_HOLD_S = 0.13; // jak długo pętla gra po ostatnim evencie MUZZLE (spust trzymany → odświeżany)
 const CANNON_INTERVAL_S = 0.16; // dudnienie działka 20 mm Bf 109 (MG FF ~520/min ≈ 0,115 s; rozrzedzone dla czytelności)
@@ -132,10 +140,14 @@ export class GunVoice {
 
   constructor(am: AudioManager, buffer: AudioBuffer | undefined, plane: PlaneType, local: boolean, host?: Object3D) {
     this.loop = new LoopVoice(am, buffer, host);
-    this.loop.setRate(plane === 'spitfire' ? GUN_RATE_303 : GUN_RATE_MG17);
+    this.loop.setRate(GUN_RATE_BY_PLANE[plane]);
     this.am = am;
     this.local = local;
-    this.hasCannon = plane === 'bf109';
+    // działko = grupa o obrażeniach ≥ progu kalibru (ten sam podział co serwer) — dane z JSON,
+    // nie hardkod typu (Bf 109 MG FF i Zero Typ 99 łapią się automatycznie)
+    this.hasCannon = planeConfigOf(plane).armament.groups.some(
+      (g) => g.damagePerHit >= CANNON_DAMAGE_THRESHOLD,
+    );
   }
 
   /** Odśwież z eventu MUZZLE — utrzymuje pętlę grającą jeszcze GUN_HOLD_S po ostatnim strzale. */

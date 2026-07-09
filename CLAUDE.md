@@ -30,13 +30,15 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 | 21    | **Dźwięk i efekty (audio)**: Web Audio (Three.js listener), silniki dobrane do modeli (Merlin→Spitfire, **DB 601→Bf 109**), broń 7,7 mm vs działko 20 mm, eksplozje/trafienia (sample freesound CC0/CC-BY), świst∝IAS²+buffet+ding/UI proceduralne, master vol+mute (localStorage, menu pauzy/klawisz M) | ✅ 474 testy zielone; **wizualia (smugi kondensacyjne/szczątki/ślad 20 mm) → backlog** (nieweryfikowalne wzrokowo z sesji, fps to kryterium); ⏳ user: odsłuch/playtest miksu + brak błędów autoplay (Chrome/FF/Edge) + fps RTX (patrz `docs/phases/faza-21.md`) |
 | 22    | **Modułowe uszkodzenia (5 części)**: strefy z HP + integralność (hybryda); cz.1 fundament shared, cz.2 serwer hit-detection po strefach+maszyna stanów, cz.3 **protokół v8** (u16 stref w snapshocie)+predykcja klienta+ucieczka botów, cz.4 klient: HUD sylwetki (SVG strefy+flagi) + wizualia obcych (dym narastający z silnikiem, ogień u silnika, dym z końcówki skrzydła) + moduł w komunikacie śmierci, cz.5 balans: **analityczny lock TTK** (`ttk.test.ts`) + dokumentacja (wartości zostawione — decyzja usera) | cz.1–4 ✅, cz.5 🟡 (analiza+lock+commit) **575→597 testów zielone**; cz.3 **wymaga deployu front+back RAZEM (v8)**, cz.4–5 czysto klienckie/test (czyta v8); ⏳ user: smoke v8 + playtest balansu (asymetria skrzydła na drążku) + fps RTX @8 → **potem tag `1.0`** (patrz `docs/phases/faza-22.md`) |
 
-**Protokół: `PROTOCOL_VERSION = 8`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
+**Protokół: `PROTOCOL_VERSION = 9`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
 w sesji poprawek 2026-06-21 +1 bajt amunicji GRUPY WTÓRNEJ = działko 20 mm Bf 109 → v5; v6 = naziemne
 stanowiska ogniowe AA (nowe zdarzenia binarne EV_AA_FIRE/EV_AA_DESTROYED, cause `'flak'`); v7 = +1 bajt
 PALIWA w snapshocie encji (paliwo przestało być ukrytym stanem — autorytatywne jak HP/amunicja, fix pustego
-baku po auto-reconnekcie, 2026-06-26); **v8 = +u16 STANU USZKODZEŃ w snapshocie encji** (6 stref × 2 bity
+baku po auto-reconnekcie, 2026-06-26); v8 = +u16 STANU USZKODZEŃ w snapshocie encji (6 stref × 2 bity
 poziomu 0..3 + bit pożaru; faza 22 cz.3 — klient predykuje uszkodzony lot z poziomów, jak paliwo po v7;
-`SNAPSHOT_ENTITY_BYTES` 34→36); fazy 15–18, P1–P5 i czat poczekalni bez bumpu — addytywne JSON albo
+`SNAPSHOT_ENTITY_BYTES` 34→36); **v9 = trzeci samolot A6M2 Zero: NOWY KOD 2 bajtu typu** (układ bajtów
+bez zmian, ale stary klient nie zna kodu 2 — `planeTypeFromCode` rzuciłby NetError w locie → bump daje
+czysty błąd handshake; 2026-07-09); fazy 15–18, P1–P5 i czat poczekalni bez bumpu — addytywne JSON albo
 usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
 
 **Sesja poprawek 2026-06-21 (poza fazami, 7 zgłoszeń usera — 460 testów zielone):** (1) pole nicku/czatu
@@ -339,7 +341,37 @@ pożar `fireSelfInflicted=true`. (4) **Czysta śmierć (domyka pominięty pożar
 zapłon od pocisku/`igniteForTest` ustawia `fireSelfInflicted=false`; klient `deathLabel`→„POŻAR SILNIKA", killFeed
 „pożar silnika". **UWAGA playtest:** zostawiona gradacja `overheatDamagePerS` często zabija silnik (~28–50 s) PRZED
 pożarem 60 s → pożar dokłada się do martwego silnika; chcąc „sprawny do 60 s, potem nagła awaria" — obniżyć
-`overheatDamagePerS` (knob JSON). **NIEZACOMMITOWANE.** ⏳ user: playtest (°C czytelne? licznik 60 s adekwatny? boty?).
+`overheatDamagePerS` (knob JSON). **Zacommitowane `3752932`.** ⏳ user: playtest (°C czytelne? licznik 60 s adekwatny? boty?).
+
+**Trzeci samolot — A6M2 Zero, ETAP 1/2 (2026-07-09, życzenie usera, 644 testy zielone, BUMP protokołu
+v8→v9):** user: „dodaj Mitsubishi A6M2 Zero (produkcyjna 1940 uzbrojeniem i lotem); gotowe assety z netu".
+Praca ROZBITA NA 2 ETAPY (życzenie usera, wzorem 19a/19b): **etap 1 = shared+kalibracja+testy+minimalny
+klient (ta sesja)**, etap 2 = model 3D + sampel silnika gwiazdowego + atrybucje + strojenie wizualne.
+**Decyzje usera (AskUserQuestion):** model 3D = shortlista CC ze Sketchfaba do ręcznego pobrania (jak
+Bf 109); kruchość = PEŁNY REALIZM (brak pancerza/samouszczelniających zbiorników); sztywnienie lotek
+przy V = wiernie (mocny spadek rolla); audio = nowy sampel radialny (etap 2). (1) **`a6m2-zero.json`**:
+masa bojowa 2300 kg, 22,44 m², AR 6,42 (rozpiętość 12,0 m), Sakae 12 710 kW @4200 m, paliwo 1500 s
+(legendarna długotrwałość), clMax 1,95/oswaldE 0,9/dragHighClK 0,0008 (czysty przy wysokim Cl — źródło
+dominacji wirażu), nMaxG 7; rollRateCurve = KANONICZNA słabość: szczyt 85°/s @240, zapaść 30°/s @350,
+8°/s @550; uzbrojenie 2× Typ 97 (7,7 mm, kadłub, 500 nb) + 2× Typ 99 (20 mm skrzydła, 60 nb, 600 m/s —
+rodzina Oerlikon FF jak MG FF); kruchość: hpPool 85 (Spit 120/Bf 110), kabina 40/zbiornik 28 HP,
+fireIgniteChanceMg 0,02 (2,5×)/Cannon 0,25, tankLeak 6; silnik gwiazdowy = termika łagodniejsza
+(360 s/1,2 eq, redline 230 °C CHT). **Kalibracja (testy złote, `describe.each` 3. kolumna):** VmaxSL
+446/533@4550, stall 105, wznoszenie 14,8 m/s, roll@350=30°/s, **zakręt 15,0 s @203 km/h** (promień ~134 m
+vs ~193 m Spitfire'a → wyraźna dominacja wirażu; 940 KM nie daje mniej w bilansie mocy — literaturowe
+12-14 s nieosiągalne bez psucia realizmu). (2) **Protokół v9**: 'zero' DOPISANY NA KOŃCU `PLANE_TYPES`
+(kod 2); układ bajtów bez zmian, bump chroni starego klienta przed NetError w locie. (3) **Minimalny
+klient** (wymusza `Record<PlaneType,…>`): `MODEL_SPECS.zero` → `/models/zero/zero-web.glb` (pliku
+BRAK → bryła zastępcza, gra działa), `SFX_FILES['engine-zero']` TYMCZASOWO alias sampla Spitfire'a,
+`GunVoice.hasCannon` przerobiony z hardkodu 'bf109' na wnioskowanie z JSON (damagePerHit ≥
+CANNON_DAMAGE_THRESHOLD), pitch grzechotu Typ 97 = 1,05. Karty lobby/selektor botów/losowanie typu bota
+iterują `PLANE_TYPES` — Zero dochodzi automatycznie. (4) **Testy**: +kolumna złotych, +lock kruchości
+Zero w `ttk.test.ts` (najkruchszy, ≥2× zapłon, szybszy wyciek; działka iterowane po OBU 20 mm).
+**Pułapka środowiska:** martwy junction `node_modules/@air-combat/shared` (lawina TS2307 na serwerze)
+→ `npm install` odtwarza linki. **Deploy front+back RAZEM (v9).** ⏳ ETAP 2 (osobna sesja): user pobiera
+model ze shortlisty → `assets/models/zero/` + optymalizacja gltf-transform + ModelSpec (DUMP_NODES) +
+sampel radialny freesound + atrybucje (LICENSES.md w TYM SAMYM commicie + ekran lobby) + weryfikacja
+wzrokowa 3 kart. ⏳ user: playtest balansu Zero (wiraż vs kruchość) po etapie 2.
 
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 

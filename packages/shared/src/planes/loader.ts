@@ -2,6 +2,7 @@ import { PlaneConfigError } from '../errors';
 import { ZONE_ROLES, type DamageTuning, type HitZone } from '../combat/damage-model';
 import spitfireMk2Raw from './spitfire-mk2.json';
 import bf109Raw from './bf109-e.json';
+import a6m2Raw from './a6m2-zero.json';
 
 /**
  * Parametry samolotu — schemat z docs/fizyka-lotu.md rozdz. 9.
@@ -644,6 +645,9 @@ export const SPITFIRE_MK2: PlaneConfig = loadPlaneConfig(spitfireMk2Raw, 'spitfi
 
 /** Bf 109 E-3 (DB 601A) — energy-fighter (faza 19), walidowany przy imporcie. */
 export const BF109_E: PlaneConfig = loadPlaneConfig(bf109Raw, 'bf109-e.json');
+
+/** A6M2 Zero model 21 (Sakae 12) — król wirażu, kruchy i łatwopalny (trzeci samolot), walidowany przy imporcie. */
+export const A6M2_ZERO: PlaneConfig = loadPlaneConfig(a6m2Raw, 'a6m2-zero.json');
 
 /** Współczynnik oporu indukowanego K = 1/(π·e·AR) z biegunowej Cd = Cd0 + K·Cl². */
 export function inducedDragFactor(plane: PlaneConfig): number {

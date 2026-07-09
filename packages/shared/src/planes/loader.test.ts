@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PlaneConfigError } from '../errors';
-import { BF109_E, SPITFIRE_MK2, inducedDragFactor, loadPlaneConfig } from './loader';
+import { A6M2_ZERO, BF109_E, SPITFIRE_MK2, inducedDragFactor, loadPlaneConfig } from './loader';
 
 function validRaw(): Record<string, unknown> {
   return {
@@ -141,6 +141,12 @@ describe('loader konfiguracji samolotu', () => {
     expect(BF109_E.armament.groups[1]?.name).toBe('MG FF');
   });
 
+  it('A6M2_ZERO ładuje się z JSON (trzeci samolot, kaemy + działka)', () => {
+    expect(A6M2_ZERO.name).toBe('A6M2 Zero model 21 (Sakae 12)');
+    expect(A6M2_ZERO.armament.groups).toHaveLength(2);
+    expect(A6M2_ZERO.armament.groups[1]?.name).toBe('Typ 99');
+  });
+
   it('brak wymaganego pola → PlaneConfigError z nazwą pola', () => {
     const raw = validRaw();
     delete raw['clMax'];
@@ -267,6 +273,7 @@ describe('loader konfiguracji samolotu', () => {
     expect(wing?.maxHp).toBe(45);
     expect(SPITFIRE_MK2.zones).toHaveLength(6);
     expect(BF109_E.zones).toHaveLength(6);
+    expect(A6M2_ZERO.zones).toHaveLength(6);
   });
 
   it('zones: brak wymaganej strefy → PlaneConfigError', () => {

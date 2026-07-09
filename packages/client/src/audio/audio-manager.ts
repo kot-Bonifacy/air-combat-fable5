@@ -16,6 +16,9 @@ import { EngineVoice, GunVoice, WindVoice } from './voices';
 const SFX_FILES = {
   'engine-spitfire': 'engine-spitfire.ogg',
   'engine-bf109': 'engine-bf109.ogg',
+  // TYMCZASOWO (etap 1 trzeciego samolotu): Zero gra samplem Spitfire'a — właściwy sampel
+  // silnika gwiazdowego Sakae (freesound CC0/CC-BY) dochodzi w etapie 2 (podmiana TYLKO pliku).
+  'engine-zero': 'engine-spitfire.ogg',
   'guns-mg': 'guns-mg.ogg',
   cannon: 'cannon.ogg',
   explosion: 'explosion.ogg',

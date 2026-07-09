@@ -49,8 +49,12 @@ import { ZONE_COUNT } from '../combat/damage-model';
  * i predykuje uszkodzony lot tymi samymi modyfikatorami co serwer (spójny reconcile, jak paliwo po v7,
  * bo skutki liczą się WYŁĄCZNIE z poziomów). Obce: poziomy/pożar zasilą wizualia uszkodzeń (Część 4).
  * SNAPSHOT_ENTITY_BYTES 34→36. Deploy front+back RAZEM.
+ * v9: trzeci samolot (A6M2 Zero) — bajt typu w snapshocie dostaje NOWY kod 2 ('zero' na końcu
+ * PLANE_TYPES). Układ bajtów BEZ zmian, ale stary klient nie zna kodu 2 (planeTypeFromCode rzuca
+ * NetError w locie przy pierwszym Zero w meczu) → bump gwarantuje czysty błąd handshake zamiast
+ * crasha. Deploy front+back RAZEM.
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 /** Tag pierwszego bajtu ramki binarnej: wejście gracza (klient → serwer). */
 export const MSG_INPUT = 1;

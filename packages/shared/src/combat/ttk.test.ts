@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BF109_E, SPITFIRE_MK2, type PlaneConfig, type WeaponGroup } from '../planes/loader';
+import { A6M2_ZERO, BF109_E, SPITFIRE_MK2, type PlaneConfig, type WeaponGroup } from '../planes/loader';
 import { CANNON_DAMAGE_THRESHOLD } from '../constants';
 import type { ZoneRole } from './damage-model';
 
@@ -29,6 +29,8 @@ const RAD2DEG = 180 / Math.PI;
 const spit303 = SPITFIRE_MK2.armament.groups.find((g) => g.damagePerHit < CANNON_DAMAGE_THRESHOLD)!;
 const bfMg17 = BF109_E.armament.groups.find((g) => g.damagePerHit < CANNON_DAMAGE_THRESHOLD)!;
 const bfCannon = BF109_E.armament.groups.find((g) => g.damagePerHit >= CANNON_DAMAGE_THRESHOLD)!;
+const zeroMg = A6M2_ZERO.armament.groups.find((g) => g.damagePerHit < CANNON_DAMAGE_THRESHOLD)!;
+const zeroCannon = A6M2_ZERO.armament.groups.find((g) => g.damagePerHit >= CANNON_DAMAGE_THRESHOLD)!;
 
 function roundsPerSec(group: WeaponGroup): number {
   return (group.muzzles.length * group.fireRateRpmPerGun) / 60;
@@ -80,12 +82,18 @@ const SHOOTERS: readonly Shooter[] = [
   { label: 'Spitfire .303×8', group: spit303, cannon: false },
   { label: 'Bf 109 MG 17×2', group: bfMg17, cannon: false },
   { label: 'Bf 109 MG FF 20mm×2', group: bfCannon, cannon: true },
+  { label: 'Zero Typ 97 7,7mm×2', group: zeroMg, cannon: false },
+  { label: 'Zero Typ 99 20mm×2', group: zeroCannon, cannon: true },
 ];
 
 const TARGETS: readonly { label: string; plane: PlaneConfig }[] = [
   { label: 'Spitfire', plane: SPITFIRE_MK2 },
   { label: 'Bf 109', plane: BF109_E },
+  { label: 'Zero', plane: A6M2_ZERO },
 ];
+
+/** Wszystkie działka 20 mm (rodzina Oerlikon FF: MG FF i japoński Typ 99 Mk 1 — bliźniacza balistyka). */
+const CANNONS: readonly WeaponGroup[] = [bfCannon, zeroCannon];
 
 describe('TTK — działko 20 mm vs kaem 7,7 mm (dokumentacja + lock regresji)', () => {
   it('loguje tabelę czasu do killa (do notatki balansowej memory)', () => {
@@ -114,33 +122,40 @@ describe('TTK — działko 20 mm vs kaem 7,7 mm (dokumentacja + lock regresji)',
   });
 
   it('działko jest decydujące: ≤ 4 trafienia integralnością, ≤ 1 s ciągłego ognia', () => {
-    for (const t of TARGETS) {
-      expect(integrityHtk(bfCannon, t.plane)).toBeLessThanOrEqual(4);
-      expect(integrityTtkS(bfCannon, t.plane)).toBeLessThanOrEqual(1.0);
+    for (const cannon of CANNONS) {
+      for (const t of TARGETS) {
+        expect(integrityHtk(cannon, t.plane)).toBeLessThanOrEqual(4);
+        expect(integrityTtkS(cannon, t.plane)).toBeLessThanOrEqual(1.0);
+      }
     }
   });
 
   it('działko skupione urywa skrzydło/kabinę w ≤ 3 trafieniach (kill krytyczny)', () => {
-    for (const t of TARGETS) {
-      expect(zoneHtk(bfCannon, t.plane, 'wingL')).toBeLessThanOrEqual(3);
-      expect(zoneHtk(bfCannon, t.plane, 'cockpit')).toBeLessThanOrEqual(3);
+    for (const cannon of CANNONS) {
+      for (const t of TARGETS) {
+        expect(zoneHtk(cannon, t.plane, 'wingL')).toBeLessThanOrEqual(3);
+        expect(zoneHtk(cannon, t.plane, 'cockpit')).toBeLessThanOrEqual(3);
+      }
     }
   });
 
   it('kaem 7,7 mm wymaga długiej serii (≥ 20 trafień integralnością — „peashooter")', () => {
-    expect(integrityHtk(spit303, BF109_E)).toBeGreaterThanOrEqual(20);
-    expect(integrityHtk(spit303, SPITFIRE_MK2)).toBeGreaterThanOrEqual(20);
-    expect(integrityHtk(bfMg17, SPITFIRE_MK2)).toBeGreaterThanOrEqual(20);
-    expect(integrityHtk(bfMg17, BF109_E)).toBeGreaterThanOrEqual(20);
+    for (const mg of [spit303, bfMg17, zeroMg]) {
+      for (const t of TARGETS) {
+        expect(integrityHtk(mg, t.plane)).toBeGreaterThanOrEqual(20);
+      }
+    }
   });
 
   it('asymetria kalibru: działko ≥ 15× obrażeń na trafienie względem kaemu', () => {
-    const minMg = Math.min(spit303.damagePerHit, bfMg17.damagePerHit);
-    expect(bfCannon.damagePerHit).toBeGreaterThanOrEqual(15 * minMg);
+    const minMg = Math.min(spit303.damagePerHit, bfMg17.damagePerHit, zeroMg.damagePerHit);
+    for (const cannon of CANNONS) {
+      expect(cannon.damagePerHit).toBeGreaterThanOrEqual(15 * minMg);
+    }
   });
 
   it('pożar DOBIJA, nie zabija pełnego: maks. obrażenia ognia < najmniejsza pula HP', () => {
-    const minHp = Math.min(SPITFIRE_MK2.hpPool, BF109_E.hpPool);
+    const minHp = Math.min(SPITFIRE_MK2.hpPool, BF109_E.hpPool, A6M2_ZERO.hpPool);
     for (const t of TARGETS) {
       const fireMax = t.plane.damage.fireDotPerS * t.plane.damage.fireSelfExtinguishS;
       expect(fireMax).toBeLessThan(minHp);
@@ -160,6 +175,25 @@ describe('TTK — działko 20 mm vs kaem 7,7 mm (dokumentacja + lock regresji)',
       const frac = heavyWingBiasDegS(t.plane) / peakRollRateDegS(t.plane);
       expect(frac).toBeGreaterThanOrEqual(0.08);
       expect(frac).toBeLessThanOrEqual(0.6);
+    }
+  });
+
+  // --- kruchość Zero (trzeci samolot, decyzja usera: pełny realizm braku pancerza i
+  // samouszczelniających zbiorników) — lock intencji projektowej, nie konkretnych liczb ---
+
+  it('Zero jest najkruchszy: najmniejsza pula integralności i słabsze strefy kabiny/zbiornika', () => {
+    for (const other of [SPITFIRE_MK2, BF109_E]) {
+      expect(A6M2_ZERO.hpPool).toBeLessThan(other.hpPool);
+      expect(zoneMaxHp(A6M2_ZERO, 'cockpit')).toBeLessThan(zoneMaxHp(other, 'cockpit'));
+      expect(zoneMaxHp(A6M2_ZERO, 'tank')).toBeLessThan(zoneMaxHp(other, 'tank'));
+    }
+  });
+
+  it('Zero zapala się wyraźnie łatwiej (≥ 2× szansa zapłonu) i szybciej traci paliwo z przestrzelin', () => {
+    for (const other of [SPITFIRE_MK2, BF109_E]) {
+      expect(A6M2_ZERO.damage.fireIgniteChanceMg).toBeGreaterThanOrEqual(2 * other.damage.fireIgniteChanceMg);
+      expect(A6M2_ZERO.damage.fireIgniteChanceCannon).toBeGreaterThanOrEqual(2 * other.damage.fireIgniteChanceCannon);
+      expect(A6M2_ZERO.damage.tankLeakDrainFactor).toBeGreaterThan(other.damage.tankLeakDrainFactor);
     }
   });
 });

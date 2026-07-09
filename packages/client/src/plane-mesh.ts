@@ -148,6 +148,18 @@ const MODEL_SPECS: Record<PlaneType, ModelSpec> = {
     // wyczuwalnym połyskiem (0.1≈chrom za błyszczący, 0.6 wychodził za płaski — okno jest wąskie).
     forceMetallic: { keepDielectricRe: /glass|tire|tyre/i, roughness: 0.45 },
   },
+  // A6M2 Zero — ETAP 1 trzeciego samolotu: pliku jeszcze NIE MA w assets/ (user pobiera model
+  // CC ze Sketchfaba w etapie 2), więc load pada i zostaje bryła zastępcza (gra działa).
+  // Etap 2: wrzucić zero-web.glb, dostroić fixEuler/węzły śmigła+podwozia (DUMP_NODES) jak Bf 109.
+  zero: {
+    url: '/models/zero/zero-web.glb',
+    fixEulerDeg: { x: 0, y: 0, z: 0 },
+    gearNodeNames: new Set<string>(),
+    gearMaterialRe: /landing_gear|tire|tyre/i,
+    propNodeNames: new Set<string>(),
+    hubNode: null,
+    bladeNodes: new Set<string>(),
+  },
 };
 
 /** Dev: ustaw na true, by wypisać drzewo węzłów modelu (np. po podmianie .glb). */

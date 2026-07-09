@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MS_TO_KMH } from '../constants';
-import { BF109_E, SPITFIRE_MK2, type PlaneConfig } from '../planes/loader';
+import { A6M2_ZERO, BF109_E, SPITFIRE_MK2, type PlaneConfig } from '../planes/loader';
 import {
   climbTest,
   diveEnergyTest,
@@ -65,6 +65,23 @@ const TARGETS: readonly PlaneTargets[] = [
     // 23.5 s (było 22): jak Spitfire — zagięcie biegunowej przy wysokim Cl (dragHighClK)
     // koszt zakrętu na wysokim Cl; energy-fighter dalej wyraźnie gorszy w krążeniu.
     turnS: 23.5,
+  },
+  // A6M2 Zero model 21 (Sakae 12): król wirażu — najlżejszy, najniższe obciążenie powierzchni,
+  // wyraźnie NAJLEPSZY zakręt; ceną wolniejszy Vmax, sztywne lotki przy dużej prędkości
+  // (rollRateCurve zapada powyżej ~300 km/h — kanoniczna słabość) i kruchość (hpPool/strefy/pożary).
+  {
+    label: 'A6M2 Zero model 21 (Sakae 12)',
+    config: A6M2_ZERO,
+    vMaxSLKmh: 435,
+    vMaxAltKmh: 533,
+    altM: 4550,
+    vStallKmh: 105,
+    climbMs: 15.5,
+    rollDegS: 30,
+    // 15 s zmierzone (V≈203 km/h — okrąg wolniejszy i CIAŚNIEJSZY promieniem ~134 m vs ~193 m
+    // Spitfire'a). Literatura sugeruje 12-14 s, ale 940 KM Sakae więcej w bilansie mocy nie daje;
+    // dominacja wirażu i tak wyraźna (15,0 < 17,5 < 23,5 + najmniejszy promień + najniższy stall).
+    turnS: 15,
   },
 ];
 
