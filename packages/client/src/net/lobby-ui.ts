@@ -792,12 +792,20 @@ function attributionEl(): HTMLDivElement {
     return a;
   };
   // CC-BY 4.0 wymaga widocznego uznania autorstwa KAŻDEGO użytego modelu (publiczny deploy
-  // ładuje oba GLB — Spitfire i Bf 109; faza 19b).
+  // ładuje wszystkie GLB — Spitfire, Bf 109 i Zero); CC-BY audio analogicznie (freesound,
+  // pełne formuły w assets/LICENSES.md).
   wrap.append(document.createTextNode('Modele: „Supermarine Spitfire Mk.IIa" — '));
   wrap.append(link('barking_dogo', 'https://sketchfab.com/barking_dogo'));
   wrap.append(document.createTextNode('; „Messerschmitt BF 109" — '));
   wrap.append(link('Jankenstein', 'https://sketchfab.com/Jankenstein'));
-  wrap.append(document.createTextNode(' (Sketchfab) — licencja CC-BY 4.0'));
+  wrap.append(document.createTextNode('; „Mitsubishi A6M2 ZERO - zeke" — '));
+  wrap.append(link('Savinien B.', 'https://sketchfab.com/SavinienBerault'));
+  wrap.append(document.createTextNode(' (Sketchfab) — licencja CC-BY 4.0. Dźwięki (freesound, CC-BY): '));
+  wrap.append(link('stereostereo', 'https://freesound.org/people/stereostereo/'));
+  wrap.append(document.createTextNode(', '));
+  wrap.append(link('Fight2FlyPhoto', 'https://freesound.org/people/Fight2FlyPhoto/'));
+  wrap.append(document.createTextNode(', '));
+  wrap.append(link('juskiddink', 'https://freesound.org/people/juskiddink/'));
   return wrap;
 }
 

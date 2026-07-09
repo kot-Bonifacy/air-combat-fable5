@@ -5,7 +5,8 @@ import { EngineVoice, GunVoice, WindVoice } from './voices';
 // Faza 21 — dźwięk. Web Audio przez klasy Three.js (AudioListener na kamerze → 3D pozycyjne
 // automatycznie z grafu sceny; PositionalAudio na meshu wroga panuje/tłumi się z odległością).
 // Sample dobrane do KONKRETNYCH modeli (życzenie usera): silnik Merlin → Spitfire, Daimler-Benz
-// DB 601 → Bf 109; broń 7,7 mm vs działko 20 mm. Dźwięki informacyjne (świst IAS, buffet
+// DB 601 → Bf 109, gwiazdowiec (idle P-47 R-2800, rodzina jak Sakae) → Zero; broń 7,7 mm vs
+// działko 20 mm. Dźwięki informacyjne (świst IAS, buffet
 // przeciągnięcia) syntetyzowane proceduralnie — patrz `voices.ts`. Atrybucje w assets/LICENSES.md.
 //
 // Master volume + mute przez wbudowane `listener.setMasterVolume` (skaluje cały graf), zapamiętane
@@ -16,9 +17,7 @@ import { EngineVoice, GunVoice, WindVoice } from './voices';
 const SFX_FILES = {
   'engine-spitfire': 'engine-spitfire.ogg',
   'engine-bf109': 'engine-bf109.ogg',
-  // TYMCZASOWO (etap 1 trzeciego samolotu): Zero gra samplem Spitfire'a — właściwy sampel
-  // silnika gwiazdowego Sakae (freesound CC0/CC-BY) dochodzi w etapie 2 (podmiana TYLKO pliku).
-  'engine-zero': 'engine-spitfire.ogg',
+  'engine-zero': 'engine-zero.ogg',
   'guns-mg': 'guns-mg.ogg',
   cannon: 'cannon.ogg',
   explosion: 'explosion.ogg',

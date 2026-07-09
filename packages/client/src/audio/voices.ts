@@ -21,9 +21,10 @@ const ENGINE_TAU_S = 0.18; // wygładzanie zmian obrotów (bez „zipper noise")
 // stały (≈±0,5 dB) i z bliska. Pętla 4,0 s (wolna od transientów — omija skrzyp w nagraniu), RMS
 // dopasowane do poprzedniego → mnożnik 1,65 utrzymuje
 // głośność na zaakceptowanym poziomie (master 0,7, czysto). Szczegóły/alternatywy w assets/LICENSES.md.
-// zero: TYMCZASOWO ten sam plik co Spitfire (etap 1 trzeciego samolotu) → ten sam mnożnik;
-// po podmianie na sampel gwiazdowego Sakae (etap 2) wyrównać RMS osobno.
-const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.65, bf109: 1.0, zero: 1.65 };
+// zero: gwiazdowiec (idle P-47 R-2800, CC-BY 142900 — rodzina dwurzędowych radialnych jak Sakae);
+// pętla 4,0 s z RMS wyrównanym do sampla Bf 109 przy tworzeniu pliku → startowo mnożnik 1,0
+// (percepcyjna głośność ≠ RMS — strojenie uchem jak przy Spitfire).
+const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.65, bf109: 1.0, zero: 1.0 };
 
 const GUN_RATE_303 = 1.12; // Spitfire: 8× .303 — lekki, szybki grzechot (wyżej)
 const GUN_RATE_MG17 = 0.94; // Bf 109: MG 17 — cięższy ton (niżej)

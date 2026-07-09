@@ -148,17 +148,28 @@ const MODEL_SPECS: Record<PlaneType, ModelSpec> = {
     // wyczuwalnym połyskiem (0.1≈chrom za błyszczący, 0.6 wychodził za płaski — okno jest wąskie).
     forceMetallic: { keepDielectricRe: /glass|tire|tyre/i, roughness: 0.45 },
   },
-  // A6M2 Zero — ETAP 1 trzeciego samolotu: pliku jeszcze NIE MA w assets/ (user pobiera model
-  // CC ze Sketchfaba w etapie 2), więc load pada i zostaje bryła zastępcza (gra działa).
-  // Etap 2: wrzucić zero-web.glb, dostroić fixEuler/węzły śmigła+podwozia (DUMP_NODES) jak Bf 109.
+  // A6M2 Zero ze Sketchfaba (Savinien B.) — etap 2 trzeciego samolotu. Model bardzo czysty:
+  // 5 nazwanych grup (Rotor=śmigło, Verriere=owiewka, Corps=kadłub+skrzydła, Leg d/g=golenie;
+  // three sanityzuje spacje: „Leg d" → Leg_d). Zmierzone z nieskompresowanej geometrii
+  // (scene.gltf+scene.bin, world-space): nos w +X (śmigło na X_max) → yaw −90°; model stoi
+  // „na trzech punktach" — kadłub zadarty ~10° (linia środkowa), oś śmigła ~12,3° → pitch +12
+  // prostuje do poziomu (kompromis pomiarów, strojony wzrokowo jednym polem jak Bf 109).
   zero: {
     url: '/models/zero/zero-web.glb',
-    fixEulerDeg: { x: 0, y: 0, z: 0 },
-    gearNodeNames: new Set<string>(),
-    gearMaterialRe: /landing_gear|tire|tyre/i,
-    propNodeNames: new Set<string>(),
-    hubNode: null,
-    bladeNodes: new Set<string>(),
+    fixEulerDeg: { x: 12, y: -90, z: 0 },
+    gearNodeNames: new Set<string>(['Leg_d', 'Leg_g']),
+    gearMaterialRe: /^leg[_ ]/i,
+    // Śmigło = jeden węzeł/mesh (piasta+łopaty razem — nie da się zostawić kołpaka pełnego przy
+    // wygaszaniu, znika całość w tarczę; akceptowalne). Oś z geometrii: tarcza pochylona ~12°
+    // względem +X modelu, więc bbox+czyste +Z dawałoby precesję jak w Bf 109.
+    propNodeNames: new Set<string>(['Rotor']),
+    hubNode: 'Rotor',
+    bladeNodes: new Set<string>(['Rotor']),
+    propAxisFromGeometry: true,
+    // Kadłub ma metalness ≈0,15 z mapy (zmierzone: kanał B Corps_metallicRoughness śr. 37/255)
+    // → ta sama pułapka co Bf 109: matowy dielektryk pod IBL bez tone mappingu = „płasko/za
+    // jasno". Wymuszamy metal; owiewka (Verriere) zostaje szkłem-dielektrykiem.
+    forceMetallic: { keepDielectricRe: /verriere|glass/i, roughness: 0.45 },
   },
 };
 

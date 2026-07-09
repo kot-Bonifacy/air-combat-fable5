@@ -7,6 +7,7 @@ w którym trafia do repo (niezmiennik nr 8 z CLAUDE.md).
 | ---------------- | ------------- | ------------ | -------- | ------ |
 | `models/spitfire/` | Supermarine Spitfire Mk.IIa / barking_dogo | https://sketchfab.com/3d-models/supermarine-spitfire-mkiia-a49be5ab6d624e75b55231948a31b1b3 | CC-BY 4.0 | auto-skala do rozpiętości i reorientacja osi przy imporcie (kod, nie plik) |
 | `models/bf109/` | Messerschmitt BF 109 / Jankenstein | https://sketchfab.com/3d-models/messerschmitt-bf-109-5a14d8cc4ee14c9bbd5ba13a38f44f44 | CC-BY 4.0 | optymalizacja do `bf109-web.glb` (2,72 MB); auto-skala do rozpiętości i reorientacja osi przy imporcie (faza 19b) |
+| `models/zero/` | Mitsubishi A6M2 ZERO - zeke / Savinien B. | https://sketchfab.com/3d-models/mitsubishi-a6m2-zero-zeke-d701787b75fa4c979792b0c0c14221e2 | CC-BY 4.0 | optymalizacja do `zero-web.glb` (3,65 MB: WebP + Draco, gltf-transform); auto-skala do rozpiętości i reorientacja osi przy imporcie (trzeci samolot, etap 2) |
 | `dogfight-splash.jpg` | Grafika promo „Dogfight" / Tatanga (własna) | — (materiał projektu) | własny (©, all rights reserved) | tło ekranu poczekalni lobby (faza 10) |
 | `draco/` | Dekoder Draco / Google | https://github.com/google/draco | Apache-2.0 | bez zmian; skopiowane z `three` (`examples/jsm/libs/draco/gltf/`) do dekompresji `bf109-web.glb`; odświeżać po bumpie `three` (patrz `assets/draco/README.md`) |
 | `textures/waternormals.jpg` | Mapa normalnych wody / projekt three.js | https://github.com/mrdoob/three.js/blob/master/examples/textures/waternormals.jpg | MIT (three.js) | bez zmian; własny shader wody (faza 20, scroll normalnej + odbicie nieba, BEZ planar reflection) |
@@ -21,6 +22,7 @@ w którym trafia do repo (niezmiennik nr 8 z CLAUDE.md).
 | `textures/terrain/sand.jpg` | Aerial Beach 01 / Polyhaven | https://polyhaven.com/a/aerial_beach_01 | CC0 (atrybucja niewymagana) | bez zmian (plik); 2K; tekstura terenu (triplanar — plaża z góry; ocieplana w shaderze; doszlif 2026-06-21, zastąpił `sand_01`) |
 | `audio/engine-spitfire.ogg` | „Airplane - Piper - Engine Test" / stereostereo | https://freesound.org/people/stereostereo/sounds/614788/ | CC-BY 4.0 | **stały** run silnika tłokowego (Piper, kontrolowane stałe obroty) — wybrany za **płaską obwiednię** (≈±0,5 dB, bez „surge"/throbu) i basowe ciało (fundament ~194 Hz); **bezszwowa pętla 4,0 s** z regionu t=4,0–8,0 s — wysokość stała (brak dryftu), **wolny od transientów** (omija krótki skrzyp na ~3,7 s, który w wersji 5 s wracał raz na pętlę — user 2026-06-24; zweryfikowane detektorem HF: pik 67→16), równomocowy crossfade 0,3 s, RMS dopasowane do Bf 109, mono OGG (faza 21; podmieniony 2026-06-24 po serii odrzuceń: `110736` „P51 supercharger" = **przelot** → „przelatujący samolot z ziemi"; `276597` Merlin static = **podkręcanie obrotów co 2–4 s** (operator blipował gazem → pętla cyklicznie „dodawała gazu"). Nie-Merlin (świadomy kompromis: priorytet user = silnik **stały, z bliska, nie przelot**; V12 run-up `161117` ma lepszy timbr 110 Hz, ale jest CC-BY-**NC** + multi-samolot + mniej płaski) |
 | `audio/engine-bf109.ogg` | „Bf-109 — Daimler-Benz Run-Up" / Fight2FlyPhoto | https://freesound.org/people/Fight2FlyPhoto/sounds/142898/ | CC-BY 3.0 | autentyczny silnik **Daimler-Benz DB 601** (Bf 109 E-3); wycięty ~4 s segment run-up, mono OGG (faza 21) |
+| `audio/engine-zero.ogg` | „P-47 Thunderbolt Startup" / Fight2FlyPhoto | https://freesound.org/people/Fight2FlyPhoto/sounds/142900/ | CC-BY 3.0 | **gwiazdowiec** P&W R-2800 (dwurzędowy radialny — rodzina brzmieniowa jak Sakae Zero); bezszwowa pętla 4,0 s ze STAŁEGO biegu po rozruchu (t=46,5–50,5 s; rozrzut 1,1 dB, bez transientów — kryteria fazy 21), crossfade równomocowy 0,3 s, RMS wyrównane do `engine-bf109.ogg`, mono OGG (trzeci samolot, etap 2; odrzucony 143556 „Fw-190 Taxiing" — podjeżdża, poziom narasta) |
 | `audio/guns-mg.ogg` | „MACHINE GUN CLEAN" / EricsSoundschmiede | https://freesound.org/people/EricsSoundschmiede/sounds/457408/ | CC0 (atrybucja niewymagana) | grzechot karabinu maszynowego (Spitfire .303 / Bf 109 MG 17 — ton różnicowany pitch'em w kodzie); pętla, mono OGG (faza 21) |
 | `audio/cannon.ogg` | „Cannon Shot" / qubodup | https://freesound.org/people/qubodup/sounds/187767/ | CC0 (atrybucja niewymagana) | dudnienie działka **20 mm MG FF** (Bf 109); pojedynczy strzał, mono OGG (faza 21) |
 | `audio/explosion.ogg` | „Nearby explosion with debris" / juskiddink | https://freesound.org/people/juskiddink/sounds/108641/ | CC-BY 4.0 | wybuch przy rozbiciu/plusku; ~3 s, mono OGG (faza 21) |
@@ -51,6 +53,16 @@ Oryginał formuły i licencji: `assets/models/spitfire/license.txt`.
 Oryginał formuły i licencji: `assets/models/bf109/license.txt`. Atrybucja widoczna też na ekranie
 wejściowym lobby (wymóg CC-BY przy publicznym deployu).
 
+**`models/zero/`** — model 3D A6M2 Zero (trzeci samolot, etap 2):
+
+> This work is based on "Mitsubishi A6M2 ZERO - zeke"
+> (https://sketchfab.com/3d-models/mitsubishi-a6m2-zero-zeke-d701787b75fa4c979792b0c0c14221e2)
+> by Savinien B. (https://sketchfab.com/SavinienBerault)
+> licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+Oryginał formuły i licencji: `assets/models/zero/license.txt`. Atrybucja widoczna też na ekranie
+wejściowym lobby (wymóg CC-BY przy publicznym deployu).
+
 **`audio/engine-spitfire.ogg`** — silnik Spitfire'a (stały run silnika tłokowego, faza 21):
 
 > "Airplane - Piper - Engine Test.wav" (https://freesound.org/people/stereostereo/sounds/614788/)
@@ -59,6 +71,11 @@ wejściowym lobby (wymóg CC-BY przy publicznym deployu).
 **`audio/engine-bf109.ogg`** — silnik Daimler-Benz DB 601 (Bf 109, faza 21):
 
 > "Bf-109 - Daimler-Benz Run-Up" (https://freesound.org/people/Fight2FlyPhoto/sounds/142898/)
+> by Fight2FlyPhoto -- licensed under CC-BY 3.0 (http://creativecommons.org/licenses/by/3.0/)
+
+**`audio/engine-zero.ogg`** — silnik gwiazdowy (Zero, trzeci samolot etap 2):
+
+> "P-47 Thunderbolt Startup" (https://freesound.org/people/Fight2FlyPhoto/sounds/142900/)
 > by Fight2FlyPhoto -- licensed under CC-BY 3.0 (http://creativecommons.org/licenses/by/3.0/)
 
 **`audio/explosion.ogg`** — wybuch (faza 21):
