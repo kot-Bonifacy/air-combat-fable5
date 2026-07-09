@@ -368,10 +368,37 @@ CANNON_DAMAGE_THRESHOLD), pitch grzechotu Typ 97 = 1,05. Karty lobby/selektor bo
 iterują `PLANE_TYPES` — Zero dochodzi automatycznie. (4) **Testy**: +kolumna złotych, +lock kruchości
 Zero w `ttk.test.ts` (najkruchszy, ≥2× zapłon, szybszy wyciek; działka iterowane po OBU 20 mm).
 **Pułapka środowiska:** martwy junction `node_modules/@air-combat/shared` (lawina TS2307 na serwerze)
-→ `npm install` odtwarza linki. **Deploy front+back RAZEM (v9).** ⏳ ETAP 2 (osobna sesja): user pobiera
-model ze shortlisty → `assets/models/zero/` + optymalizacja gltf-transform + ModelSpec (DUMP_NODES) +
-sampel radialny freesound + atrybucje (LICENSES.md w TYM SAMYM commicie + ekran lobby) + weryfikacja
-wzrokowa 3 kart. ⏳ user: playtest balansu Zero (wiraż vs kruchość) po etapie 2.
+→ `npm install` odtwarza linki. **Deploy front+back RAZEM (v9).** Etap 1 zacommitowany `c572262`.
+
+**Trzeci samolot — A6M2 Zero, ETAP 2/2 ✅ (2026-07-09, 644 testy zielone, BEZ zmian protokołu — v9
+z etapu 1, deploy front+back RAZEM):** user wrzucił do `assets/models/Zero` INNY model niż shortlista —
+**„Mitsubishi A6M2 ZERO - zeke" / Savinien B. (Sketchfab, CC-BY 4.0, czysty `license.txt`, praca
+oryginalna — francuskie nazwy części)**; rip z War Thundera zniknął (ryzyko licencyjne zażegnane).
+(1) **Model**: katalog znormalizowany na `zero/` (małe litery — deploy Linux); `zero-web.glb` 3,65 MB
+(gltf-transform `webp`→`draco`, 29,3 MB→3,65 MB; BEZ flatten/join — nazwy węzłów przeżyły; te same
+`extensionsRequired` co Bf 109 → loader gotowy). Struktura wyjątkowo czysta: `Rotor`=śmigło (JEDEN mesh
+piasta+łopaty → wygasza się całość w tarczę, kołpaka nie da się zostawić — akceptowalne), `Verriere`=
+owiewka, `Corps`=kadłub+skrzydła, `Leg d`/`Leg g`=golenie (three sanityzuje spacje: `Leg_d`).
+(2) **ModelSpec z pomiarów nieskompresowanej geometrii** (skrypt world-space jak przy Bf 109): nos w +X
+→ `fixEulerDeg.y=-90`; model stoi „na trzech punktach" — linia środkowa ~10°, oś śmigła (normalna tarczy,
+PCA) ~12,3° → `fixEulerDeg.x=12` (kompromis, strojony wzrokowo jednym polem); `propAxisFromGeometry`
+(tarcza pochylona względem +X → bbox+czyste Z dawałoby precesję); długość world-space 9,06 m = dokładnie
+A6M2 (sanity-check). (3) **Materiały**: zmierzony kanał B (metalness) `Corps_metallicRoughness` śr. 37/255
+≈ 0,15 → TA SAMA pułapka co Bf 109 („płasko pod IBL bez tone mappingu") → prewencyjnie `forceMetallic`
+roughness 0,45; `Verriere` zostaje szkłem (`keepDielectricRe`). (4) **Audio**: `engine-zero.ogg` =
+**gwiazdowiec P&W R-2800** (idle P-47 po rozruchu, freesound **142900** Fight2FlyPhoto **CC-BY 3.0** —
+ten sam autor co sampel Bf 109; dwurzędowy radialny jak Sakae). Analiza obwiedni (RMS/HF per 250 ms):
+ostatnie ~12 s nagrania = stały bieg, najlepsze okno 4 s rozrzut **1,1 dB** bez transientów → bezszwowa
+pętla 4,0 s (t=46,5–50,5 s, crossfade równomocowy 0,3 s w audio sprzed startu pętli), RMS wyrównane do
+`engine-bf109.ogg` → `ENGINE_GAIN_MUL.zero=1,0`. Odrzucony 143556 „Fw-190 Taxiing" (podjeżdża — poziom
+narasta). **Pułapka środowiska:** ffmpeg ZNIKNĄŁ z systemu (faza 21 go miała) → `ffmpeg-static` z npm
+w scratchpadzie (6.1.1, nowocześniejszy niż tamten z 2013). (5) **Atrybucje** (niezmiennik nr 8, ten sam
+commit): LICENSES.md (model+sampel, pełne formuły) + ekran lobby (`attributionEl`): model Zero DOPISANY
+i **domknięta zaległa nota audio CC-BY** (stereostereo/Fight2FlyPhoto/juskiddink — wisiała od fazy 21).
+typecheck/644 testy/lint/build zielone. **Zacommitowane `3521409` + push.** ⏳ user: weryfikacja wzrokowa
+(pitch 12° w locie poziomym, roughness 0,45, śmigło współosiowe, podwozie schowane, 3 karty w lobby),
+odsłuch silnika (miks/mnożnik 1,0), playtest balansu Zero (wiraż vs kruchość), fps RTX; deploy
+front+back RAZEM (v9 z etapu 1 wciąż NIEWDROŻONE).
 
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
