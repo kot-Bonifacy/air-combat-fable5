@@ -19,6 +19,7 @@ function validRaw(): Record<string, unknown> {
     propEfficiency: 0.8,
     staticThrustN: 13000,
     fuelEnduranceFullThrottleS: 900,
+    spawnSpeedMs: 120,
     engineThermal: {
       overheatTimeFullS: 300,
       coolTimeS: 200,

@@ -43,6 +43,12 @@ export interface PlaneConfig {
   fuelEnduranceFullThrottleS: number;
   /** Model termiczny silnika (przegrzewanie na wysokim gazie) — patrz physics/engine-heat.ts. */
   engineThermal: EngineThermalConfig;
+  /**
+   * Prędkość na spawnie/respawnie [m/s TAS] — punkt pracy startowy per samolot (2026-07-09).
+   * Wspólna stała 120 m/s (432 km/h) wpychała A6M2 w reżim zabetonowanych lotek
+   * (rollRateCurve ~15°/s) od pierwszej sekundy meczu; typ o niskiej Vmax spawnuje wolniej.
+   */
+  spawnSpeedMs: number;
   /** Limit strukturalny przeciążenia dodatniego [G]. */
   nMaxG: number;
   /** Limit strukturalny przeciążenia ujemnego [G] (liczba ujemna). */
@@ -284,6 +290,7 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   propEfficiency: [0.1, 1],
   staticThrustN: [100, 10_000_000],
   fuelEnduranceFullThrottleS: [60, 36_000],
+  spawnSpeedMs: [40, 250],
   nMaxG: [1, 20],
   nMinG: [-10, 0],
   alignTauS: [0.05, 5],

@@ -418,6 +418,31 @@ matchupu A6M2 Zero"** (najlepszy zakręt i roll@200; roll@400 ≥2× gorszy od o
 Obserwacja poza zakresem (nie ruszana — user: „Spit/Bf ok"): Bf 109 Vmax SL mierzone 499 vs cel złotego
 465 (+7%, przechodzi na tolerancji ±8%). ⏳ user: playtest czucia rolla Zero (zwł. 300–350 km/h).
 
+**Kalibracja cz.2 — „wciąż ślamazarnie" = zły PUNKT PRACY, nie krzywa (2026-07-09, 659 testów zielone,
+BEZ protokołu — v9, deploy front+back RAZEM):** user po fixie krzywej: Zero nadal powoli przechyla się
+(klawiatura I mysz). Diagnoza **E2E w PRAWDZIWEJ przeglądarce** (Playwright npm + hak `window.__acDebug`
+w `online-main.ts`, tylko `import.meta.env.DEV` — wycinany z produkcji): fizyka klienta = harness co do
+0,1°/s (19,8 zmierzone vs 19,7 z krzywej), ALE **spawn = 120 m/s (432 km/h TAS) WSPÓLNE dla wszystkich
+typów, a gaz 0,8 trymuje Zero na ~416 km/h** → gracz od pierwszej sekundy do końca meczu siedział
+w „betonowym" reżimie (12–20°/s), którego dotyczy historyczna zapaść lotek. Mysz: konfiguracje instruktora
+IDENTYCZNE u wszystkich (aggressivenessRoll 7.0) — ten sam korzeń, brak osobnego buga. Fix: (1)
+**`spawnSpeedMs` per samolot w JSON** (niezmiennik nr 3; loader+zakres [40,250], Spit/Bf 120, Zero 95 =
+342 km/h; `game-room.spawn` czyta z `player.plane`) → E2E po zmianie: Zero spawn 337 km/h, roll ~52°/s,
+154° banku w 3 s (było 58°); Spitfire kontrolnie bez regresu (420 km/h, 52°/s). (2) **Ostrzeżenie HUD
+przy wierszu IAS**: `aileronWarning(rollAuthority01)` w `hud.ts` (autorytet = maxRoll(IAS)/szczyt krzywej;
+<0,45 → „! lotki sztywne — zwolnij !", <0,2 → „*** LOTKI ZABETONOWANE ***") — uczy mechaniki; dla Spit/Bf
+odpala się dopiero w głębokim nurkowaniu (>550 km/h, historycznie zasadne). **Raport manewrowy** (pełny
+pipeline, harness tymczasowy skasowany): beczka 360° Zero 4,3–4,8 s ≤300 km/h vs 8,9 s @350 i >30 s @400
+(w beczce IAS rośnie → dodatnie sprzężenie sztywnienia); rewers przechyłu 120° Zero 1,6→7,6 s (250→400 km/h,
+Spit/Bf 1,4–2,2 s wszędzie); zawracanie 180° Zero NAJSZYBSZE (4,8–6,0 s) mimo sztywnych lotek; pętla Zero
+z 300 km/h w 10,9 s najciaśniejsza, Bf z 300 km/h NIE domyka (obciążenie skrzydła; od 350 domyka) — spójne
+z relacjami historycznymi. **Playwright MCP dodany do konfiguracji Claude Code (scope lokalny) — narzędzia
+dostępne od NASTĘPNEJ sesji**; w tej sesji pomiar skryptem npm (kopia: scratchpad `measure-roll.mjs`;
+`playwright` instalowany `--no-save`, NIE w package.json). Pułapki E2E: onboarding „JAK GRAĆ" zasłania
+poczekalnię; tryb drużynowy blokuje Start przy pustej drużynie B (dodać bota nth(1)). **Obserwacja:** boty
+w Zero latają gazem 0,85–1,0 = sztywny reżim (słabsze niż powinny) — per-typ prędkość bojowa botów →
+ewent. backlog po playteście. ⏳ user: playtest (spawn 342 km/h OK? ostrzeżenie HUD czytelne? boty-Zero?).
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu

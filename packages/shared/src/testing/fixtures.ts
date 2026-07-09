@@ -22,6 +22,7 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
     propEfficiency: 0.8,
     staticThrustN: 10_000,
     fuelEnduranceFullThrottleS: 900,
+    spawnSpeedMs: 120,
     engineThermal: {
       overheatTimeFullS: 300,
       coolTimeS: 200,

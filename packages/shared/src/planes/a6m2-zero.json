@@ -14,6 +14,7 @@
   "propEfficiency": 0.8,
   "staticThrustN": 6200,
   "fuelEnduranceFullThrottleS": 1500,
+  "spawnSpeedMs": 95,
   "engineThermal": {
     "overheatTimeFullS": 360,
     "coolTimeS": 180,

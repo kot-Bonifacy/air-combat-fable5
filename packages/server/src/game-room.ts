@@ -114,7 +114,6 @@ import { BOT_THINK_INTERVAL, BotManager, MAX_BOTS_PER_ROOM } from './bot-manager
 // wrogów (shared/world/spawn), rewanż (ended → playing) i auto-powrót ended → waiting.
 
 const SPAWN_ALTITUDE_M = 800;
-const SPAWN_SPEED_MS = 120;
 const SPAWN_THROTTLE = 0.8;
 /** Gaz krążenia samolotu bez pilota (rozłączony gracz) — podtrzymuje energię w locie auto-poziomym. */
 const DISCONNECT_CRUISE_THROTTLE = 0.7;
@@ -1853,7 +1852,9 @@ export class GameRoom {
 
     const state = player.sim.state;
     state.position.copy(player.spawnPos);
-    state.velocity.copy(player.spawnDir).multiplyScalar(SPAWN_SPEED_MS);
+    // prędkość spawnu per samolot (2026-07-09): wspólne 120 m/s wpychało Zero w reżim
+    // zabetonowanych lotek (rollRateCurve przy 430+ km/h) od pierwszej sekundy życia
+    state.velocity.copy(player.spawnDir).multiplyScalar(player.plane.spawnSpeedMs);
     state.orientation.setFromUnitVectors(FORWARD_Z, player.spawnDir);
     state.angularRates.pitch = 0;
     state.angularRates.roll = 0;
@@ -1861,7 +1862,7 @@ export class GameRoom {
     state.throttle = SPAWN_THROTTLE;
     state.fuelFrac = 1; // nowe życie = pełny bak
     state.engineHeatFrac = 0; // zimny silnik na świeżym życiu
-    state.iasMs = SPAWN_SPEED_MS;
+    state.iasMs = player.plane.spawnSpeedMs;
     state.loadFactor = 1;
     state.stalled = false;
     state.life = 'alive';

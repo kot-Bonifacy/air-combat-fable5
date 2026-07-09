@@ -24,6 +24,13 @@ export interface HudData {
   /** Pochylenie nosa nad horyzont [rad]. */
   pitchRad: number;
   controlMode: 'mysz' | 'klawiatura';
+  /**
+   * Bieżący autorytet lotek 0..1: maxRollRate(IAS) / szczyt krzywej rollRateCurve.
+   * Uczy mechaniki sztywnienia lotek z prędkością (kanoniczna słabość A6M2 — przy
+   * 430+ km/h zostaje ~15% szczytu): HUD dopisuje ostrzeżenie przy wierszu IAS,
+   * bo to prędkość jest przyczyną i lekarstwem (zwolnij → stery wracają).
+   */
+  rollAuthority01: number;
   /** Zapas paliwa 0..1 (pełny bak = 1). Przy 0 silnik zgasł — HUD ostrzega. */
   fuel01: number;
   /**
@@ -45,6 +52,19 @@ export interface HudData {
   /** Etykieta wiersza grupy wtórnej (np. „20 mm"). */
   secondaryLabel?: string;
   extraLines: readonly string[];
+}
+
+/** Poniżej tego ułamka szczytowego roll rate lotki są wyraźnie sztywne (ostrzeżenie przy IAS). */
+export const AILERON_STIFF_FRAC = 0.45;
+/** Poniżej tego ułamka lotki są praktycznie zabetonowane (mocniejsze ostrzeżenie). */
+export const AILERON_CONCRETE_FRAC = 0.2;
+
+/** Sufiks ostrzeżenia o sztywnieniu lotek z prędkością — dopisywany do wiersza IAS,
+ *  bo przyczyną (i lekarstwem) jest prędkość: zwolnij, a stery wracają. */
+export function aileronWarning(rollAuthority01: number): string {
+  if (rollAuthority01 < AILERON_CONCRETE_FRAC) return '   *** LOTKI ZABETONOWANE ***';
+  if (rollAuthority01 < AILERON_STIFF_FRAC) return '   ! lotki sztywne — zwolnij !';
+  return '';
 }
 
 /** Próg ostrzeżenia o niskiej amunicji (udział pełnego zapasu). */
@@ -165,7 +185,7 @@ export class Hud {
     const tempColor = engineTempColor(data.engineHeat01);
     const tempHtml = tempColor ? `<span style="color:${tempColor}">${escHtml(tempLine)}</span>` : escHtml(tempLine);
     this.textEl.innerHTML = [
-      escHtml(hudRow('IAS', data.iasKmh.toFixed(0), 'km/h')),
+      escHtml(hudRow('IAS', data.iasKmh.toFixed(0), 'km/h') + aileronWarning(data.rollAuthority01)),
       escHtml(hudRow('TAS', data.tasKmh.toFixed(0), 'km/h')),
       escHtml(hudRow('alt', data.altM.toFixed(0), 'm')),
       escHtml(hudRow('wznosz.', varioValue(data.verticalSpeedMs), 'm/s')),

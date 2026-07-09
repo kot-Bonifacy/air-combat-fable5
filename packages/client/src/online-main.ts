@@ -37,6 +37,7 @@ import {
   getForward,
   getRight,
   getUp,
+  maxRollRateRadS,
   nAvailG,
   planeConfigOf,
   primaryGroup,
@@ -548,6 +549,39 @@ let predictor = new Predictor(localPlane, terrain);
 let interpolator = new SnapshotInterpolator();
 const interpOut = createInterpolatedState();
 const overlay = new NetDebugOverlay();
+
+// --- hak diagnostyczny E2E (TYLKO dev, wycinany z produkcji przez import.meta.env.DEV):
+//     zewnętrzny runner (Playwright) odczytuje stan lokalnego samolotu, by zmierzyć realną
+//     reakcję sterów w przeglądarce i porównać ją z harnessem shared (kalibracja 2026-07-09).
+interface AcDebugSample {
+  phase: Phase;
+  life: LifePhase;
+  iasKmh: number;
+  rollRateDegS: number;
+  bankDeg: number;
+  throttle: number;
+}
+if (import.meta.env.DEV) {
+  const dbgUp = new Vector3();
+  (window as Window & { __acDebug?: { sample: () => AcDebugSample | null } }).__acDebug = {
+    sample: () => {
+      if (!predictor.ready) return null;
+      const s = predictor.sim.state;
+      getUp(s.orientation, dbgUp);
+      const bankMag = (Math.acos(Math.min(1, Math.max(-1, dbgUp.y))) * 180) / Math.PI;
+      // znak przechyłu względem prawej strony poziomego kursu (-(up×v̂))
+      const side = dbgUp.x * -s.velocity.z + dbgUp.z * s.velocity.x;
+      return {
+        phase,
+        life: s.life,
+        iasKmh: s.iasMs * MS_TO_KMH,
+        rollRateDegS: (s.angularRates.roll * 180) / Math.PI,
+        bankDeg: side > 0 ? bankMag : -bankMag,
+        throttle: s.throttle,
+      };
+    },
+  };
+}
 
 // --- meshe encji (jeden PlaneModel na id z serwera) ---
 const meshes = new Map<number, PlaneModel>();
@@ -1719,6 +1753,11 @@ function updateHud(frameDtS: number): void {
     bankRad: Math.atan2(-scratchRight.y, scratchUp.y),
     pitchRad: Math.asin(Math.min(1, Math.max(-1, scratchFwd.y))),
     controlMode: mouseAim.locked ? 'mysz' : 'klawiatura',
+    // autorytet lotek: bieżący maxRoll(IAS) względem szczytu krzywej (ostrzeżenie „lotki sztywne"
+    // przy IAS — kanoniczna słabość Zero powyżej ~370 km/h, u innych dopiero w głębokim nurkowaniu)
+    rollAuthority01:
+      maxRollRateRadS(s.iasMs, localPlane) /
+      Math.max(1e-6, localPlane.rollRateCurve.reduce((m, [, r]) => Math.max(m, r), 0) * (Math.PI / 180)),
     // ostrzeżenie „pusty bak" tylko w locie — wrak/obserwator nie ma silnika do zgaszenia
     fuel01: localAlive ? s.fuelFrac : 1,
     // temperatura silnika (predykowana lokalnie pod wskaźnik; skutek przegrzania idzie przez poziomy v8)
