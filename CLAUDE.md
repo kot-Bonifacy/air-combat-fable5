@@ -400,6 +400,24 @@ typecheck/644 testy/lint/build zielone. **Zacommitowane `3521409` + push.** ⏳ 
 odsłuch silnika (miks/mnożnik 1,0), playtest balansu Zero (wiraż vs kruchość), fps RTX; deploy
 front+back RAZEM (v9 z etapu 1 wciąż NIEWDROŻONE).
 
+**Kalibracja parametrów lotnych — fix rolla Zero + Vmax wys. 2026-07-09 (zgłoszenie usera, 651 testów
+zielone, BEZ zmian protokołu — v9, czysto shared/JSON, deploy front+back RAZEM):** user: „Zero bardzo słabo
+reaguje na A/D — powoli się przechyla". Diagnoza serią pomiarową (pełny pipeline pilota, `rollRateTest`):
+to NIE bug — klawiatura daje pełne wychylenie natychmiast, roll kinematyczny wprost z `rollRateCurve(IAS)`;
+**krzywa Zero zapadała się ~50 km/h ZA WCZEŚNIE** wobec testów Zero Kogi (stery lekkie <~348 km/h,
+sztywnienie >348, „beton" >445 km/h), a Zero na pełnym gazie SL samo rozpędza się do ~450 km/h, więc gracz
+lecąc „prosto z gazem" testował je w strefie 12–14°/s. Decyzja usera (AskUserQuestion): przesunąć zapaść
+wg źródeł. Nowa krzywa `[120,50],[200,78],[250,85],[320,70],[370,32],[445,12],[550,6]` → @300=74°/s (było
+54), @350=47 (30), @400=24 (20), @450=12 (14 — WIERNIEJ, beton). Przy okazji rekalibracja prędkości:
+`cd0` 0,021→0,020 + `fullThrottleHeightM` 4200→4550 (proxy odzysku RAM, którego prosty model sprężarki
+nie ma; 4550 m = książkowa wysokość Vmax) → Vmax@4550 511→**527** km/h (książkowe 533, było −4%),
+wznoszenie 15,3 m/s, SL 454 (konwencja lekko hojnych SL, jak Spit 503/Bf 499); zakręt bez zmian 15,0 s.
+Złote testy: `rollDegS` 30→47, `vMaxSLKmh` 435→445, **NOWE kotwice kształtu krzywej rolla** (`rollShape`
+±10% per samolot — szczyt i zapaść pilnowane wielopunktowo, nie tylko @350) + describe **„asymetria
+matchupu A6M2 Zero"** (najlepszy zakręt i roll@200; roll@400 ≥2× gorszy od obu; najgorsze nurkowanie).
+Obserwacja poza zakresem (nie ruszana — user: „Spit/Bf ok"): Bf 109 Vmax SL mierzone 499 vs cel złotego
+465 (+7%, przechodzi na tolerancji ±8%). ⏳ user: playtest czucia rolla Zero (zwł. 300–350 km/h).
+
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 
 ⏳ **Otwarte po stronie użytkownika:** smoke online (FFA bez respawnu
