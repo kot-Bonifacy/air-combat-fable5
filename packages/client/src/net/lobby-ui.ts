@@ -64,7 +64,7 @@ const ONLINE_CONTROL_ROWS: readonly (readonly [string, string])[] = [
   ['Przechylenie L / P', 'A / ←   •   D / →'],
   ['Ster kierunku L / P', 'Q   •   E'],
   ['Gaz +  /  −', 'L.Shift  /  L.Ctrl'],
-  ['Rozglądanie się (kamera)', 'C (przytrzymaj)'],
+  ['Rozglądanie się (kamera)', 'Lewy Alt (przytrzymaj)'],
   ['Tabela wyników', 'Tab (przytrzymaj)'],
   ['Panel sieci', 'N'],
 ];

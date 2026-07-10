@@ -29,11 +29,11 @@ import { PerspectiveCamera, Vector3 } from 'three';
 const RETICLE_DISTANCE_M = 1500;
 
 /**
- * Promień okręgu ograniczającego celownik jako UŁAMEK wysokości ekranu (~2/3 wys. → promień = 1/3).
+ * Promień okręgu ograniczającego celownik jako UŁAMEK wysokości ekranu (~3/4 wys. → promień = 3/8).
  * Okrąg NIE jest już rysowany (życzenie usera), ale nadal ogranicza offset (i mapę px→kąt). Czysto
  * wizualny knob wygody (jak RETICLE_DISTANCE_M), nie strojenie fizyki — samoloty stroi się w JSON.
  */
-const RETICLE_RADIUS_FRACTION = 1 / 3;
+const RETICLE_RADIUS_FRACTION = 3 / 8;
 
 /**
  * „Mocna krawędź" (decyzja usera 2026-07-10): mapa promienia znormalizowanego r01∈[0,1]

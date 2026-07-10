@@ -409,34 +409,36 @@ function triggerHeld(): boolean {
   return (mouseAim.locked && triggerMouse && !suppressFireUntilRelease) || triggerKey;
 }
 
-// kamera: C TRZYMANE = chwilowe rozglądanie (kamera orbitalna, lot z klawiatury); puszczenie C
-// samoczynnie wraca do domyślnego sterowania myszą (kamera pościgowa) — życzenie usera 2026-06-30
-// (wcześniej C było przełącznikiem toggle). Orbitalna = rozglądanie/zoom myszą, mysz-celownik
-// wyłączona; pościgowa = celowanie myszą, gdy gracz żyje. updateMouseAimEnabled spina stan myszy
-// z trybem kamery i stanem śmierci.
-/** Włącza/wyłącza chwilową kamerę orbitalną (rozglądanie pod trzymanym C). */
+// kamera: LEWY ALT TRZYMANY = chwilowe rozglądanie (kamera orbitalna, lot z klawiatury); puszczenie
+// Alta samoczynnie wraca do domyślnego sterowania myszą (kamera pościgowa) — życzenie usera 2026-06-30
+// (chwilowe zamiast toggle), klawisz zmieniony C→Lewy Alt 2026-07-10. Orbitalna = rozglądanie/zoom
+// myszą, mysz-celownik wyłączona; pościgowa = celowanie myszą, gdy gracz żyje. updateMouseAimEnabled
+// spina stan myszy z trybem kamery i stanem śmierci.
+/** Włącza/wyłącza chwilową kamerę orbitalną (rozglądanie pod trzymanym Lewym Altem). */
 function setOrbitCamera(active: boolean): void {
   cameraMode = active ? 'orbitalna' : 'pościgowa';
   orbit.enabled = active; // w pościgowej OrbitCamera ignoruje mysz (patrz klasa)
   updateMouseAimEnabled();
-  // powrót do sterowania myszą: przejmij ją od razu (puszczenie C to gest) — bez tego kursor
+  // powrót do sterowania myszą: przejmij ją od razu (puszczenie Alta to gest) — bez tego kursor
   // Windows zostawał widoczny aż do kliknięcia. Pomiń, gdy menu pauzy zwolniło kursor.
   if (!active && !pauseMenuOpen) mouseAim.requestLock();
 }
 window.addEventListener('keydown', (e) => {
   // e.repeat odsiewa autopowtarzanie keydown podczas trzymania (inaczej requestLock w kółko).
-  if (e.code === 'KeyC' && !e.repeat && phase === 'playing' && !pauseMenuOpen) {
+  if (e.code === 'AltLeft' && !e.repeat && phase === 'playing' && !pauseMenuOpen) {
+    e.preventDefault(); // Alt sam z siebie aktywuje pasek menu przeglądarki (Firefox) / gubi fokus
     setOrbitCamera(true);
   }
 });
 window.addEventListener('keyup', (e) => {
-  // Puszczenie C zawsze wraca do pościgowej (także gdy keydown padł przy innym stanie, np. menu
-  // pauzy otwarte z trzymanym C) — nie zostawiaj kamery „zatrzaśniętej" w orbitalnej.
-  if (e.code === 'KeyC' && phase === 'playing' && cameraMode === 'orbitalna') {
+  // Puszczenie Alta zawsze wraca do pościgowej (także gdy keydown padł przy innym stanie, np. menu
+  // pauzy otwarte z trzymanym Altem) — nie zostawiaj kamery „zatrzaśniętej" w orbitalnej.
+  if (e.code === 'AltLeft' && phase === 'playing' && cameraMode === 'orbitalna') {
+    e.preventDefault();
     setOrbitCamera(false);
   }
 });
-// Utrata fokusu okna (Alt+Tab) podczas trzymania C nie wysyła keyup → ręcznie wracamy do
+// Utrata fokusu okna (Alt+Tab) podczas trzymania Alta nie wysyła keyup → ręcznie wracamy do
 // pościgowej, by kamera nie utknęła w orbitalnej.
 window.addEventListener('blur', () => {
   if (phase === 'playing' && cameraMode === 'orbitalna') setOrbitCamera(false);
