@@ -20,7 +20,6 @@ import {
   MAX_PLAYERS_PER_ROOM,
   MRAD_TO_RAD,
   MS_TO_KMH,
-  MouseAimCore,
   PORT,
   DEFAULT_PLANE_TYPE,
   SEA_LEVEL_M,
@@ -336,8 +335,7 @@ resize();
 
 // --- sterowanie ---
 const keyboard = new KeyboardInput(window);
-const aimCore = new MouseAimCore();
-const mouseAim = new MouseAim(renderer.domElement, aimCore);
+const mouseAim = new MouseAim(renderer.domElement);
 renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
 
 // spust (faza 11): LPM przy aktywnej myszy albo Spacja. Pierwsze kliknięcie wchodzi
@@ -560,10 +558,30 @@ interface AcDebugSample {
   rollRateDegS: number;
   bankDeg: number;
   throttle: number;
+  /** Offset celownika względem środka kadru [px] + promień okręgu [px] (model ekranowy). */
+  reticleX: number;
+  reticleY: number;
+  reticleRadiusPx: number;
+  /** Kąt kierunku celu od osi kamery [°] — weryfikacja mapy „mocnej krawędzi". */
+  aimAngleDeg: number;
+  /** Rzut kierunku celu na prawo/górę kamery — weryfikacja znaków (dziób w stronę kursora). */
+  aimRightDot: number;
+  aimUpDot: number;
 }
 if (import.meta.env.DEV) {
   const dbgUp = new Vector3();
-  (window as Window & { __acDebug?: { sample: () => AcDebugSample | null } }).__acDebug = {
+  const dbgAim = new Vector3();
+  const dbgCamFwd = new Vector3();
+  const dbgCamRight = new Vector3();
+  const dbgCamUp = new Vector3();
+  interface AcDebug {
+    sample: () => AcDebugSample | null;
+    /** Testowy ruch myszy [px] — pozwala E2E sterować celownikiem bez pointer locka. */
+    nudgeReticle: (dxPx: number, dyPx: number) => void;
+    /** Wyśrodkuj celownik. */
+    recenterReticle: () => void;
+  }
+  (window as Window & { __acDebug?: AcDebug }).__acDebug = {
     sample: () => {
       if (!predictor.ready) return null;
       const s = predictor.sim.state;
@@ -571,6 +589,13 @@ if (import.meta.env.DEV) {
       const bankMag = (Math.acos(Math.min(1, Math.max(-1, dbgUp.y))) * 180) / Math.PI;
       // znak przechyłu względem prawej strony poziomego kursu (-(up×v̂))
       const side = dbgUp.x * -s.velocity.z + dbgUp.z * s.velocity.x;
+      const off = mouseAim.debugOffsetPx();
+      mouseAim.aimDirection(dbgAim);
+      camera.getWorldDirection(dbgCamFwd);
+      dbgCamRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+      dbgCamUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+      const aimAngleDeg =
+        (Math.acos(Math.min(1, Math.max(-1, dbgAim.dot(dbgCamFwd)))) * 180) / Math.PI;
       return {
         phase,
         life: s.life,
@@ -578,8 +603,16 @@ if (import.meta.env.DEV) {
         rollRateDegS: (s.angularRates.roll * 180) / Math.PI,
         bankDeg: side > 0 ? bankMag : -bankMag,
         throttle: s.throttle,
+        reticleX: off.x,
+        reticleY: off.y,
+        reticleRadiusPx: off.radiusPx,
+        aimAngleDeg,
+        aimRightDot: dbgAim.dot(dbgCamRight),
+        aimUpDot: dbgAim.dot(dbgCamUp),
       };
     },
+    nudgeReticle: (dxPx, dyPx) => mouseAim.nudge(dxPx, dyPx),
+    recenterReticle: () => mouseAim.recenter(),
   };
 }
 
@@ -805,6 +838,7 @@ function resetGameState(): void {
   interpolator = new SnapshotInterpolator();
   hasPrevLocal = false;
   chaseCamera.reset();
+  mouseAim.recenter(); // nowy mecz/reconnect: celownik na środek
   // czysty stan walki: zgaś smugacze, wybuchy, dym; wyczyść feed/marker (nowy mecz / reconnect)
   for (const b of cosmeticPool.bullets) b.active = false;
   tracerCounter.clear();
@@ -1267,6 +1301,7 @@ function onLocalRespawn(): void {
   localDeathCause = null; // świeże życie — zapomnij przyczynę poprzedniej śmierci
   localDeathModule = null;
   downedOverlay.hide();
+  mouseAim.recenter(); // celownik na środek (nie dziedzicz offsetu z poprzedniego życia)
   updateMouseAimEnabled();
 }
 
@@ -1692,10 +1727,14 @@ function sendInputTick(dtS: number): void {
 
   const hasKeyboard = pitchUp !== 0 || rollRight !== 0 || yawRight !== 0;
   if (mouseAim.locked && !hasKeyboard) {
-    aimCore.renormalize(scratchNose);
-    aimCore.targetDir(scratchAim);
+    // aim = punkt świata „pod celownikiem" (War Thunder): kotwica w świecie, nos dolatuje i STAJE.
+    // advance wchłania ruch myszy i przelicza aimDir (celownik osiada do środka, gdy nos dosięgnie celu).
+    mouseAim.advance(camera);
+    mouseAim.aimDirection(scratchAim);
   } else {
-    aimCore.alignTo(scratchNose);
+    // klawiatura steruje bezpośrednio (albo brak myszy): aim = nos, celownik wraca
+    // na środek — po puszczeniu klawiszy celownik startuje od osi kamery ≈ nos (gładko)
+    mouseAim.recenter();
     scratchAim.copy(scratchNose);
   }
 
@@ -1958,12 +1997,15 @@ function updateHudOverlays(): void {
   }
   for (; mi < markers.length; mi++) markers[mi]!.hide();
 
-  // celownik myszy — tylko żywy gracz z aktywną myszą (wrak strzela Spacją, bez celownika myszy)
-  const reticlePos = mouseAim.locked && localAlive ? mouseAim.reticleScreenPos(viewPos, camera, w, h) : null;
-  if (reticlePos) {
+  // celownik myszy — tylko żywy gracz z aktywną myszą (wrak strzela Spacją, bez celownika myszy).
+  // Model osiadający (War Thunder): pozycja = RZUT aimDir (świat) na bieżącą kamerę, więc celownik
+  // wraca do środka, gdy nos dolatuje do celu. Bez okręgu granicy (życzenie usera — sam clamp został).
+  const showReticle = mouseAim.locked && localAlive;
+  if (showReticle) {
+    const rp = mouseAim.reticlePixel(camera, w, h);
     reticleEl.style.display = 'block';
-    reticleEl.style.left = `${reticlePos.x.toFixed(0)}px`;
-    reticleEl.style.top = `${reticlePos.y.toFixed(0)}px`;
+    reticleEl.style.left = `${rp.x.toFixed(0)}px`;
+    reticleEl.style.top = `${rp.y.toFixed(0)}px`;
   } else {
     reticleEl.style.display = 'none';
   }
