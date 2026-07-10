@@ -130,17 +130,34 @@ export interface ClimbTestResult {
   bestSpeedMs: number;
 }
 
+export interface BestClimbPoint {
+  gammaRad: number;
+  rocMs: number;
+  tasMs: number;
+}
+
+/**
+ * Najlepszy punkt wznoszenia ustalonego na danej wysokości: przeszukanie TAS
+ * po bilansie mocy (zakres/kroki identyczne jak historycznie w climbTest —
+ * wynik climbTest bez zmian). Reużywane przez timeToAltitudeTest
+ * (combat-maneuvers.ts) do quasi-statycznego profilu wznoszenia.
+ */
+export function bestSteadyClimbPoint(plane: PlaneConfig, altitudeM: number): BestClimbPoint {
+  let best: BestClimbPoint = { gammaRad: 0, rocMs: -Infinity, tasMs: 0 };
+  for (let tasMs = 50; tasMs <= 130; tasMs += 2) {
+    const point = steadyClimbAt(plane, tasMs, altitudeM);
+    if (point.rocMs > best.rocMs) best = { gammaRad: point.gammaRad, rocMs: point.rocMs, tasMs };
+  }
+  return best;
+}
+
 /**
  * Wznoszenie z V optymalną: przeszukanie prędkości po bilansie mocy,
  * potem 20 s symulacji w czasie od stanu ustalonego (n = cosγ, tor prosty)
  * — średnie vy to wynik; rozjazd z bilansem >5% = błąd modelu/integratora.
  */
 export function climbTest(plane: PlaneConfig, altitudeM = 500): ClimbTestResult {
-  let best: SteadyClimbPoint & { tasMs: number } = { gammaRad: 0, rocMs: -Infinity, tasMs: 0 };
-  for (let tasMs = 50; tasMs <= 130; tasMs += 2) {
-    const point = steadyClimbAt(plane, tasMs, altitudeM);
-    if (point.rocMs > best.rocMs) best = { ...point, tasMs };
-  }
+  const best = bestSteadyClimbPoint(plane, altitudeM);
 
   const state = createPlaneState();
   state.position.set(0, altitudeM, 0);

@@ -87,61 +87,70 @@ Każde odstępstwo poniżej jest **decyzją projektową**, nie luką. Nowych nie
 **Uwaga porządkowa:** w drzewie wisi niezacommitowany model celownika myszy (osiadający, 2026-07-10)
 — przed startem R0 zamknąć/zacommitować, żeby rekalibracja szła od czystego stanu.
 
-## 5. Cele kalibracyjne (liczby)
+## 5. Cele kalibracyjne (liczby) — **TABELA ZAMROŻONA w R0 (2026-07-10)**
 
-Wartości poniżej to **cele robocze z literatury ogólnej — etap R0 obejmuje przejście źródłowe**
-(raporty AFDU/RAE, dane Messerschmitt AG, testy Zero Kogi/TAIC, „America's Hundred Thousand",
-Spitfire Mk II ADFU trials) i zamrożenie ostatecznej tabeli w złotych testach. Tam, gdzie źródła
-się rozjeżdżają, podajemy przedział — środek przedziału staje się celem, ±5 % tolerancją.
+Przejście źródłowe wykonane w R0 (research webowy). Źródła pierwotne użyte do zamrożenia:
 
+- **Spitfire Mk IIa**: próby A&AEE **P7280** (raport 30.05.1940, +9 lb / 3 000 rpm, 6 172 lb)
+  — wwiiaircraftperformance.org/spitfireperformance.com „Spitfire Mk IIA Performance Testing".
+- **Bf 109 E-3**: próby szwajcarskie **J-347** (WNr 2404, DB 601 Aa, 11.1941, kurfurst.org) —
+  SL 465–472 km/h, 565–572 km/h @ ~5 000 m (Kurzleistung 5-min); próby francuskie **CEMA WNr 1304**
+  (12.1939, 2 540 kg, 1 100 KM 5-min) — pełny profil wznoszenia (1 000 m 1'16" … 6 000 m 8'01",
+  szczyt 15,1 m/s @ 3–4 km) i 530 km/h @ 4 500 m przy OTWARTYCH chłodnicach; Kennblatt 555 @ 4 500.
+- **A6M2 Zero model 21**: oficjalne dane japońskie (za Francillonem) — 533 km/h @ 4 550 m,
+  6 000 m w **7'27"**, 15,7 m/s; limit nurkowania z instrukcji pilota **340 kt IAS = 630 km/h**
+  (modele 11–21); zakręt 12–14 s wyłącznie z literatury wtórnej (bez raportu pierwotnego).
+
+Reguła: gdzie źródła się rozjeżdżają — środek przedziału jest celem, ±5 % tolerancją (D4).
 Prędkości = IAS/TAS wg kolumny; wysokości gry: mierzymy na **100 m („SL"), 1 500 m, 3 000 m,
-4 500 m, 6 000 m** (sufit rozgrywki).
+4 500 m, 6 000 m** (sufit rozgrywki). Kolumna „Dziś w grze" = pomiar baseline R0
+(`docs/fizyka-v2-baseline.md`).
 
-### 5.1 Spitfire Mk IIa (Merlin XII, +12 lb boost)
+### 5.1 Spitfire Mk IIa (Merlin XII) — cele = moc bojowa +9 lb; WEP +12 lb osobno
 
-| Metryka | Cel (historia) | Dziś w grze |
-|---|---|---|
-| Vmax SL (TAS) | ~465–475 km/h | 503 km/h (hojne SL) |
-| Vmax na wysokości | ~570 km/h @ ~5 300 m | kalibrowane przez FTH 3 400 m |
-| Wznoszenie początkowe | ~15,2 m/s (2 995 ft/min) | ~15 m/s |
-| Czas do 6 000 m | ~7,0–7,5 min | do zmierzenia w R0 |
-| Zakręt ustalony 360° (1 000 ft) | 18–19 s (AFDU; M&M 17,2 s @ 12 kft) | 17,6 s |
-| Stall czysty (IAS) | ~117 km/h | ~117 km/h (OK) |
-| Stall z klapami | ~103 km/h | brak klap |
-| Vne | ~720 km/h (IAS) | brak limitu |
-| Roll szczytowy | ~78–90 °/s @ ~290 km/h (lotki metalowe) | 80 °/s @ 240 |
-| WEP | +12 lb, limit termiczny ~5 min | brak (moc szczytowa ciągła) |
+| Metryka | CEL ZAMROŻONY | Źródło | Dziś w grze |
+|---|---|---|---|
+| Vmax SL (TAS) | **467 km/h** | P7280: 290 mph SL | 503 km/h (hojne SL) |
+| Vmax na wysokości | **570 km/h @ 5 350 m** | P7280: 354 mph @ 17 550 ft | kalibrowane przez FTH 3 400 m |
+| Wznoszenie początkowe (SL) | **14,8 m/s** (szczyt 15,2 @ ~3 000 m) | P7280: 2 915 ft/min SL, 2 995 @ 10 kft | ~15 m/s |
+| Czas do 6 000 m | **7,0 min** | P7280: 20 000 ft w 7,0 min | do zmierzenia w R0 |
+| Zakręt ustalony 360° (1 000 ft) | **18,5 s** | AFDU 18–19 s (M&M 17,2 s @ 12 kft) | 17,6 s |
+| Stall czysty (IAS) | **117 km/h** | P7280: 73 mph | ~117 km/h (OK) |
+| Stall z klapami | **101 km/h** | P7280: 63 mph | brak klap |
+| Vne | **720 km/h (IAS)** | limit eksploatacyjny 450 mph IAS (próba nurkowa ASI 470) | brak limitu |
+| Roll szczytowy | ~78–90 °/s @ ~290 km/h (bez zmian) | RAE/NACA 868, lotki płócienne | 80 °/s @ 240 |
+| WEP | **+12 lb, ~5 min**; efekt tylko pod FTH: SL +~35 km/h, wznoszenie +~2,5 m/s | analogia Spit I +12 lb (dokalibrować w R2) | brak (moc szczytowa ciągła) |
 
 ### 5.2 Bf 109 E-3 (DB 601 Aa)
 
-| Metryka | Cel (historia) | Dziś w grze |
-|---|---|---|
-| Vmax SL (TAS) | ~465–470 km/h | 499 km/h (**+7 %!**) |
-| Vmax na wysokości | ~555 km/h @ ~4 500 m | kalibrowane |
-| Wznoszenie początkowe | ~15,5–16,5 m/s (Notleistung) | do zmierzenia |
-| Czas do 6 000 m | ~7,5 min | do zmierzenia |
-| Zakręt ustalony 360° | 22–25 s (próby brytyjskie ~25 s) | 23,5 s |
-| Stall czysty (IAS) | ~120–127 km/h (sloty łagodzą zerwanie) | do zmierzenia |
-| Vne | ~750 km/h | brak limitu |
-| Roll szczytowy | ~70–85 °/s @ ~300 km/h, mocne sztywnienie >500 | wg `rollRateCurve` |
-| WEP | Notleistung 1-min (1 175 KM start) | brak |
+| Metryka | CEL ZAMROŻONY | Źródło | Dziś w grze |
+|---|---|---|---|
+| Vmax SL (TAS) | **467 km/h** | Swiss J-347: 465–472 | 499 km/h (**+7 %!**) |
+| Vmax na wysokości | **555 km/h @ 4 500 m** (pasmo 555–572 @ 4,5–5 km na 5-min) | Kennblatt; Swiss 565–572 @ ~5 km | kalibrowane |
+| Wznoszenie początkowe (SL) | **15,5 m/s** (Notleistung) | CEMA @ 1 100 KM: 13,9–15,1; niemieckie dane wyżej | do zmierzenia |
+| Czas do 6 000 m | **7,75 min** | CEMA 8'01" @ 5-min 1 100 KM; Kennblatt ~7,5 | do zmierzenia |
+| Zakręt ustalony 360° | **23,5 s** | RAE ~25 s; obliczenia Messerschmitt Projektbüro niższe → środek | 23,5 s |
+| Stall czysty (IAS) | **123 km/h** | próby brytyjskie 120–127 (sloty łagodzą zerwanie) | do zmierzenia |
+| Vne | **750 km/h (IAS)** | instrukcja: Sturzflug max 750 | brak limitu |
+| Roll szczytowy | ~70–85 °/s @ ~300 km/h, mocne sztywnienie >500 (bez zmian) | RAE | wg `rollRateCurve` |
+| WEP | **Notleistung ~1 min** (1 175 KM start, 1,45 ata) | dane DB 601 Aa | brak |
 
 Sloty krawędziowe E-3: NIE modelujemy osobnej mechaniki — mapujemy na łagodniejsze knoby
 maszyny przeciągnięcia (`buffetOnsetRatio`, `wingDropDelayS`) w R4.
 
-### 5.3 A6M2 Zero (Sakae 12)
+### 5.3 A6M2 Zero model 21 (Sakae 12)
 
-| Metryka | Cel (historia) | Dziś w grze |
-|---|---|---|
-| Vmax SL (TAS) | ~435–445 km/h | 454 km/h |
-| Vmax na wysokości | 533 km/h @ 4 550 m | 527 km/h (OK, −1 %) |
-| Wznoszenie początkowe | ~15,7 m/s | 15,3 m/s |
-| Czas do 6 000 m | **7 min 27 s** (oficjalny, twarda kotwica) | do zmierzenia |
-| Zakręt ustalony 360° | 12–14 s (literatura) | 15,0 s (bilans mocy nie daje mniej) |
-| Stall czysty (IAS) | ~102–110 km/h | 105 km/h (OK) |
-| Vne | ~630–660 km/h — **kanoniczna słabość** | brak limitu |
-| Roll | wg testów Kogi — JUŻ skalibrowany (2026-07-09), kotwice `rollShape` zostają | OK |
-| WEP | brak (Sakae 12 bez overboostu) | n/d |
+| Metryka | CEL ZAMROŻONY | Źródło | Dziś w grze |
+|---|---|---|---|
+| Vmax SL (TAS) | **440 km/h** | literatura 435–445 → środek | 454 km/h |
+| Vmax na wysokości | **533 km/h @ 4 550 m** | oficjalne (Francillon 331,5 mph @ 14 930 ft) | 527 km/h (OK, −1 %) |
+| Wznoszenie początkowe | **15,7 m/s** | oficjalne (3 100 ft/min) | 15,3 m/s |
+| Czas do 6 000 m | **7 min 27 s** (twarda kotwica) | oficjalne | do zmierzenia |
+| Zakręt ustalony 360° | **13 s** (12–14 lit.; fallback 15 s → §3 wg ryzyka nr 7) | literatura wtórna, bez raportu pierwotnego | 15,0 s (bilans mocy nie daje mniej) |
+| Stall czysty (IAS) | **105 km/h** | 102–110 | 105 km/h (OK) |
+| Vne | **630 km/h (IAS)** — **kanoniczna słabość** | instrukcja pilota: 340 kt IAS (modele 11–21) | brak limitu |
+| Roll | wg testów Kogi — JUŻ skalibrowany (2026-07-09), kotwice `rollShape` zostają | testy Kogi | OK |
+| WEP | brak (Sakae 12 bez overboostu) | — | n/d |
 
 ### 5.4 Testy relacji (asymetrie — bez tolerancji procentowej)
 
