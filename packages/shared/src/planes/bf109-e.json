@@ -7,11 +7,18 @@
   "cd0": 0.022,
   "dragHighClK": 0.005,
   "dragStallK": 0.8,
-  "clMax": 2.0,
+  "clMax": 2.1,
   "clAlphaPerRad": 5.0,
   "enginePowerW": 780000,
   "wepBoostFrac": 0.10,
   "fullThrottleHeightM": 4500,
+  "powerCurve": [
+    [0, 0.86],
+    [3600, 0.98],
+    [4500, 0.92],
+    [5500, 0.70],
+    [7000, 0.45]
+  ],
   "propEfficiency": 0.8,
   "staticThrustN": 6800,
   "vneKmh": 750,
@@ -105,10 +112,10 @@
     ]
   },
   "stall": {
-    "buffetOnsetRatio": 0.9,
+    "buffetOnsetRatio": 0.92,
     "aileronEffectiveness": 0.3,
-    "wingDropDelayS": 1.0,
-    "wingDropRateDegS": 40
+    "wingDropDelayS": 1.3,
+    "wingDropRateDegS": 30
   },
   "gTolerance": {
     "onsetG": 4.0,

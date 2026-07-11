@@ -49,39 +49,40 @@ const FROZEN: readonly FrozenBaseline[] = [
     label: 'Spitfire Mk IIa (+12 lb)',
     config: SPITFIRE_MK2,
     turn180: [
-      [250, 7.2],
-      [350, 5.5],
-      [450, 7.1],
+      [250, 7.3],
+      [350, 5.7],
+      [450, 6.9],
     ],
     roll360: [
       [250, 4.6],
       [400, 6.5],
     ],
-    loop300S: 13.3,
-    // 9.5 (R0: 5.3) — R1 §6.1: opór lotek (ctrlDragK.aileron=0.003); reszta kotwic bez ruchu
-    rollBleedKmh: 9.5,
-    ps5g350Ms: -17.8,
-    timeTo6000S: 328,
+    loop300S: 13.5,
+    // 9.4 (R1: 9.5) — R4 op. indukowany (oswaldE 0.87→0.78); koszt beczek ~bez ruchu (ctrlDragK stały)
+    rollBleedKmh: 9.4,
+    ps5g350Ms: -27.1, // R4: −17.8→−27.1 (oswaldE ↓ = wyższy opór indukowany przy 5 G)
+    timeTo6000S: 345, // R4: 328→345 (krzywa mocy §6.6, moc bojowa niższa; hist. 420 s poza modelem — patrz Wynik R4)
   },
   {
     label: 'Bf 109 E-3 (DB 601A)',
     config: BF109_E,
     turn180: [
-      [250, 9.4],
-      [350, 7.0],
-      [450, 6.4],
+      [250, 9.1],
+      [350, 6.8],
+      [450, 6.3],
     ],
     roll360: [
       [250, 3.9],
       [400, 5.3],
     ],
-    // 33 s — pętla z 300 km/h ledwo domknięta (min TAS 77 km/h; obciążenie skrzydła);
-    // z 250 km/h NIE domyka — relacja §5.4.7 pilnowana osobnym describe niżej.
-    loop300S: 33.0,
-    // 8.4 (R0: 2.9) — R1 §6.1: opór lotek (ctrlDragK.aileron=0.005)
-    rollBleedKmh: 8.4,
-    ps5g350Ms: -51.1,
-    timeTo6000S: 376,
+    // 16.1 s (R1: 33) — R4: modelowanie SLOTÓW krawędziowych E-3 (§5.2: buffetOnsetRatio 0.9→0.92,
+    // wingDropDelayS 1.0→1.3) + clMax 2.0→2.1 (stall 123) sprawia, że Bf domyka teraz pętlę z 300
+    // pewnie (a i z 250 — patrz relacje §5.4.7): sloty opóźniają zerwanie na małej prędkości.
+    loop300S: 16.1,
+    // 8.5 (R1: 8.4) — clMax ↑ nieznacznie; ctrlDragK stały
+    rollBleedKmh: 8.5,
+    ps5g350Ms: -53.7, // R4: −51.1→−53.7 (moc bojowa niższa + clMax ↑)
+    timeTo6000S: 433, // R4: 376→433 (krzywa mocy §6.6 — bliżej hist. 465 s; wys. krytyczna 4500 daje zapaść mocy)
   },
   {
     label: 'A6M2 Zero model 21 (Sakae 12)',
@@ -93,16 +94,15 @@ const FROZEN: readonly FrozenBaseline[] = [
     ],
     roll360: [
       [250, 4.3],
-      // 35 s pełnej beczki @ 400 km/h — zabetonowane lotki (testy Kogi); R1 (§6.1 opór
-      // lotek) zmierzone 34,7 s — wewnątrz ±3%, kotwica bez zmian.
-      [400, 35.4],
+      // 34.6 s pełnej beczki @ 400 km/h — zabetonowane lotki (testy Kogi); roll nietykany w R4,
+      // drobny ruch (35.4→34.6) od niższej mocy bojowej (mniej rozpędza się w spirali beczki).
+      [400, 34.6],
     ],
     loop300S: 10.2,
-    // 10.2 (R0: 7.6) — R1 §6.1: opór lotek (ctrlDragK.aileron=0.005); przyrost najmniejszy
-    // względem k, bo δa @400 to ledwie ~14% (beton lotek = małe realne wychylenie)
-    rollBleedKmh: 10.2,
-    ps5g350Ms: -11.3,
-    timeTo6000S: 357,
+    // 10.3 (R1: 10.2) — bez ruchu (roll/ctrlDragK stałe; krzywa mocy prawie nie rusza beczki @400)
+    rollBleedKmh: 10.3,
+    ps5g350Ms: -12.8, // R4: −11.3→−12.8 (moc bojowa niższa przy 5 G)
+    timeTo6000S: 375, // R4: 357→375 (krzywa mocy §6.6; hist. 447 s poza modelem — wys. krytyczna 4550, patrz Wynik R4)
   },
 ];
 
@@ -148,27 +148,40 @@ describe.each(FROZEN)('baseline v2 zamrożony (R0) — $label', (t) => {
   });
 
   it(`czas wznoszenia 100→6000 m ≈ ${String(t.timeTo6000S)} s ±3%`, () => {
-    // Baseline ZAWYŻA tempo względem historii (Spit 5'28" vs 7'0"; Zero 5'57" vs 7'27")
-    // — artefakt prostego modelu sprężarki (moc const do FTH). Kotwica pilnuje stanu
-    // wyjściowego; cele historyczne wchodzą dopiero z krzywą mocy §6.6 w R4.
+    // R4: krzywa mocy §6.6 przybliżyła historię (Bf 376→433 s vs cel 465; Spit 328→345 vs 420;
+    // Zero 357→375 vs 447). Bf trafia najlepiej (wysokość krytyczna 4500 m < 6000 → zapaść mocy
+    // wydłuża wznoszenie). Spit/Zero zostają optymistyczne: ich wysoka wys. krytyczna (5350/4550)
+    // trzyma silnik mocny prawie do 6000 m, a punkt-masa bez spadku sprawności śmigła z wys. daje
+    // wciąż mocne wznoszenie u góry — pełne 420/447 s poza modelem bez psucia Vmax@wys. (patrz Wynik R4).
     expectFrozen(timeToAltitudeTest(t.config, 6000), t.timeTo6000S, 'czas do 6000 m');
   });
 });
 
-// Relacja §5.4.7 (już spełniona na starej fizyce — zamrażamy PORZĄDEK, nie liczby):
-// pętla z małej prędkości różnicuje obciążenie skrzydła: Zero domyka najciaśniej,
-// Bf 109 z 250 km/h NIE domyka (domyka od ~300) — spójne z raportem manewrowym 2026-07-09.
-describe('relacje pętli (§5.4.7) na baseline', () => {
-  it('Bf 109 nie domyka pętli z 250 km/h; Spitfire i Zero domykają', () => {
-    expect(loopTest(BF109_E, 250).completed).toBe(false);
-    expect(loopTest(SPITFIRE_MK2, 250).completed).toBe(true);
-    expect(loopTest(A6M2_ZERO, 250).completed).toBe(true);
+// Relacje §5.4 zależne od pętli/mapy energetycznej (importują loopTest/psBleedTest stąd; reszta
+// porządków §5.4.1–5 → maneuvers.test.ts). Zamrażamy PORZĄDKI, nie liczby (D4).
+describe('relacje §5.4 (R4) — pętle i bleed energii', () => {
+  // KOREKTA §5.4.7: spec pisze „Bf NIE domyka pętli z 250". To była własność STAREJ fizyki
+  // (twarde zerwanie bez modelu slotów). R4 modeluje sloty krawędziowe E-3 (miękkie knoby buffet,
+  // §5.2) → Bf domyka teraz pętlę z 250 (sloty opóźniają departure na małej prędkości — historycznie
+  // poprawne). Zamrażamy ROBUSTNĄ część relacji: kolejność czasu domknięcia z 300 (obciążenie skrzydła).
+  it('§5.4.7 pętla z 300 km/h: Zero domyka najszybciej, Bf najwolniej (Zero < Spit < Bf)', () => {
+    const zero = loopTest(A6M2_ZERO, 300).timeS;
+    const spit = loopTest(SPITFIRE_MK2, 300).timeS;
+    const bf = loopTest(BF109_E, 300).timeS;
+    expect(loopTest(A6M2_ZERO, 300).completed).toBe(true);
+    expect(loopTest(SPITFIRE_MK2, 300).completed).toBe(true);
+    expect(loopTest(BF109_E, 300).completed).toBe(true);
+    expect(zero).toBeLessThan(spit);
+    expect(spit).toBeLessThan(bf);
   });
 
-  it('Zero domyka pętlę z 300 km/h najszybciej z trójki', () => {
-    const zeroS = loopTest(A6M2_ZERO, 300).timeS;
-    expect(zeroS).toBeLessThan(loopTest(SPITFIRE_MK2, 300).timeS);
-    expect(zeroS).toBeLessThan(loopTest(BF109_E, 300).timeS);
+  it('§5.4.6 bleed Ps @ 5 G / 350 km/h: Bf traci najszybciej, Zero najwolniej (Bf < Spit < Zero)', () => {
+    // Ps ujemne = zakręt zjada energię; „kto szybciej traci" = najbardziej ujemny Ps (Bf, małe skrzydło).
+    const bf = psBleedTest(BF109_E, 5, 350).psMs;
+    const spit = psBleedTest(SPITFIRE_MK2, 5, 350).psMs;
+    const zero = psBleedTest(A6M2_ZERO, 5, 350).psMs;
+    expect(bf).toBeLessThan(spit);
+    expect(spit).toBeLessThan(zero);
   });
 });
 

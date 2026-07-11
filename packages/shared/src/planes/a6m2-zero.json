@@ -12,6 +12,13 @@
   "enginePowerW": 710000,
   "wepBoostFrac": 0,
   "fullThrottleHeightM": 4550,
+  "powerCurve": [
+    [0, 0.91],
+    [3500, 1.01],
+    [4550, 1.04],
+    [5200, 0.78],
+    [6500, 0.44]
+  ],
   "propEfficiency": 0.8,
   "staticThrustN": 6200,
   "vneKmh": 630,

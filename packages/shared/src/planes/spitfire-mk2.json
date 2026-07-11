@@ -3,7 +3,7 @@
   "massKg": 2799,
   "wingAreaM2": 22.5,
   "aspectRatio": 5.61,
-  "oswaldE": 0.87,
+  "oswaldE": 0.78,
   "cd0": 0.02,
   "dragHighClK": 0.0026,
   "dragStallK": 0.8,
@@ -12,6 +12,14 @@
   "enginePowerW": 977000,
   "wepBoostFrac": 0.12,
   "fullThrottleHeightM": 3400,
+  "powerCurve": [
+    [0, 0.79],
+    [2500, 0.86],
+    [4300, 0.92],
+    [5350, 0.88],
+    [6000, 0.72],
+    [7500, 0.42]
+  ],
   "propEfficiency": 0.8,
   "staticThrustN": 7700,
   "vneKmh": 720,

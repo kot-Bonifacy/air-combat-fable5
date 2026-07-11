@@ -23,7 +23,15 @@ Vne/flutter serwerowo → strefy skrzydeł, cause `'structure'`; HUD ostrzeżeni
 flutter, SAMO się ogranicza; szczątkowe efekty śmigła `propEffectRates` ∝ `throttle·(1−IAS/fade)²` tylko
 przy `applyPropEffect=true` = gracz, boty/harness FALSE → złote kotwice R0 nietknięte; HUD „klapy"/czerwone
 „URWANE"; **BEZ bajtu mechanizacji w snapshocie** — skutek przez poziomy stref v8; 755 testów; szczegóły
-„Wynik R3"), **R4–R5 ⏳** (R4 = wielka kalibracja ±5 %; dostrojenie liczb klap/śmigła + `flapsRipTest`).
+„Wynik R3"), **R4 ✅** (wielka kalibracja ±5 %: **krzywe mocy `powerCurve` §6.6** rozprzęgły Vmax SL od
+Vmax na wysokości — decyzja usera **moc BOJOWA = przelot [SL ~467/467/440], WEP = szczyt osobno**; Spitfire
+`oswaldE` 0.87→0.78 [zakręt 18,5 s], Bf `clMax` 2.0→2.1 + miękkie knoby buffet [sloty; stall 123]; twarde
+złote [Vmax SL/wys., stall, zakręt, roll] wszystkie ±5 %; komplet relacji §5.4 z 3 korektami spec [roll@400
+Bf≥Spit; wznosz. SL klaster; pętla 250 sloty]; **czas do 6000 m** hist. tylko dla Bf [433 s], Spit/Zero
+optymistyczne [345/375 vs 420/447] — udokumentowane ograniczenie point-mass [η śmigła stałe]; zakręt Zero
+15 s fallback utrwalony; spawn/instruktor/boty **bez zmian** [koperta G/roll nietknięta]; raport baseline→v2
+wypełniony; 763 testy; **BEZ protokołu — v10, czysto shared/JSON**; szczegóły „Wynik R4"), **R5 ⏳**
+(pełny E2E §8.3 × 3 samoloty + checklist WT RB §5.5 + doszlif + `docs/fizyka-lotu.md`).
 
 | #     | Temat                                                                 | Stan / uwaga |
 | ----- | --------------------------------------------------------------------- | ------------ |

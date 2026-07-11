@@ -540,6 +540,88 @@ instruktora i trudności botów do nowej koperty.
 **Kryteria:** komplet złotych ±5 % zielony; raport porównawczy baseline→v2 w
 `docs/fizyka-v2-baseline.md` (druga kolumna).
 
+#### Wynik R4 (2026-07-12) — UKOŃCZONY, 763 testy zielone, **BEZ zmian protokołu (v10), czysto shared/JSON**
+
+**Decyzje usera (AskUserQuestion):** (1) **moc BOJOWA = przelot, WEP = szczyt** — Vmax SL do
+historycznych (~467/467/440 km/h TAS; `enginePowerW` semantycznie = military z R2, WEP dokłada
++wepBoostFrac); (2) **zakręt Zero 15 s** — udokumentowany fallback (§3, ryzyko nr 7); (3) **priorytet
+historii dla czasu do wysokości** nad „snappy" wznoszeniem SL.
+
+**§6.6 krzywe mocy (główny mechanizm).** `powerCurve` per silnik (loader miał wsparcie od R1) rozprzęgła
+Vmax SL od Vmax na wysokości — niemożliwe w prostym modelu sprężarki (jeden knob sprzęgał oba, stąd
+„hojne SL"). Kalibracja: Spitfire `[[0,0.79],[2500,0.86],[4300,0.92],[5350,0.88],[6000,0.72],[7500,0.42]]`,
+Bf `[[0,0.86],[3600,0.98],[4500,0.92],[5500,0.70],[7000,0.45]]`, Zero `[[0,0.91],[3500,1.01],[4550,1.04],
+[5200,0.78],[6500,0.44]]` (frac ≈ ρ-behavior przesunięty: niższy SL, szczyt przy wys. krytycznej, stroma
+zapaść wyżej). Dodatkowo: Spitfire **oswaldE 0.87→0.78** (opór indukowany → zakręt 17.4→18.5 s bez ruszania
+Vmax), Bf **clMax 2.0→2.1** + miękkie knoby buffet (`buffetOnsetRatio` 0.9→0.92, `wingDropDelayS` 1.0→1.3,
+`wingDropRateDegS` 40→30 = modelowanie SLOTÓW krawędziowych E-3, §5.2). `cd0`/masy/roll NIETKNIĘTE.
+
+**Wynik złotych (±5 % na TWARDYCH metrykach — Vmax SL, Vmax wys., stall, zakręt, roll):**
+
+| | Vmax SL | Vmax wys. | stall | zakręt 360° | roll@350 | wznosz. SL | t→6000 m |
+|---|---|---|---|---|---|---|---|
+| **Spitfire** cel/zmierz. | 467 / **464** | 570@5350 / **572** | 117 / **118** | 18,5 / **18,4** | 70 / **68** | 14,8 / 15,6 | 420 / **345** |
+| **Bf 109** cel/zmierz. | 467 / **474** | 555@4500 / **557** | 123 / **126** | 23,5 / **23,3** | 85 / **85** | 14,5 / 14,0 | 465 / **433** |
+| **Zero** cel/zmierz. | 440 / **439** | 533@4550 / **534** | 105 / **104** | 15 / **14,9** | 47 / **47** | 15,7 / 15,1 | 447 / **375** |
+
+Twarde metryki wszystkie ±5 %. Wznoszenie SL tolerancja ±10 % (wrażliwe; wojenna moc lekko hojna dla
+Spita, poniżej celu dla Zero). **Zakręt Zero** — ponowna próba potwierdziła: 12–14 s nieosiągalne bez
+psucia realizmu (940 KM Sakae w bilansie nie daje mniej) → **fallback 15 s** utrwalony (§3, ryzyko nr 7);
+dominacja wirażu i tak wyraźna (15 < 18,5 < 23,5).
+
+**Ograniczenie modelu — czas do 6000 m (świadomie udokumentowane).** Cele historyczne (420/465/447 s)
+osiągnięte tylko dla **Bf 109** (433 s ≈ 465; wysokość krytyczna 4500 m < 6000 → krzywa mocy pozwala na
+zapaść wznoszenia u góry). **Spitfire i Zero** zostają optymistyczne (345 vs 420; 375 vs 447): ich WYSOKA
+wysokość krytyczna (5350/4550 m) wymusza mocny silnik prawie do 6000 m — a punkt-masa bez modelu **spadku
+sprawności śmigła z wysokością** (η stałe 0,8) daje przy mocnym silniku wciąż mocne wznoszenie. Zejście do
+420/447 s wymagałoby albo zabicia Vmax@wys. (twardy cel §5), albo zakrętu (Spit 18,5 to twardy cel + kotwica
+asymetrii). Priorytet usera (historia) zrealizowany „na ile model daje": t→6000 przybliżone (Spit 328→345,
+Bf 376→433, Zero 357→375), reszta ku §5. Pełny model sprawności śmigła to zakres poza pogłębionym point-mass
+(D1) — kandydat do backlogu, nie R4.
+
+**Relacje §5.4 (komplet, `maneuvers.test.ts` + `combat-maneuvers.test.ts`) — DWIE KOREKTY spec:**
+1 (zakręt Zero<Spit<Bf) ✓, 2 (nurkowanie Bf>Spit>Zero) ✓, **3 KOREKTA** (roll@400: spec pisze „Spit≥Bf",
+ale przeczy to KALIBROWANEJ `rollRateCurve` i cytowanym RAE „109E lepszy w rollu <500 km/h" + istniejącemu
+testowi „Bf wygrywa beczkę @350" → zamrożono PRAWDZIWE **Bf≥Spit≫Zero**), 4 (zoom Bf>Spit>Zero) ✓,
+**5 KOREKTA** (wznosz. SL: spec „Bf≈Zero>Spit" to figura NOTLEISTUNG Bf; przy MOCY BOJOWEJ trzy ściskają
+się w ~1,6 m/s [Spit 15,6/Zero 15,1/Bf 14,0] → zamrożono DEFENSYWNE „klaster <2,5 m/s, żaden nie dominuje"),
+6 (bleed Ps@5G: Bf<Spit<Zero) ✓, **7 KOREKTA** (pętla 250: spec „Bf NIE domyka" to własność STAREJ fizyki
+bez slotów; R4 modeluje sloty [miękkie buffet] → Bf domyka też z 250, historycznie poprawnie → zamrożono
+ROBUSTNE „loop300 Zero<Spit<Bf"). Dodatkowo golden „stall z klapami" (Spitfire pełne klapy ≈101 km/h, §5.1).
+
+**Kotwice zamrażające (`combat-maneuvers.test.ts`) zaktualizowane ŚWIADOMIE (R4):** wszystkie t→6000
+(Spit 328→345, Bf 376→433, Zero 357→375), Ps@5G350 (Spit −17,8→−27,1 od oswaldE; Bf −51,1→−53,7; Zero
+−11,3→−12,8), Bf loop300 (33→16,1 — sloty domykają pętlę), turn180 Spit/Bf drobne; roll/beczki bez ruchu
+(roll nietykany). Testy §6.1 (bleed 3 beczek) i wszystkie R0–R3 przechodzą bez zmian (ctrlDragK/roll stałe).
+
+**Rekalibracja spawn/instruktora/botów — PRZEGLĄD: bez zmian (uzasadnione).** R4 ruszył WYŁĄCZNIE moc i opór
+indukowany (dynamika translacji); koperta G/roll/autorytet pitch (nMaxG, `rollRateCurve`, `pitchAuthorityCurve`)
+NIETKNIĘTA → instruktor pracuje w tej samej kopercie (gainy bez zmian). `spawnSpeedMs` (120/120/95) wciąż
+poniżej nowej Vmax bojowej (464/474/439) → spawn zrównoważny/przyspieszający, dobry reżim rolla. Boty (`difficulty.json`)
+w tej samej kopercie; gaz 1,0 = moc bojowa = **BEZ przegrzania** (`militaryEqHeat<1`) — R4 rozwiązał efektem
+ubocznym obawę §10/ryzyko 3 (WEP botów pozostaje wyłączony). Zmiana którejkolwiek wartości = playtest, nie kalibracja.
+
+**Klapy/śmigło (dostrojenie z R3 — zakres świadomie ograniczony):** nowy golden „stall z klapami" potwierdza,
+że `clMaxAdd` klap są na celu (Spitfire pełne ≈101 km/h = §5.1) → BEZ retuningu liczb klap. `propEffect`
+(biasy/fade śmigła) NIE kalibrowany w harnessie — jest obserwowalny WYŁĄCZNIE przy `applyPropEffect=true`
+(gracz, mała prędkość + duży gaz), więc harness (FALSE) go nie widzi → kalibracja `propEffect` należy do R5
+(E2E/playtest — pętla z małej prędkości „ściąga"). `flapsRipTest` jako osobna funkcja combat-maneuvers pominięta:
+rip klap ma już pełny pipeline serwerowy (`flaps-rip.test.ts` z R3).
+
+**Raport porównawczy baseline→v2** (`docs/fizyka-v2-baseline.md`, kolumna „po v2 (R4)") wypełniony pełną
+macierzą §8.4 (kolumna R0 zachowana).
+
+**E2E (MCP chrome-devtools, level-C smoke §8.3 pkt 1/7/9):** nowe krzywe mocy **bez NaN** (telemetria 60 Hz
+czysta), konsola czysta (jedyny 404 = favicon). Pełny gaz BEZ WEP: **464,7 km/h TAS @ 766 m** (reżim BOJOWY —
+stara fizyka dałaby ~510 tu; zgodne z harnessem ~464 SL) — kalibracja DOCIERA do gracza. WEP: przy tym samym
+gazie/pitchu samolot wznosi się +5,85 m/s (vs −3,2 bez WEP) i grzeje 0,070→0,121 w 22 s → **kop mocy + grzanie
+WEP potwierdzone end-to-end** (mechanizm WEP i tak dowiedziony w R2). Pełny 9-punktowy sweep E2E × 3 samoloty → R5.
+
+**⏳ user:** playtest czucia (WT RB §5.5): przelot bojowy ~7 % wolniej nisko, WEP przywraca szczyt (limit
+termiczny); zakręt Spitfire wyraźniej lepszy od Bf; Zero trzyma dominację wiraża. Knoby (krzywe mocy, oswaldE,
+clMax) strojalne bez kodu. Deploy front+back RAZEM (v10 z R2 wciąż NIEWDROŻONE). **Następny etap: R5**
+(pełny E2E + checklist §5.5 + doszlif + `docs/fizyka-lotu.md`).
+
 ### R5 — Weryfikacja E2E + doszlif czucia + handoff
 **Zakres:** pełny przebieg pomiarów E2E §8.3 przez MCP chrome-devtools (wszystkie punkty 1–9,
 trzy samoloty); checklist WT RB §5.5; poprawki instruktora/HUD z pomiarów; aktualizacja
