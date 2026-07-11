@@ -28,7 +28,7 @@ A6M2 Zero) — z małą, jawnie udokumentowaną listą odstępstw na rzecz grywa
 
 | # | Pytanie | Decyzja |
 |---|---------|---------|
-| D1 | Architektura | **Pogłębiony point-mass** — zostaje obecna architektura (siły: nośna z żądanego n, opór, ciąg, grawitacja; obroty kinematyczne z krzywych + instruktor). Pogłębiamy aerodynamikę zamiast przechodzić na 6-DOF momentowe. Bezpieczne dla predykcji MP, reconcile, botów i 659 testów. |
+| D1 | Architektura | **Pogłębiony point-mass** — zostaje obecna architektura (siły: nośna z żądanego n, opór, ciąg, grawitacja; obroty kinematyczne z krzywych + instruktor). Pogłębiamy aerodynamikę zamiast przechodzić na 6-DOF momentowe. Bezpieczne dla predykcji MP, reconcile, botów i 655 testów (stan sprzed R0). |
 | D2 | Źródło prawdy | **Historia > WT.** Cele liczbowe (Vmax, wznoszenie, czasy zakrętu, stall, Vne) z raportów historycznych (AFDU, testy Zero Kogi, dane fabryczne). WT RB służy jako wzorzec **zachowania** (czucie energii, sztywnienie sterów, konsekwencje skrajów koperty) — nie liczb. |
 | D3 | Zakres nowych mechanik | **Wszystkie cztery**: WEP/boost, klapy, kompresja + Vne/flutter, szczątkowe efekty śmigła. Plus wymóg bazowy: opór manewrowy sterów (beczki kosztują energię). |
 | D4 | Tolerancja złotych testów | **±5 %** na celach liczbowych; relacje między samolotami (kto ciaśniej kręci, kto szybciej nurkuje…) pilnowane osobnymi testami asymetrii bez tolerancji procentowej. |
@@ -351,6 +351,14 @@ i zamrożenie ostatecznej tabeli celów (aktualizacja §5).
 **Kryteria wyjścia:** raport bazowy istnieje; nowe testy harnessu zielone na STAREJ fizyce
 (zamrażają stan wyjściowy); E2E smoke przechodzi (spawn → telemetria → raport).
 **Bez zmian fizyki. Bez protokołu.**
+
+**Wynik R0 (cz.1 2026-07-10 `31cbe4f` + cz.2 2026-07-11): ✅ UKOŃCZONY, 675 testów zielone.**
+Cz.1: §5 zamrożone po źródłach, harness `testing/combat-maneuvers.ts`, raport `docs/fizyka-v2-baseline.md`.
+Cz.2: testy zamrażające `testing/combat-maneuvers.test.ts` (+20; ±3% wokół raportu, bleed beczek
+absolutnie ±0,5 km/h, relacja pętli §5.4.7 jako porządek); sonda `__acDebug` w `online-main.ts`
+(`telemetry()` ring 60 s @ 60 Hz, `sampleReport(sinceS)`, `overrideInput({steps,durationS})` w
+`sendInputTick` — DEV-only); smoke E2E przez MCP chrome-devtools: skrypt „gaz 1 + pełna lotka 4 s"
+dał roll 47,4°/s @ 446 km/h IAS vs harness 46,5 @ 450 (<2%), telemetria bez NaN, konsola czysta.
 
 ### R1 — Rdzeń aerodynamiki: opór sterów + autorytet pitch + krzywa mocy
 **Zakres:** §6.1 (ctrlDragK), §6.2 tylko autorytet (pitchAuthorityCurve, bez Vne),

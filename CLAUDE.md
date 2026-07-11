@@ -11,6 +11,8 @@
 Fazy ukończone: **0–18 + domknięcie parytetu MP↔SP (P1–P5) + Faza 19 (19a ✅, 19b ✅) + Faza 20 ✅ + Faza 21 (audio ✅; wizualia → backlog) + Faza 22 (cz.1 ✅, cz.2 ✅, cz.3 ✅, cz.4 ✅; cz.5 🟡 analiza+lock+commit ✅, tag `1.0`+playtest ⏳ user)**. Szczegóły
 każdej fazy w `docs/phases/faza-NN.md` i `memory/`; cały wysiłek parytetu MP↔SP (fazy 14–18 + P1–P5) spięty
 w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwarte sprawy).
+Po fazie 22 trwa **rekalibracja fizyki lotu v2** (`docs/fizyka-v2-rekalibracja.md`, etapy R0–R5):
+**R0 ✅** (narzędzia pomiarowe + baseline + zamrożenie celów; 675 testów), **R1–R5 ⏳**.
 
 | #     | Temat                                                                 | Stan / uwaga |
 | ----- | --------------------------------------------------------------------- | ------------ |
@@ -418,7 +420,8 @@ matchupu A6M2 Zero"** (najlepszy zakręt i roll@200; roll@400 ≥2× gorszy od o
 Obserwacja poza zakresem (nie ruszana — user: „Spit/Bf ok"): Bf 109 Vmax SL mierzone 499 vs cel złotego
 465 (+7%, przechodzi na tolerancji ±8%). ⏳ user: playtest czucia rolla Zero (zwł. 300–350 km/h).
 
-**Kalibracja cz.2 — „wciąż ślamazarnie" = zły PUNKT PRACY, nie krzywa (2026-07-09, 659 testów zielone,
+**Kalibracja cz.2 — „wciąż ślamazarnie" = zły PUNKT PRACY, nie krzywa (2026-07-09, 655 testów zielone
+— licznik w tej nocie pierwotnie zawyżony na 659,
 BEZ protokołu — v9, deploy front+back RAZEM):** user po fixie krzywej: Zero nadal powoli przechyla się
 (klawiatura I mysz). Diagnoza **E2E w PRAWDZIWEJ przeglądarce** (Playwright npm + hak `window.__acDebug`
 w `online-main.ts`, tylko `import.meta.env.DEV` — wycinany z produkcji): fizyka klienta = harness co do
@@ -442,6 +445,29 @@ dostępne od NASTĘPNEJ sesji**; w tej sesji pomiar skryptem npm (kopia: scratch
 poczekalnię; tryb drużynowy blokuje Start przy pustej drużynie B (dodać bota nth(1)). **Obserwacja:** boty
 w Zero latają gazem 0,85–1,0 = sztywny reżim (słabsze niż powinny) — per-typ prędkość bojowa botów →
 ewent. backlog po playteście. ⏳ user: playtest (spawn 342 km/h OK? ostrzeżenie HUD czytelne? boty-Zero?).
+
+**Fizyka v2 — etap R0 UKOŃCZONY (cz.1 2026-07-10 `31cbe4f` + cz.2 2026-07-11; 675 testów zielone, BEZ
+zmian fizyki i protokołu — v9):** etap „narzędzia pomiarowe + baseline" z `docs/fizyka-v2-rekalibracja.md`
+(§9). **Cz.1:** tabela celów §5 ZAMROŻONA po źródłach (Spitfire P7280, Bf 109 J-347+CEMA, Zero oficjalne
+7'27"/Vne 630); harness bojowy `shared/src/testing/combat-maneuvers.ts` (turn180/rollTime360/loop/rollBleed/
+psBleed/timeToAltitude; pułapki: ciągnięcie klampowane 0,85·nAvail jak instruktor, rollBleed mierzy WYSOKOŚĆ
+ENERGETYCZNĄ E=h+V²/2g — surowa IAS kłamie, bo beczkujący samolot nurkuje); raport bazowy
+`docs/fizyka-v2-baseline.md` (generator: `BASELINE=1 npx vitest run scripts/fizyka-v2-baseline.report.test.ts`).
+**Cz.2 (ta sesja):** (1) **testy zamrażające** `testing/combat-maneuvers.test.ts` (+20, `describe.each` × 3
+samoloty, ±3% wokół liczb raportu; bleed beczek — tolerancja ABSOLUTNA ±0,5 km/h, bo wartości 2,9–7,6 km/h
+są mniejsze niż pasmo procentowe vs ziarno zapisu raportu 0,1; relacja pętli §5.4.7 zamrożona jako porządek:
+Bf nie domyka z 250, Zero najciaśniej) — to kotwice STANU WYJŚCIOWEGO, R1–R4 aktualizują je ŚWIADOMIE
+z komentarzem etapu. (2) **Sonda E2E `__acDebug`** w `online-main.ts` (DEV-only, produkcja wycina):
+`telemetry()` ring-buffer 60 s @ 60 Hz (t/IAS/TAS/alt/vs/bank/kurs WEKTORA PRĘDKOŚCI/pitch nosa/n/heat/
+fuel/gaz), `sampleReport(sinceS)` (agregaty okna + odwinięta Δkursu), `overrideInput({steps,durationS})`
+wpięte w `sendInputTick` — deterministyczna sekwencja zastępuje mysz I klawiaturę (pola kroków niosą się
+do przodu; po wygaśnięciu gaz ZOSTAJE na wartości skryptu, żeby nie psuć okna pomiarowego). Stan modułowy,
+wszystkie zapisy w gałęziach `import.meta.env.DEV`. (3) **Smoke E2E** (MCP `chrome-devtools`, scenariusz
+bazowy §8.3: FFA + 1 łatwy bot): skrypt „pełny gaz + pełna lotka 4 s" → roll 47,4°/s @ 446 km/h IAS
+(harness: 46,5 @ 450 — zgodność <2%), telemetria 60 Hz bez NaN, po wygaśnięciu skryptu sterowanie wraca
+(instruktor wyprowadza z odwróconego); konsola czysta (jedyny 404 = `favicon.ico`, pre-existing). Licznik
+testów przed R0 wynosił realnie 655 (nota kalibracji cz.2 z 2026-07-09 zawyżała: 659). **Następny etap: R1**
+(opór manewrowy sterów + autorytet pitch + krzywa mocy; bez protokołu).
 
 **Publiczny deploy MP: ✅ wdrożone** — `https://dogfight.tatanga.eu` (port 8087, Websockets ON), potwierdzone live 2026-06-25.
 

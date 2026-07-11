@@ -550,9 +550,88 @@ let interpolator = new SnapshotInterpolator();
 const interpOut = createInterpolatedState();
 const overlay = new NetDebugOverlay();
 
+// --- sonda pomiarowa E2E (fizyka v2 R0, docs/fizyka-v2-rekalibracja.md §8.3): ring-buffer
+//     telemetrii + skryptowe wejście. Deklaracje na poziomie modułu (sendInputTick musi je
+//     widzieć), ale każdy zapis siedzi w gałęzi `import.meta.env.DEV` — Vite podstawia stałą,
+//     więc produkcja wycina martwe gałęzie, a nieużywane deklaracje zdejmuje treeshaking.
+interface AcTelemetrySample {
+  /** Zegar telemetrii [s] — suma dt ticków inputu (deterministyczny, nie ścienny). */
+  tS: number;
+  life: LifePhase;
+  iasKmh: number;
+  tasKmh: number;
+  altM: number;
+  /** Prędkość pionowa [m/s] (świat Y). */
+  vsMs: number;
+  /** Przechył ze znakiem [°] — ta sama konwencja znaku co __acDebug.sample(). */
+  bankDeg: number;
+  /** Kurs WEKTORA PRĘDKOŚCI [°] (atan2(vx, vz)) — konwencja harnessu zakrętów, nie nosa. */
+  headingDeg: number;
+  /** Pochylenie nosa [°] (asin forward.y). */
+  pitchDeg: number;
+  nG: number;
+  heat01: number;
+  fuel01: number;
+  throttle: number;
+}
+/** Krok skryptu wejścia: pola zdefiniowane nadpisują, niezdefiniowane niosą się z poprzednich. */
+interface AcInputStep {
+  tS: number;
+  throttle?: number;
+  pitchUp?: number;
+  rollRight?: number;
+  yawRight?: number;
+  fire?: boolean;
+}
+interface AcInputScript {
+  steps: AcInputStep[];
+  /** Po tym czasie [s] skrypt wygasa i sterowanie wraca do gracza (gaz zostaje po skrypcie). */
+  durationS: number;
+}
+/** ~60 s historii przy 60 Hz pętli inputu. */
+const TELEMETRY_CAP = 60 * INPUT_HZ;
+const telemetryBuf: AcTelemetrySample[] = [];
+let telemetryWriteIdx = 0;
+let telemetryClockS = 0;
+let e2eScript: AcInputScript | null = null;
+let e2eScriptElapsedS = 0;
+let e2eScriptBaseThrottle = 0.8;
+const telUp = new Vector3();
+const telFwd = new Vector3();
+
+/** Próbka telemetrii po ticku predykcji (wywoływane WYŁĄCZNIE w gałęzi DEV sendInputTick). */
+function recordTelemetry(dtS: number): void {
+  telemetryClockS += dtS;
+  if (!predictor.ready) return;
+  const s = predictor.sim.state;
+  getUp(s.orientation, telUp);
+  getForward(s.orientation, telFwd);
+  const bankMag = (Math.acos(Math.min(1, Math.max(-1, telUp.y))) * 180) / Math.PI;
+  const side = telUp.x * -s.velocity.z + telUp.z * s.velocity.x; // znak jak w __acDebug.sample()
+  const sample: AcTelemetrySample = {
+    tS: telemetryClockS,
+    life: s.life,
+    iasKmh: s.iasMs * MS_TO_KMH,
+    tasKmh: s.velocity.length() * MS_TO_KMH,
+    altM: s.position.y,
+    vsMs: s.velocity.y,
+    bankDeg: side > 0 ? bankMag : -bankMag,
+    headingDeg: (Math.atan2(s.velocity.x, s.velocity.z) * 180) / Math.PI,
+    pitchDeg: (Math.asin(Math.min(1, Math.max(-1, telFwd.y))) * 180) / Math.PI,
+    nG: s.loadFactor,
+    heat01: s.engineHeatFrac,
+    fuel01: s.fuelFrac,
+    throttle: s.throttle,
+  };
+  if (telemetryBuf.length < TELEMETRY_CAP) telemetryBuf.push(sample);
+  else telemetryBuf[telemetryWriteIdx] = sample;
+  telemetryWriteIdx = (telemetryWriteIdx + 1) % TELEMETRY_CAP;
+}
+
 // --- hak diagnostyczny E2E (TYLKO dev, wycinany z produkcji przez import.meta.env.DEV):
-//     zewnętrzny runner (Playwright) odczytuje stan lokalnego samolotu, by zmierzyć realną
-//     reakcję sterów w przeglądarce i porównać ją z harnessem shared (kalibracja 2026-07-09).
+//     zewnętrzny runner (Playwright/MCP chrome-devtools) odczytuje stan lokalnego samolotu,
+//     by zmierzyć realną reakcję sterów w przeglądarce i porównać ją z harnessem shared
+//     (kalibracja 2026-07-09; sonda telemetrii/skrypt wejścia — fizyka v2 R0).
 interface AcDebugSample {
   phase: Phase;
   life: LifePhase;
@@ -576,13 +655,60 @@ if (import.meta.env.DEV) {
   const dbgCamFwd = new Vector3();
   const dbgCamRight = new Vector3();
   const dbgCamUp = new Vector3();
+  interface AcStat {
+    min: number;
+    max: number;
+    mean: number;
+    first: number;
+    last: number;
+  }
+  interface AcTelemetryReport {
+    nSamples: number;
+    t0S: number;
+    t1S: number;
+    iasKmh: AcStat;
+    tasKmh: AcStat;
+    altM: AcStat;
+    vsMeanMs: number;
+    nMeanG: number;
+    nMaxG: number;
+    bankMeanAbsDeg: number;
+    /** Odwinięta zmiana kursu prędkości [°] w oknie — ±360 ≈ pełny okrąg (znak = kierunek). */
+    headingDeltaDeg: number;
+    heatLast01: number;
+    fuelLast01: number;
+    throttleLast: number;
+    lifeLast: LifePhase;
+  }
   interface AcDebug {
     sample: () => AcDebugSample | null;
     /** Testowy ruch myszy [px] — pozwala E2E sterować celownikiem bez pointer locka. */
     nudgeReticle: (dxPx: number, dyPx: number) => void;
     /** Wyśrodkuj celownik. */
     recenterReticle: () => void;
+    /** Pełny ring-buffer telemetrii (~60 s @ 60 Hz), od najstarszej próbki. */
+    telemetry: () => AcTelemetrySample[];
+    telemetryClear: () => void;
+    /** Agregat okna pomiarowego: ostatnie `sinceS` sekund telemetrii (domyślnie 10). */
+    sampleReport: (sinceS?: number) => AcTelemetryReport | null;
+    /** Skryptowe sterowanie zamiast pilota (deterministyczne manewry); null odwołuje. */
+    overrideInput: (script: AcInputScript | null) => void;
   }
+  const orderedTelemetry = (): AcTelemetrySample[] =>
+    telemetryBuf.length < TELEMETRY_CAP
+      ? telemetryBuf.slice()
+      : [...telemetryBuf.slice(telemetryWriteIdx), ...telemetryBuf.slice(0, telemetryWriteIdx)];
+  const statOf = (xs: readonly number[]): AcStat => {
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    for (const x of xs) {
+      min = Math.min(min, x);
+      max = Math.max(max, x);
+      sum += x;
+    }
+    return { min, max, mean: sum / xs.length, first: xs[0] ?? 0, last: xs[xs.length - 1] ?? 0 };
+  };
   (window as Window & { __acDebug?: AcDebug }).__acDebug = {
     sample: () => {
       if (!predictor.ready) return null;
@@ -615,6 +741,66 @@ if (import.meta.env.DEV) {
     },
     nudgeReticle: (dxPx, dyPx) => mouseAim.nudge(dxPx, dyPx),
     recenterReticle: () => mouseAim.recenter(),
+    telemetry: orderedTelemetry,
+    telemetryClear: () => {
+      telemetryBuf.length = 0;
+      telemetryWriteIdx = 0;
+    },
+    sampleReport: (sinceS = 10) => {
+      const all = orderedTelemetry();
+      const last = all[all.length - 1];
+      if (!last) return null;
+      const win = all.filter((p) => p.tS >= last.tS - sinceS);
+      const first = win[0];
+      if (!first) return null;
+      let headingDeltaDeg = 0;
+      let prevHeadingDeg = first.headingDeg;
+      let vsSum = 0;
+      let nSum = 0;
+      let nMax = -Infinity;
+      let bankAbsSum = 0;
+      for (const p of win) {
+        // odwijanie kursu: krok między próbkami (60 Hz) jest zawsze ≪ 180°
+        let d = p.headingDeg - prevHeadingDeg;
+        if (d > 180) d -= 360;
+        if (d < -180) d += 360;
+        headingDeltaDeg += d;
+        prevHeadingDeg = p.headingDeg;
+        vsSum += p.vsMs;
+        nSum += p.nG;
+        nMax = Math.max(nMax, p.nG);
+        bankAbsSum += Math.abs(p.bankDeg);
+      }
+      return {
+        nSamples: win.length,
+        t0S: first.tS,
+        t1S: last.tS,
+        iasKmh: statOf(win.map((p) => p.iasKmh)),
+        tasKmh: statOf(win.map((p) => p.tasKmh)),
+        altM: statOf(win.map((p) => p.altM)),
+        vsMeanMs: vsSum / win.length,
+        nMeanG: nSum / win.length,
+        nMaxG: nMax,
+        bankMeanAbsDeg: bankAbsSum / win.length,
+        headingDeltaDeg,
+        heatLast01: last.heat01,
+        fuelLast01: last.fuel01,
+        throttleLast: last.throttle,
+        lifeLast: last.life,
+      };
+    },
+    overrideInput: (script) => {
+      if (!script || script.steps.length === 0) {
+        e2eScript = null;
+        return;
+      }
+      e2eScript = {
+        durationS: script.durationS,
+        steps: [...script.steps].sort((a, b) => a.tS - b.tS),
+      };
+      e2eScriptElapsedS = 0;
+      e2eScriptBaseThrottle = keyboard.throttle;
+    },
   };
 }
 
@@ -1720,21 +1906,56 @@ const inputFrame: InputFrame = {
 function sendInputTick(dtS: number): void {
   if (!net) return;
   keyboard.update(dtS);
-  const pitchUp = keyboard.pitchDeflection;
-  const rollRight = keyboard.rollDeflection;
-  const yawRight = keyboard.yawDeflection;
+  let pitchUp = keyboard.pitchDeflection;
+  let rollRight = keyboard.rollDeflection;
+  let yawRight = keyboard.yawDeflection;
+  let throttleCmd = keyboard.throttle;
+  let fireCmd = triggerHeld();
+  let scriptActive = false;
+
+  // Skrypt E2E (sonda __acDebug, tylko DEV): deterministyczna sekwencja zastępuje pilota
+  // (mysz I klawiaturę) — pomiary w przeglądarce bez ruszania myszą. Pola kroków niosą się
+  // do przodu; po durationS sterowanie wraca do gracza, a gaz ZOSTAJE na wartości skryptu
+  // (skok do gazu sprzed skryptu psułby okno pomiarowe tuż po manewrze).
+  if (import.meta.env.DEV && e2eScript) {
+    e2eScriptElapsedS += dtS;
+    const scriptTS = Math.min(e2eScriptElapsedS, e2eScript.durationS);
+    let th = e2eScriptBaseThrottle;
+    let pu = 0;
+    let rr = 0;
+    let yr = 0;
+    let fi = false;
+    for (const step of e2eScript.steps) {
+      if (step.tS > scriptTS) break;
+      if (step.throttle !== undefined) th = step.throttle;
+      if (step.pitchUp !== undefined) pu = step.pitchUp;
+      if (step.rollRight !== undefined) rr = step.rollRight;
+      if (step.yawRight !== undefined) yr = step.yawRight;
+      if (step.fire !== undefined) fi = step.fire;
+    }
+    throttleCmd = th;
+    pitchUp = pu;
+    rollRight = rr;
+    yawRight = yr;
+    fireCmd = fi;
+    scriptActive = true;
+    if (e2eScriptElapsedS >= e2eScript.durationS) {
+      e2eScript = null;
+      keyboard.throttle = th;
+    }
+  }
 
   if (predictor.ready) getForward(predictor.sim.state.orientation, scratchNose);
   else scratchNose.set(0, 0, 1);
 
   const hasKeyboard = pitchUp !== 0 || rollRight !== 0 || yawRight !== 0;
-  if (mouseAim.locked && !hasKeyboard) {
+  if (!scriptActive && mouseAim.locked && !hasKeyboard) {
     // aim = punkt świata „pod celownikiem" (War Thunder): kotwica w świecie, nos dolatuje i STAJE.
     // advance wchłania ruch myszy i przelicza aimDir (celownik osiada do środka, gdy nos dosięgnie celu).
     mouseAim.advance(camera);
     mouseAim.aimDirection(scratchAim);
   } else {
-    // klawiatura steruje bezpośrednio (albo brak myszy): aim = nos, celownik wraca
+    // klawiatura steruje bezpośrednio (albo brak myszy/skrypt E2E): aim = nos, celownik wraca
     // na środek — po puszczeniu klawiszy celownik startuje od osi kamery ≈ nos (gładko)
     mouseAim.recenter();
     scratchAim.copy(scratchNose);
@@ -1743,17 +1964,19 @@ function sendInputTick(dtS: number): void {
   inputFrame.sequence = ++sequence;
   // echo najnowszego ticku serwera → serwer liczy z niego rewind lag-comp (faza 11)
   inputFrame.ackServerTick = net.latestSnapshot?.serverTick ?? 0;
-  inputFrame.throttle = keyboard.throttle;
+  inputFrame.throttle = throttleCmd;
   inputFrame.pitchUp = pitchUp;
   inputFrame.rollRight = rollRight;
   inputFrame.yawRight = yawRight;
-  inputFrame.fire = triggerHeld();
+  inputFrame.fire = fireCmd;
   inputFrame.aimX = scratchAim.x;
   inputFrame.aimY = scratchAim.y;
   inputFrame.aimZ = scratchAim.z;
 
   net.sendInput(inputFrame);
   predictor.predict(inputFrame, inputFrame.sequence);
+  // telemetria sondy E2E — po predict, więc próbka widzi stan PO ticku (spójnie z HUD)
+  if (import.meta.env.DEV) recordTelemetry(dtS);
 }
 
 // --- HUD / status połączenia ---
