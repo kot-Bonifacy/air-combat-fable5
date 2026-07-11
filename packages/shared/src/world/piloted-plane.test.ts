@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
 import {
+  A6M2_ZERO,
   Instructor,
   SPITFIRE_MK2,
   createPilotDemands,
@@ -34,7 +35,7 @@ function freshSim(seed = 1) {
 }
 
 function cmd(over: Partial<PilotCommand> = {}): PilotCommand {
-  return { throttle: 0.9, pitchUp: 0, rollRight: 0, yawRight: 0, aimX: 0, aimY: 0, aimZ: 1, ...over };
+  return { throttle: 0.9, pitchUp: 0, rollRight: 0, yawRight: 0, wep: false, aimX: 0, aimY: 0, aimZ: 1, ...over };
 }
 
 function run(commands: readonly PilotCommand[], seed = 1) {
@@ -44,6 +45,39 @@ function run(commands: readonly PilotCommand[], seed = 1) {
   }
   return sim.state;
 }
+
+describe('WEP (fizyka v2 R2): bramkowanie dopalacza w stepPilotedPlane', () => {
+  function wepAfter(plane: typeof SPITFIRE_MK2, throttle: number, wep: boolean): boolean {
+    const { sim, instructor, demands } = freshSim();
+    stepPilotedPlane(sim, instructor, plane, demands, cmd({ throttle, wep }), terrain, 1 / 60, 'test');
+    return sim.state.wepActive;
+  }
+
+  it('wep=true przy pełnym gazie i samolocie z WEP (Spitfire) → state.wepActive', () => {
+    expect(wepAfter(SPITFIRE_MK2, 1, true)).toBe(true);
+  });
+
+  it('wep=false → nieaktywny nawet przy pełnym gazie', () => {
+    expect(wepAfter(SPITFIRE_MK2, 1, false)).toBe(false);
+  });
+
+  it('gaz poniżej progu WEP_MIN_THROTTLE → nieaktywny mimo wep=true', () => {
+    expect(wepAfter(SPITFIRE_MK2, 0.9, true)).toBe(false);
+  });
+
+  it('samolot bez WEP (A6M2 Zero, wepBoostFrac=0) → nieaktywny mimo wep=true i pełnego gazu', () => {
+    expect(wepAfter(A6M2_ZERO, 1, true)).toBe(false);
+  });
+
+  it('komenda null (bez pilota) → dopalacz wyłączony', () => {
+    const { sim, instructor, demands } = freshSim();
+    // najpierw włącz WEP, potem null musi go zdjąć
+    stepPilotedPlane(sim, instructor, SPITFIRE_MK2, demands, cmd({ throttle: 1, wep: true }), terrain, 1 / 60, 'test');
+    expect(sim.state.wepActive).toBe(true);
+    stepPilotedPlane(sim, instructor, SPITFIRE_MK2, demands, null, terrain, 1 / 60, 'test');
+    expect(sim.state.wepActive).toBe(false);
+  });
+});
 
 describe('stepPilotedPlane — determinizm i replay', () => {
   it('ta sama sekwencja inputów z tego samego startu → identyczny stan (bit-w-bit)', () => {

@@ -26,6 +26,7 @@ const CAPTURED_CODES = new Set([
   'KeyD',
   'KeyQ',
   'KeyE',
+  'KeyB',
   'ShiftLeft',
   'ControlLeft',
 ]);
@@ -79,5 +80,11 @@ export class KeyboardInput {
   /** −1..1, +1 = nos w prawo (E). */
   get yawDeflection(): number {
     return this.axis(['KeyE'], ['KeyQ']);
+  }
+
+  /** WEP / boost (fizyka v2 R2): przytrzymanie B = dopalacz. Serwer stosuje go tylko przy pełnym
+   *  gazie i gdy samolot ma WEP; klient wysyła surowy bit (echo w PilotCommand → spójny reconcile). */
+  get wepHeld(): boolean {
+    return this.held.has('KeyB');
   }
 }

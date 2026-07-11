@@ -43,6 +43,7 @@ import {
   primaryGroup,
   surfaceHeightM,
   totalAmmo,
+  vneWarnLevel,
   wingspanM,
   ZONE_ROLES,
   type EntityDamage,
@@ -574,6 +575,10 @@ interface AcTelemetrySample {
   heat01: number;
   fuel01: number;
   throttle: number;
+  /** WEP aktywny w tym ticku (dopalacz — fizyka v2 R2). */
+  wep: boolean;
+  /** Poziom ostrzeżenia Vne: 0 poniżej progu, 1 zbliżanie, 2 przekroczenie (flutter). */
+  vneLevel: 0 | 1 | 2;
 }
 /** Krok skryptu wejścia: pola zdefiniowane nadpisują, niezdefiniowane niosą się z poprzednich. */
 interface AcInputStep {
@@ -583,6 +588,7 @@ interface AcInputStep {
   rollRight?: number;
   yawRight?: number;
   fire?: boolean;
+  wep?: boolean;
 }
 interface AcInputScript {
   steps: AcInputStep[];
@@ -623,6 +629,8 @@ function recordTelemetry(dtS: number): void {
     heat01: s.engineHeatFrac,
     fuel01: s.fuelFrac,
     throttle: s.throttle,
+    wep: s.wepActive,
+    vneLevel: vneWarnLevel(s.iasMs, localPlane),
   };
   if (telemetryBuf.length < TELEMETRY_CAP) telemetryBuf.push(sample);
   else telemetryBuf[telemetryWriteIdx] = sample;
@@ -677,6 +685,12 @@ if (import.meta.env.DEV) {
     /** Odwinięta zmiana kursu prędkości [°] w oknie — ±360 ≈ pełny okrąg (znak = kierunek). */
     headingDeltaDeg: number;
     heatLast01: number;
+    /** Maksymalne grzanie w oknie — WEP dobija do redline (fizyka v2 R2). */
+    heatMax01: number;
+    /** Czy WEP był aktywny w którejkolwiek próbce okna. */
+    wepAny: boolean;
+    /** Najwyższy poziom Vne w oknie (2 = flutter urwał/urywał skrzydła). */
+    vneMaxLevel: 0 | 1 | 2;
     fuelLast01: number;
     throttleLast: number;
     lifeLast: LifePhase;
@@ -760,6 +774,9 @@ if (import.meta.env.DEV) {
       let nSum = 0;
       let nMax = -Infinity;
       let bankAbsSum = 0;
+      let heatMax = 0;
+      let wepAny = false;
+      let vneMax: 0 | 1 | 2 = 0;
       for (const p of win) {
         // odwijanie kursu: krok między próbkami (60 Hz) jest zawsze ≪ 180°
         let d = p.headingDeg - prevHeadingDeg;
@@ -771,6 +788,9 @@ if (import.meta.env.DEV) {
         nSum += p.nG;
         nMax = Math.max(nMax, p.nG);
         bankAbsSum += Math.abs(p.bankDeg);
+        heatMax = Math.max(heatMax, p.heat01);
+        if (p.wep) wepAny = true;
+        if (p.vneLevel > vneMax) vneMax = p.vneLevel;
       }
       return {
         nSamples: win.length,
@@ -785,6 +805,9 @@ if (import.meta.env.DEV) {
         bankMeanAbsDeg: bankAbsSum / win.length,
         headingDeltaDeg,
         heatLast01: last.heat01,
+        heatMax01: heatMax,
+        wepAny,
+        vneMaxLevel: vneMax,
         fuelLast01: last.fuel01,
         throttleLast: last.throttle,
         lifeLast: last.life,
@@ -1294,7 +1317,9 @@ function onKill(killerId: number, victimId: number, cause: KillCause, localId: n
           ? 'ostrzał z ziemi'
           : cause === 'overheat'
             ? 'pożar silnika'
-            : 'rozbicie';
+            : cause === 'structure'
+              ? 'rozpad konstrukcji'
+              : 'rozbicie';
     pushKillFeed(`✕ ${victim} — ${reason}`);
   }
   // efekt śmierci (parytet z SP, faza 15/16): zestrzelenie w locie / kolizja → ofiara staje się
@@ -1355,8 +1380,10 @@ function deathLabel(cause: KillCause | null, module: string | null = null): stri
         ? 'ROZBITY'
         : cause === 'overheat'
           ? 'POŻAR SILNIKA'
-          : 'ZESTRZELONY';
-  // moduł doklejamy tylko przy zestrzeleniach (air/flak); 'overheat' sam mówi o silniku → bez „— SILNIK"
+          : cause === 'structure'
+            ? 'ROZPAD KONSTRUKCJI'
+            : 'ZESTRZELONY';
+  // moduł doklejamy tylko przy zestrzeleniach (air/flak); 'overheat'/'structure' same mówią o przyczynie
   const showModule = module && (cause === null || cause === 'air' || cause === 'flak');
   return showModule ? `${base} — ${module}` : base;
 }
@@ -1899,6 +1926,7 @@ const inputFrame: InputFrame = {
   rollRight: 0,
   yawRight: 0,
   fire: false,
+  wep: false,
   aimX: 0,
   aimY: 0,
   aimZ: 1,
@@ -1912,6 +1940,7 @@ function sendInputTick(dtS: number): void {
   let yawRight = keyboard.yawDeflection;
   let throttleCmd = keyboard.throttle;
   let fireCmd = triggerHeld();
+  let wepCmd = keyboard.wepHeld;
   let scriptActive = false;
 
   // Skrypt E2E (sonda __acDebug, tylko DEV): deterministyczna sekwencja zastępuje pilota
@@ -1926,6 +1955,7 @@ function sendInputTick(dtS: number): void {
     let rr = 0;
     let yr = 0;
     let fi = false;
+    let we = false;
     for (const step of e2eScript.steps) {
       if (step.tS > scriptTS) break;
       if (step.throttle !== undefined) th = step.throttle;
@@ -1933,12 +1963,14 @@ function sendInputTick(dtS: number): void {
       if (step.rollRight !== undefined) rr = step.rollRight;
       if (step.yawRight !== undefined) yr = step.yawRight;
       if (step.fire !== undefined) fi = step.fire;
+      if (step.wep !== undefined) we = step.wep;
     }
     throttleCmd = th;
     pitchUp = pu;
     rollRight = rr;
     yawRight = yr;
     fireCmd = fi;
+    wepCmd = we;
     scriptActive = true;
     if (e2eScriptElapsedS >= e2eScript.durationS) {
       e2eScript = null;
@@ -1970,6 +2002,7 @@ function sendInputTick(dtS: number): void {
   inputFrame.rollRight = rollRight;
   inputFrame.yawRight = yawRight;
   inputFrame.fire = fireCmd;
+  inputFrame.wep = wepCmd;
   inputFrame.aimX = scratchAim.x;
   inputFrame.aimY = scratchAim.y;
   inputFrame.aimZ = scratchAim.z;
@@ -2028,6 +2061,10 @@ function updateHud(frameDtS: number): void {
     engineHeat01: localAlive ? s.engineHeatFrac : 0,
     // wartość °C wskaźnika (per samolot: anchory coldTempC/redlineTempC z JSON Merlin/DB 601)
     engineTempC: engineDisplayTempC(localAlive ? s.engineHeatFrac : 0, localPlane.engineThermal),
+    // WEP aktywny (dopalacz, fizyka v2 R2): wskaźnik „WEP" + ostrzeżenie o grzaniu; tylko w locie
+    wepActive: localAlive && s.wepActive,
+    // poziom ostrzeżenia Vne (0/1/2): zbliżanie → ostrzeżenie, przekroczenie → alarm „FLATTER — ZWOLNIJ"
+    vneLevel: localAlive ? vneWarnLevel(s.iasMs, localPlane) : 0,
     ammo: Math.round(localAmmoFrac * localAmmoMax),
     ammoMax: localAmmoMax,
     // osobny licznik działka 20 mm — tylko dla samolotów z grupą wtórną (Bf 109); HUD domyśla się „20 mm"

@@ -40,6 +40,7 @@ import {
   eventsByteLength,
   factionsInPlay,
   firstZoneHit,
+  flutterWingDamageHp,
   nearestZoneToPoint,
   getForward,
   MATCH_LIVES,
@@ -163,6 +164,7 @@ const scratchAutopilotDir = new Vector3();
 /** Reużywalna komenda auto-stabilizacji (jeden wątek, sekwencyjnie) — pola aim nadpisywane per tick. */
 const autopilotCommand: PilotCommand = {
   throttle: DISCONNECT_CRUISE_THROTTLE,
+  wep: false,
   pitchUp: 0,
   rollRight: 0,
   yawRight: 0,
@@ -1207,6 +1209,11 @@ export class GameRoom {
     // ponad czerwoną linią silnik bierze obrażenia strefy 'silnik' (utrata mocy → poziom w snapshocie).
     this.stepOverheatDamage(dtS);
 
+    // 1a3) flutter / przekroczenie Vne (autorytatywnie, tylko ludzie): powyżej prędkości
+    // nieprzekraczalnej drżenie strukturalne niszczy strefy skrzydeł; oba w 0 HP → rozpad
+    // konstrukcji (wrak, cause 'structure'). Skutek jak przegrzanie jedzie w snapshocie v8 (poziomy).
+    this.stepFlutterDamage(dtS);
+
     // 1b) kolizje samolot↔samolot (faza 15): zamiatany test prevPos→pozycja; zderzeni → wrak
     // 'dying'. PRZED historią/ogniem, by encja zderzona w tym ticku nie była celem ani nie strzelała.
     this.resolvePlaneCollisions();
@@ -1802,6 +1809,39 @@ export class GameRoom {
   }
 
   /**
+   * Flutter / przekroczenie Vne (fizyka v2 R2, §6.2), co tick po ruchu — tylko dla LUDZI (jak
+   * przegrzanie: boty konsekwencji nie odczuwają). Powyżej prędkości nieprzekraczalnej (IAS ≥ Vne)
+   * drżenie strukturalne aplikuje obrażenia proporcjonalne do WZGLĘDNEGO przekroczenia (flutterWingDamageHp)
+   * do OBU stref skrzydeł symetrycznie. Gdy którekolwiek skrzydło padnie (0 HP) → rozpad konstrukcji
+   * (onStructureKill: wrak, cause 'structure', bez kredytu — śmierć z własnej winy). Skutek (poziom stref)
+   * jedzie w snapshocie v8 → klient predykuje uszkodzony lot spójnie; ostrzeżenie HUD (vneWarnLevel) jest
+   * czysto klienckie. Poniżej Vne dmg=0 → tania ścieżka (bez findIndex), sprawne skrzydła bez zmian.
+   */
+  private stepFlutterDamage(dtS: number): void {
+    for (const player of this.players.values()) {
+      if (player.sim.state.life !== 'alive' || player.isBot) continue;
+      const dmg = flutterWingDamageHp(player.sim.state.iasMs, player.plane, dtS);
+      if (dmg <= 0) continue;
+      let destroyed = false;
+      const lIdx = player.plane.zones.findIndex((z) => z.role === 'wingL');
+      if (lIdx >= 0 && applyZoneHit(player.plane.zones, player.damage, lIdx, dmg).zoneDestroyed) destroyed = true;
+      const rIdx = player.plane.zones.findIndex((z) => z.role === 'wingR');
+      if (rIdx >= 0 && applyZoneHit(player.plane.zones, player.damage, rIdx, dmg).zoneDestroyed) destroyed = true;
+      if (destroyed) this.onStructureKill(player);
+    }
+  }
+
+  /** Rozpad konstrukcji (przekroczenie Vne → utrata skrzydła, fizyka v2 R2): spadający wrak BEZ kredytu
+   *  dla kogokolwiek (cause 'structure', śmierć z własnej winy). Ta sama buchalteria asyst co inne
+   *  śmierci bez sprawcy (creditAssists null). Bias roll z modyfikatorów utraconego skrzydła daje
+   *  autorotację w stepWreck (parytet z zestrzeleniem skrzydła pociskiem). */
+  private onStructureKill(victim: ServerPlayer): void {
+    this.enterWreck(victim);
+    this.queueEvent({ kind: 'kill', killerId: NO_KILLER, victimId: victim.id, cause: 'structure' });
+    this.creditAssists(victim, null);
+  }
+
+  /**
    * Dobicie ogniem (faza 22): wrak spada. Kredyt dla podpalacza (cause 'air'), gdy znamy żywego
    * sprawcę-gracza; gdy ogień wzniecił flak (fireFromAa) albo podpalacza już nie ma — bez kredytu
    * (cause 'flak', jak zestrzelenie z ziemi). Ta sama buchalteria co onAirKill/onAaKill (asysty itp.).
@@ -1862,6 +1902,7 @@ export class GameRoom {
     state.throttle = SPAWN_THROTTLE;
     state.fuelFrac = 1; // nowe życie = pełny bak
     state.engineHeatFrac = 0; // zimny silnik na świeżym życiu
+    state.wepActive = false; // dopalacz wyłączony na starcie (włącza go input pilota)
     state.iasMs = player.plane.spawnSpeedMs;
     state.loadFactor = 1;
     state.stalled = false;

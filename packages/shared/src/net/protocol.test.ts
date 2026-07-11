@@ -41,6 +41,7 @@ function makeInput(over: Partial<InputFrame> = {}): InputFrame {
     rollRight: -0.75,
     yawRight: 0.1,
     fire: true,
+    wep: false,
     aimX: 0,
     aimY: 0,
     aimZ: 1,
@@ -64,6 +65,19 @@ describe('protokół INPUT round-trip', () => {
     expect(out.rollRight).toBeCloseTo(-0.75, 3);
     expect(out.yawRight).toBeCloseTo(0.1, 3);
     expect(out.aimZ).toBeCloseTo(1, 3);
+    expect(out.wep).toBe(false);
+  });
+
+  it('bit WEP round-trip niezależnie od FIRE (fizyka v2 R2, wspólny bajt flag)', () => {
+    // cztery kombinacje bitów fire/wep w jednym bajcie flag — żaden nie przecieka na drugi
+    expect(roundTripInput(makeInput({ fire: false, wep: false })).wep).toBe(false);
+    expect(roundTripInput(makeInput({ fire: false, wep: true })).wep).toBe(true);
+    expect(roundTripInput(makeInput({ fire: true, wep: true })).wep).toBe(true);
+    const both = roundTripInput(makeInput({ fire: true, wep: true }));
+    expect(both.fire).toBe(true);
+    expect(both.wep).toBe(true);
+    expect(roundTripInput(makeInput({ fire: true, wep: false })).wep).toBe(false);
+    expect(roundTripInput(makeInput({ fire: true, wep: false })).fire).toBe(true);
   });
 
   it('wartości brzegowe: throttle 0/1, wychylenia ±1, aim ±1', () => {

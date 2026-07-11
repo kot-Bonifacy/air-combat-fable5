@@ -15,15 +15,20 @@ function validRaw(): Record<string, unknown> {
     clMax: 1.45,
     clAlphaPerRad: 5.0,
     enginePowerW: 768000,
+    wepBoostFrac: 0.12,
     fullThrottleHeightM: 5000,
     propEfficiency: 0.8,
     staticThrustN: 13000,
+    vneKmh: 720,
+    flutterDamagePerS: 15,
+    flutterWarnFrac: 0.95,
     fuelEnduranceFullThrottleS: 900,
     spawnSpeedMs: 120,
     engineThermal: {
-      overheatTimeFullS: 300,
+      wepTimeToRedlineS: 300,
       coolTimeS: 200,
-      fullThrottleEqHeat: 1.25,
+      militaryEqHeat: 0.75,
+      wepHeatMul: 1.7,
       speedCoolingK: 0.35,
       speedCoolingRefKmh: 350,
       overheatDamagePerS: 2.5,
@@ -210,10 +215,18 @@ describe('loader konfiguracji samolotu', () => {
     expect(() => loadPlaneConfig(raw)).toThrowError(/nMinG/);
   });
 
-  it('engineThermal.fullThrottleEqHeat ≤ 1 → PlaneConfigError (equilibrium 100% musi przebić czerwoną linię)', () => {
+  it('engineThermal.militaryEqHeat ≥ 1 → PlaneConfigError (100% gazu bojowego musi zostać pod czerwoną linią)', () => {
     const raw = validRaw();
-    (raw['engineThermal'] as Record<string, unknown>)['fullThrottleEqHeat'] = 1.0;
-    expect(() => loadPlaneConfig(raw)).toThrowError(/engineThermal\.fullThrottleEqHeat/);
+    (raw['engineThermal'] as Record<string, unknown>)['militaryEqHeat'] = 1.0; // poza [0.3, 0.95]
+    expect(() => loadPlaneConfig(raw)).toThrowError(/engineThermal\.militaryEqHeat/);
+  });
+
+  it('engineThermal: militaryEqHeat·wepHeatMul ≤ 1 → PlaneConfigError (WEP nie przebija czerwonej linii)', () => {
+    const raw = validRaw();
+    const t = raw['engineThermal'] as Record<string, unknown>;
+    t['militaryEqHeat'] = 0.5;
+    t['wepHeatMul'] = 1.0; // 0.5·1.0 = 0.5 ≤ 1 → WEP nigdy nie przegrzeje
+    expect(() => loadPlaneConfig(raw)).toThrowError(/militaryEqHeat·wepHeatMul/);
   });
 
   it('literówka w sekcji engineThermal → PlaneConfigError z pełną ścieżką', () => {

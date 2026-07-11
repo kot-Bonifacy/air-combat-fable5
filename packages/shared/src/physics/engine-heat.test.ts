@@ -1,20 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { ENGINE_HEAT_REDLINE, FIXED_DT_S, MS_TO_KMH } from '../constants';
+import { ENGINE_HEAT_REDLINE, ENGINE_HEAT_WARN, FIXED_DT_S, MS_TO_KMH } from '../constants';
 import { BF109_E, SPITFIRE_MK2 } from '../planes/loader';
 import { engineDisplayTempC, overheatDamageHp, stepEngineHeat } from './engine-heat';
 import { createPlaneState } from './state';
 
-// Model termiczny silnika: temperatura (engineHeatFrac) relaksuje do equilibrium ∝ gaz²/chłodzenie(IAS).
-// Kalibracja zakotwiczona w realnych limitach WEP: czas 0→czerwona linia przy 100% gazu i prędkości
-// referencyjnej = overheatTimeFullS (Spitfire ~5 min). Testy izolują model (wołają stepEngineHeat wprost
-// na syntetycznym stanie), niezależnie od pełnej dynamiki lotu.
+// Model termiczny silnika (fizyka v2 R2): temperatura (engineHeatFrac) relaksuje do equilibrium
+// ∝ (WEP ? wepHeatMul : 1)·gaz²/chłodzenie(IAS). KLUCZOWA zmiana R2 vs poprzedni model: 100% gazu MOCY
+// BOJOWEJ (bez WEP) osiada na militaryEqHeat < czerwona linia → lot na maksie BEZ LIMITU. Dopiero WEP
+// wypycha equilibrium ponad czerwoną linię i po wepTimeToRedlineS (od ustalonej temp bojowej) przegrzewa —
+// Spitfire ~5 min, Bf 109 ~1 min. Testy izolują model (wołają stepEngineHeat wprost na syntetycznym stanie).
 
-/** Liczy sekundy od zimnego silnika do czerwonej linii przy danym gazie i IAS [km/h]. */
-function timeToRedlineS(plane: typeof SPITFIRE_MK2, throttle: number, iasKmh: number, maxS = 3600): number {
+const speedRefMs = (plane: typeof SPITFIRE_MK2) => plane.engineThermal.speedCoolingRefKmh / MS_TO_KMH;
+
+/**
+ * Sekundy od USTALONEJ temperatury bojowej (militaryEqHeat) do czerwonej linii NA WEP, przy 100% gazu
+ * i prędkości referencyjnej (chłodzenie ×1). To dokładnie semantyka, z której model wyprowadza τ grzania,
+ * więc wynik ≈ wepTimeToRedlineS (lock kalibracji).
+ */
+function wepTimeToRedlineS(plane: typeof SPITFIRE_MK2, maxS = 3600): number {
   const state = createPlaneState();
-  state.throttle = throttle;
-  state.iasMs = iasKmh / MS_TO_KMH;
-  state.engineHeatFrac = 0;
+  state.throttle = 1;
+  state.wepActive = true;
+  state.iasMs = speedRefMs(plane);
+  state.engineHeatFrac = plane.engineThermal.militaryEqHeat; // start od ustalonej temperatury bojowej
   let s = 0;
   while (state.engineHeatFrac < ENGINE_HEAT_REDLINE && s < maxS) {
     stepEngineHeat(state, plane, FIXED_DT_S);
@@ -23,39 +31,63 @@ function timeToRedlineS(plane: typeof SPITFIRE_MK2, throttle: number, iasKmh: nu
   return s;
 }
 
-describe('engine-heat: kalibracja do limitów historycznych', () => {
-  it('Spitfire: 100% gazu @ prędkość referencyjna przegrzewa po ~overheatTimeFullS (≈5 min)', () => {
-    const t = timeToRedlineS(SPITFIRE_MK2, 1, SPITFIRE_MK2.engineThermal.speedCoolingRefKmh);
-    expect(t).toBeGreaterThan(SPITFIRE_MK2.engineThermal.overheatTimeFullS - 5);
-    expect(t).toBeLessThan(SPITFIRE_MK2.engineThermal.overheatTimeFullS + 5);
-    expect(SPITFIRE_MK2.engineThermal.overheatTimeFullS).toBe(300); // lock: 5 min WEP Merlina
+describe('engine-heat: WEP jako reżim przegrzewający (kalibracja do limitów historycznych)', () => {
+  it('Spitfire: WEP od temp. bojowej → czerwona linia po ~wepTimeToRedlineS (≈5 min)', () => {
+    const t = wepTimeToRedlineS(SPITFIRE_MK2);
+    expect(t).toBeGreaterThan(SPITFIRE_MK2.engineThermal.wepTimeToRedlineS - 3);
+    expect(t).toBeLessThan(SPITFIRE_MK2.engineThermal.wepTimeToRedlineS + 3);
+    expect(SPITFIRE_MK2.engineThermal.wepTimeToRedlineS).toBe(300); // lock: 5 min WEP Merlina (+12 lb)
   });
 
-  it('Bf 109 przegrzewa się SZYBCIEJ niż Spitfire (gorsze chłodnice, asymetria)', () => {
-    const spit = timeToRedlineS(SPITFIRE_MK2, 1, SPITFIRE_MK2.engineThermal.speedCoolingRefKmh);
-    const bf = timeToRedlineS(BF109_E, 1, BF109_E.engineThermal.speedCoolingRefKmh);
+  it('Bf 109 na WEP przegrzewa się SZYBCIEJ niż Spitfire (Notleistung ~1 min, asymetria)', () => {
+    const spit = wepTimeToRedlineS(SPITFIRE_MK2);
+    const bf = wepTimeToRedlineS(BF109_E);
     expect(bf).toBeLessThan(spit);
-    expect(bf).toBeGreaterThan(BF109_E.engineThermal.overheatTimeFullS - 5);
-    expect(bf).toBeLessThan(BF109_E.engineThermal.overheatTimeFullS + 5);
+    expect(bf).toBeGreaterThan(BF109_E.engineThermal.wepTimeToRedlineS - 3);
+    expect(bf).toBeLessThan(BF109_E.engineThermal.wepTimeToRedlineS + 3);
+    expect(BF109_E.engineThermal.wepTimeToRedlineS).toBe(60); // lock: ~1 min Notleistung
   });
 });
 
 describe('engine-heat: zachowanie modelu', () => {
-  it('gaz mocy ciągłej (≤ próg) NIGDY nie przegrzewa — equilibrium poniżej czerwonej linii', () => {
-    // gaz, przy którym equilibrium = dokładnie czerwona linia, to 1/√fullEq; bezpieczny zapas pod nim
-    const safeThrottle = (1 / Math.sqrt(SPITFIRE_MK2.engineThermal.fullThrottleEqHeat)) * 0.97;
-    const state = createPlaneState();
-    state.throttle = safeThrottle;
-    state.iasMs = SPITFIRE_MK2.engineThermal.speedCoolingRefKmh / MS_TO_KMH;
-    state.engineHeatFrac = 0;
-    for (let i = 0; i < 60 * 1200; i++) stepEngineHeat(state, SPITFIRE_MK2, FIXED_DT_S); // 20 min
-    expect(state.engineHeatFrac).toBeLessThan(ENGINE_HEAT_REDLINE);
+  it('100% gazu MOCY BOJOWEJ (bez WEP) NIGDY nie przegrzewa — militaryEqHeat to punkt równowagi poniżej progu „gorąco"', () => {
+    // militaryEqHeat jest równowagą (fixed point): seed tam trzyma się dokładnie na 100% gazu bojowego,
+    // nie pełznie ku czerwonej linii → lot na maksie mocy bojowej bez limitu (WEP jest osobnym reżimem)
+    const eq = SPITFIRE_MK2.engineThermal.militaryEqHeat;
+    const settled = createPlaneState();
+    settled.throttle = 1;
+    settled.wepActive = false;
+    settled.iasMs = speedRefMs(SPITFIRE_MK2);
+    settled.engineHeatFrac = eq;
+    for (let i = 0; i < 60 * 1200; i++) stepEngineHeat(settled, SPITFIRE_MK2, FIXED_DT_S); // 20 min
+    expect(settled.engineHeatFrac).toBeCloseTo(eq, 6); // stabilny punkt równowagi
+    expect(eq).toBeLessThan(ENGINE_HEAT_WARN); // poniżej progu „gorąco" → wskaźnik zielony na 100% bojowym
+
+    // z zimnego silnika grzanie zbliża się do równowagi OD DOŁU (asymptota), więc nigdy nie przekracza jej
+    // ani czerwonej linii — po 20 min wciąż wyraźnie poniżej progu „gorąco"
+    const fromCold = createPlaneState();
+    fromCold.throttle = 1;
+    fromCold.wepActive = false;
+    fromCold.iasMs = speedRefMs(SPITFIRE_MK2);
+    fromCold.engineHeatFrac = 0;
+    for (let i = 0; i < 60 * 1200; i++) stepEngineHeat(fromCold, SPITFIRE_MK2, FIXED_DT_S);
+    expect(fromCold.engineHeatFrac).toBeLessThan(eq); // dochodzi od dołu
+    expect(fromCold.engineHeatFrac).toBeLessThan(ENGINE_HEAT_WARN);
+  });
+
+  it('WEP wypycha temperaturę równowagi PONAD czerwoną linię (przegrzewa, gdy trzymany dość długo)', () => {
+    const t = SPITFIRE_MK2.engineThermal;
+    const eqMil = t.militaryEqHeat; // 100% bojowe @ ref = militaryEqHeat
+    const eqWep = t.militaryEqHeat * t.wepHeatMul; // 100% + WEP @ ref
+    expect(eqMil).toBeLessThan(ENGINE_HEAT_REDLINE);
+    expect(eqWep).toBeGreaterThan(ENGINE_HEAT_REDLINE);
   });
 
   it('zdjęcie gazu chłodzi silnik (czerwona linia → ~zimno po coolTimeS)', () => {
     const state = createPlaneState();
     state.throttle = 0;
-    state.iasMs = SPITFIRE_MK2.engineThermal.speedCoolingRefKmh / MS_TO_KMH;
+    state.wepActive = false;
+    state.iasMs = speedRefMs(SPITFIRE_MK2);
     state.engineHeatFrac = ENGINE_HEAT_REDLINE;
     const steps = Math.round(SPITFIRE_MK2.engineThermal.coolTimeS / FIXED_DT_S);
     for (let i = 0; i < steps; i++) stepEngineHeat(state, SPITFIRE_MK2, FIXED_DT_S);
@@ -67,6 +99,7 @@ describe('engine-heat: zachowanie modelu', () => {
     function heatAfter(iasKmh: number): number {
       const state = createPlaneState();
       state.throttle = 1;
+      state.wepActive = true; // na WEP różnica opływu jest wyraźna (equilibrium ponad progiem)
       state.iasMs = iasKmh / MS_TO_KMH;
       for (let i = 0; i < 60 * 100; i++) stepEngineHeat(state, SPITFIRE_MK2, FIXED_DT_S); // 100 s
       return state.engineHeatFrac;

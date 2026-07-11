@@ -41,6 +41,14 @@ export interface HudData {
   engineHeat01: number;
   /** Temperatura silnika w °C do wyświetlenia (per samolot, z engineDisplayTempC). */
   engineTempC: number;
+  /** WEP (dopalacz, fizyka v2 R2) aktywny — HUD dopisuje znacznik „WEP" przy wierszu gazu. */
+  wepActive: boolean;
+  /**
+   * Poziom ostrzeżenia Vne (prędkość nieprzekraczalna): 0 poniżej progu, 1 zbliżanie (ostrzeżenie
+   * przy IAS), 2 przekroczenie — drżenie strukturalne (flutter) urywa skrzydła. Steruje sufiksem
+   * przy IAS i pełnoekranowym alarmem; przyczyną i lekarstwem jest prędkość (zwolnij).
+   */
+  vneLevel: 0 | 1 | 2;
   /** Pozostała amunicja (suma luf). */
   ammo: number;
   /** Pełny zapas amunicji (do wyróżnienia stanu niskiego). */
@@ -64,6 +72,15 @@ export const AILERON_CONCRETE_FRAC = 0.2;
 export function aileronWarning(rollAuthority01: number): string {
   if (rollAuthority01 < AILERON_CONCRETE_FRAC) return '   *** LOTKI ZABETONOWANE ***';
   if (rollAuthority01 < AILERON_STIFF_FRAC) return '   ! lotki sztywne — zwolnij !';
+  return '';
+}
+
+/** Sufiks ostrzeżenia Vne (prędkość nieprzekraczalna) przy wierszu IAS — jak sztywnienie lotek,
+ *  przyczyną i lekarstwem jest prędkość. Poziom 2 (przekroczenie: flutter urywa skrzydła) ma
+ *  PIERWSZEŃSTWO nad ostrzeżeniem o sztywnych lotkach (rozpad konstrukcji ważniejszy). */
+export function vneWarning(vneLevel: 0 | 1 | 2): string {
+  if (vneLevel >= 2) return '   *** Vne — WYRWIE SKRZYDŁA ***';
+  if (vneLevel >= 1) return '   ! Vne — zwolnij !';
   return '';
 }
 
@@ -185,11 +202,15 @@ export class Hud {
     const tempColor = engineTempColor(data.engineHeat01);
     const tempHtml = tempColor ? `<span style="color:${tempColor}">${escHtml(tempLine)}</span>` : escHtml(tempLine);
     this.textEl.innerHTML = [
-      escHtml(hudRow('IAS', data.iasKmh.toFixed(0), 'km/h') + aileronWarning(data.rollAuthority01)),
+      // Vne (rozpad konstrukcji) ma pierwszeństwo nad sztywnymi lotkami — oba wynikają z prędkości
+      escHtml(
+        hudRow('IAS', data.iasKmh.toFixed(0), 'km/h') +
+          (vneWarning(data.vneLevel) || aileronWarning(data.rollAuthority01)),
+      ),
       escHtml(hudRow('TAS', data.tasKmh.toFixed(0), 'km/h')),
       escHtml(hudRow('alt', data.altM.toFixed(0), 'm')),
       escHtml(hudRow('wznosz.', varioValue(data.verticalSpeedMs), 'm/s')),
-      escHtml(hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%')),
+      escHtml(hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%') + (data.wepActive ? '   WEP' : '')),
       tempHtml,
       escHtml(hudRow('paliwo', (data.fuel01 * 100).toFixed(0), '%') + fuelWarning(data.fuel01)),
       escHtml(hudRow('n', data.nG.toFixed(1), 'G') + gLocText),
@@ -208,6 +229,12 @@ export class Hud {
       this.warningEl.textContent = 'BUFFET';
       this.warningEl.className = 'buffet';
       this.warningEl.style.opacity = String(0.35 + 0.65 * data.buffetIntensity);
+    } else if (data.vneLevel >= 2) {
+      // przekroczona Vne: drżenie strukturalne urywa skrzydła (śmierć w sekundy) — najpilniejsze
+      // po przeciągnięciu/buffecie (reżimy rozłączne: stall = mała V, flutter = duża V). Miga szybko.
+      this.warningEl.textContent = 'PRZEKROCZONA Vne — DRŻENIE URYWA SKRZYDŁA';
+      this.warningEl.className = 'stall';
+      this.warningEl.style.opacity = Date.now() % 400 < 240 ? '1' : '0.25';
     } else if (data.blackoutFactor > 0.05) {
       // szarzenie od przeciążenia (G-LOC) — stall ma priorytet (inny reżim prędkości)
       this.warningEl.textContent = 'SZARZENIE — ODPUŚĆ G';

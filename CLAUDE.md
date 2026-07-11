@@ -14,8 +14,10 @@ w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwa
 Po fazie 22 trwa **rekalibracja fizyki lotu v2** (`docs/fizyka-v2-rekalibracja.md`, etapy R0–R5):
 **R0 ✅** (narzędzia pomiarowe + baseline + zamrożenie celów; 675 testów), **R1 ✅** (opór sterów
 `ctrlDragK` + autorytet pitch `pitchAuthorityCurve` + infrastruktura `powerCurve` z fallbackiem;
-699 testów; BEZ protokołu — v9; szczegóły w sekcji „Wynik R1" dokumentu), **R2–R5 ⏳** (R2 = WEP +
-Vne/flutter, bump v10).
+699 testów; BEZ protokołu — v9; szczegóły w sekcji „Wynik R1" dokumentu), **R2 ✅** (WEP: bit `wep`
+w INPUT + `wepBoostFrac`/`wepHeatMul`, 100 % mocy bojowej trwałe / WEP grzeje — Spit ~5 min, Bf ~1 min;
+Vne/flutter serwerowo → strefy skrzydeł, cause `'structure'`; HUD ostrzeżenia; **BUMP protokołu v10**;
+720 testów; szczegóły „Wynik R2"), **R3–R5 ⏳** (R3 = klapy + śmigło; 2 bity klap już w rezerwie v10).
 
 | #     | Temat                                                                 | Stan / uwaga |
 | ----- | --------------------------------------------------------------------- | ------------ |
@@ -35,16 +37,20 @@ Vne/flutter, bump v10).
 | 21    | **Dźwięk i efekty (audio)**: Web Audio (Three.js listener), silniki dobrane do modeli (Merlin→Spitfire, **DB 601→Bf 109**), broń 7,7 mm vs działko 20 mm, eksplozje/trafienia (sample freesound CC0/CC-BY), świst∝IAS²+buffet+ding/UI proceduralne, master vol+mute (localStorage, menu pauzy/klawisz M) | ✅ 474 testy zielone; **wizualia (smugi kondensacyjne/szczątki/ślad 20 mm) → backlog** (nieweryfikowalne wzrokowo z sesji, fps to kryterium); ⏳ user: odsłuch/playtest miksu + brak błędów autoplay (Chrome/FF/Edge) + fps RTX (patrz `docs/phases/faza-21.md`) |
 | 22    | **Modułowe uszkodzenia (5 części)**: strefy z HP + integralność (hybryda); cz.1 fundament shared, cz.2 serwer hit-detection po strefach+maszyna stanów, cz.3 **protokół v8** (u16 stref w snapshocie)+predykcja klienta+ucieczka botów, cz.4 klient: HUD sylwetki (SVG strefy+flagi) + wizualia obcych (dym narastający z silnikiem, ogień u silnika, dym z końcówki skrzydła) + moduł w komunikacie śmierci, cz.5 balans: **analityczny lock TTK** (`ttk.test.ts`) + dokumentacja (wartości zostawione — decyzja usera) | cz.1–4 ✅, cz.5 🟡 (analiza+lock+commit) **575→597 testów zielone**; cz.3 **wymaga deployu front+back RAZEM (v8)**, cz.4–5 czysto klienckie/test (czyta v8); ⏳ user: smoke v8 + playtest balansu (asymetria skrzydła na drążku) + fps RTX @8 → **potem tag `1.0`** (patrz `docs/phases/faza-22.md`) |
 
-**Protokół: `PROTOCOL_VERSION = 9`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
+**Protokół: `PROTOCOL_VERSION = 10`** (bumpnięty w f14 +1 bajt amunicji, w f19b +1 bajt typu samolotu,
 w sesji poprawek 2026-06-21 +1 bajt amunicji GRUPY WTÓRNEJ = działko 20 mm Bf 109 → v5; v6 = naziemne
 stanowiska ogniowe AA (nowe zdarzenia binarne EV_AA_FIRE/EV_AA_DESTROYED, cause `'flak'`); v7 = +1 bajt
 PALIWA w snapshocie encji (paliwo przestało być ukrytym stanem — autorytatywne jak HP/amunicja, fix pustego
 baku po auto-reconnekcie, 2026-06-26); v8 = +u16 STANU USZKODZEŃ w snapshocie encji (6 stref × 2 bity
 poziomu 0..3 + bit pożaru; faza 22 cz.3 — klient predykuje uszkodzony lot z poziomów, jak paliwo po v7;
-`SNAPSHOT_ENTITY_BYTES` 34→36); **v9 = trzeci samolot A6M2 Zero: NOWY KOD 2 bajtu typu** (układ bajtów
+`SNAPSHOT_ENTITY_BYTES` 34→36); v9 = trzeci samolot A6M2 Zero: NOWY KOD 2 bajtu typu (układ bajtów
 bez zmian, ale stary klient nie zna kodu 2 — `planeTypeFromCode` rzuciłby NetError w locie → bump daje
-czysty błąd handshake; 2026-07-09); fazy 15–18, P1–P5 i czat poczekalni bez bumpu — addytywne JSON albo
-usunięcia). **Deploy front+back RAZEM** (niespójna wersja = błąd handshake).
+czysty błąd handshake; 2026-07-09); **v10 = bit WEP w bajcie flag INPUT** (fizyka v2 R2: bit1 obok
+bit0=fire; **ROZMIAR ramki BEZ zmian** — bajt flag miał 7 wolnych bitów, R3 dołoży tu 2 bity klap; bump bo
+semantyka się rozjeżdża: v9-klient nigdy nie ustawi WEP, a serwer v10 karze Vne/przegrzanie WEP; nowa
+`KillCause 'structure'` = rozpad konstrukcji od przekroczenia Vne, dopisana na końcu KILL_CAUSES; 2026-07-11);
+fazy 15–18, P1–P5 i czat poczekalni bez bumpu — addytywne JSON albo usunięcia). **Deploy front+back RAZEM**
+(niespójna wersja = błąd handshake).
 
 **Sesja poprawek 2026-06-21 (poza fazami, 7 zgłoszeń usera — 460 testów zielone):** (1) pole nicku/czatu
 — `KeyboardInput` nie przechwytuje WSADQE, gdy fokus w polu tekstowym (`isEditingText`); (2) ekran ładowania

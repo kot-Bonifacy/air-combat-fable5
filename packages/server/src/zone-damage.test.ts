@@ -22,6 +22,7 @@ function input(over: Partial<InputFrame> = {}): InputFrame {
     rollRight: 0,
     yawRight: 0,
     fire: false,
+    wep: false,
     aimX: 0,
     aimY: 0,
     aimZ: 1,

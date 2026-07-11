@@ -1,4 +1,5 @@
 import { Vector3 } from 'three';
+import { WEP_MIN_THROTTLE } from '../constants';
 import { keyboardDemands, type ControlDeflections } from '../input/pilot-control';
 import { Instructor, type PilotDemands } from '../instructor/instructor';
 import { validatePlaneState } from '../physics/nan-guard';
@@ -29,6 +30,9 @@ export interface PilotCommand {
   rollRight: number;
   /** Wychylenie steru kierunku −1..1 (+ = nos w prawo). */
   yawRight: number;
+  /** WEP / boost (fizyka v2 R2, §6.3) — kop mocy + agresywne grzanie; stosowany tylko przy pełnym
+   *  gazie i gdy samolot ma WEP (wepBoostFrac>0). InputFrame spełnia to strukturalnie (pole `wep`). */
+  wep: boolean;
   /** Kierunek celu instruktora w świecie (jednostkowy, renormalizowany u źródła). */
   aimX: number;
   aimY: number;
@@ -64,6 +68,12 @@ export function stepPilotedPlane(
 
   if (command) {
     state.throttle = command.throttle;
+    // WEP (fizyka v2 R2): efektywny tylko przy pełnym gazie i na samolocie z WEP (wepBoostFrac>0).
+    // Echo inputu → wpływa na moc (thrustForce) i grzanie (engine-heat) w tym ticku; reconcile-safe
+    // (per-tick input, replay deterministyczny — bez ukrytego akumulatora). Zero (wepBoostFrac=0) →
+    // klawisz WEP jest no-opem (brak mocy i grzania).
+    state.wepActive =
+      command.wep && command.throttle >= WEP_MIN_THROTTLE && plane.wepBoostFrac > 0;
     const hasKeyboard =
       command.pitchUp !== 0 || command.rollRight !== 0 || command.yawRight !== 0;
     if (hasKeyboard) {
@@ -87,6 +97,7 @@ export function stepPilotedPlane(
     demands.nDemandG = 1;
     demands.rollRateRadS = 0;
     demands.yawRateRadS = 0;
+    state.wepActive = false;
   }
 
   pilotStep(sim, plane, demands, dtS);
@@ -117,6 +128,7 @@ export function stepWreckPiloted(
   context: string,
 ): LifeEvent {
   const { state } = sim;
+  state.wepActive = false; // wrak: silnik martwy — WEP bez znaczenia (throttle wymuszony na 0)
   if (command) {
     scratchWreckDefl.pitchUp = command.pitchUp;
     scratchWreckDefl.rollRight = command.rollRight;

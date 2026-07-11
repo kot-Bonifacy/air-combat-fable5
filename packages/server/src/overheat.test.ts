@@ -22,6 +22,7 @@ function input(over: Partial<InputFrame> = {}): InputFrame {
     rollRight: 0,
     yawRight: 0,
     fire: false,
+    wep: false,
     aimX: 0,
     aimY: 0,
     aimZ: 1,
@@ -57,14 +58,16 @@ describe('przegrzanie silnika — obrażenia strefy silnika', () => {
     room.start();
     const engine0 = room.zoneHpOf(t, 'engine');
     seedHeat(room, t, 1.7); // głęboko w czerwieni
-    room.applyInput(t, input({ throttle: 1 }));
-    for (let i = 0; i < 600; i++) {
-      // 10 s
+    // WEP + pełny gaz bez opływu (repose → IAS 0): equilibrium ponad czerwoną linią trzyma silnik gorący
+    // (R2: 100% mocy BOJOWEJ osiada pod progiem, to WEP jest reżimem przegrzewającym)
+    room.applyInput(t, input({ throttle: 1, wep: true }));
+    for (let i = 0; i < 900; i++) {
+      // 15 s
       repose(room, t, safe);
-      room.applyInput(t, input({ throttle: 1 }));
+      room.applyInput(t, input({ throttle: 1, wep: true }));
       room.step(FIXED_DT_S);
     }
-    expect(room.engineHeatOf(t)).toBeGreaterThan(1); // wciąż przegrzany (pełny gaz, brak opływu)
+    expect(room.engineHeatOf(t)).toBeGreaterThan(1); // wciąż przegrzany (WEP, brak opływu)
     expect(room.zoneHpOf(t, 'engine')).toBeLessThan(engine0); // silnik oberwał
     expect(room.zoneLevelOf(t, 'engine')).toBeGreaterThanOrEqual(1); // realna utrata mocy
     expect(room.livesOf(t)).toBe(1); // przegrzanie samo nie zabija

@@ -32,9 +32,30 @@ export interface PlaneConfig {
   clMax: number;
   clAlphaPerRad: number;
   enginePowerW: number;
+  /**
+   * Ułamek dodatkowej mocy przy WEP/boost (fizyka v2 R2, §6.3): moc WEP = enginePowerW·(1+wepBoostFrac).
+   * `enginePowerW` to moc BOJOWA (military). 0 = brak WEP (A6M2 Zero — Sakae 12 bez overboostu). Rekalibracja
+   * Vmax na WEP → R4 (na razie WEP daje bonus ponad złote Vmax, które mierzą się bez WEP).
+   */
+  wepBoostFrac: number;
   fullThrottleHeightM: number;
   propEfficiency: number;
   staticThrustN: number;
+  /**
+   * Prędkość nieprzekraczalna Vne [km/h IAS] (fizyka v2 R2, §6.2): powyżej narasta flutter — strukturalne
+   * obrażenia skrzydeł ∝ przekroczeniu; wyrwane skrzydło = rozpad konstrukcji (śmierć). Kanoniczna słabość
+   * A6M2 (630 km/h) vs mocne Spitfire/Bf 109 (720/750). Serwer autorytatywnie (jak przegrzanie), HUD ostrzega.
+   */
+  vneKmh: number;
+  /**
+   * Tempo flutteru: obrażenia [HP/s] KAŻDEGO skrzydła na jednostkę WZGLĘDNEGO przekroczenia Vne
+   * (max(0, IAS/Vne − 1)). Lekkie przekroczenie → powolne uszkodzenie (ostrzeżenie, odwracalne po zwolnieniu);
+   * duże → szybkie wyrwanie skrzydeł. 0 = brak kary (samolot bez limitu — nieużywane w grze).
+   */
+  flutterDamagePerS: number;
+  /** Ułamek Vne, od którego HUD ostrzega (żółto) przed flutterem (np. 0.95). Powyżej Vne (100%) —
+   *  czerwony alert i realne obrażenia. Tylko prezentacja klienta; obrażenia liczy serwer od Vne. */
+  flutterWarnFrac: number;
   /**
    * Wytrzymałość pełnego baku przy 100% gazu [s] — czas do wyczerpania paliwa lecąc
    * na pełnym gazie (zużycie jest proporcjonalne do gazu, więc 50% gazu = 2× dłużej).
@@ -121,27 +142,34 @@ export interface PlaneConfig {
 }
 
 /**
- * Model termiczny silnika (physics/engine-heat.ts): limit czasu lotu na wysokim gazie. Temperatura
- * (engineHeatFrac) relaksuje do equilibrium zależnego od gazu (∝ gaz²) i chłodzenia chłodnicą (∝ IAS);
- * 1.0 = czerwona linia (powyżej silnik bierze obrażenia). Kalibracja do realnych limitów WEP:
- * Spitfire/Merlin ~5 min na 100%, Bf 109/DB 601 krócej i z gorszym chłodzeniem (marginalne chłodnice).
+ * Model termiczny silnika (physics/engine-heat.ts): fizyka v2 R2 (§6.3) — 100% gazu mocy BOJOWEJ jest
+ * TRWAŁE (nie przegrzewa), przegrzewa się dopiero WEP. Temperatura (engineHeatFrac) relaksuje do
+ * equilibrium zależnego od gazu (∝ gaz²), WEP (·wepHeatMul) i chłodzenia chłodnicą (∝ IAS); 1.0 =
+ * czerwona linia (powyżej silnik bierze obrażenia). Kalibracja do realnych limitów WEP: Spitfire/Merlin
+ * ~5 min WEP, Bf 109/DB 601 ~1 min (Notleistung) i z gorszym chłodzeniem (marginalne chłodnice).
  */
 export interface EngineThermalConfig {
   /**
-   * Czas od zimnego silnika do czerwonej linii przy 100% gazu i prędkości referencyjnej [s].
-   * Nagłówkowa liczba historyczna (Spitfire 300 ≈ 5 min WEP). Wewnętrzna stała czasowa grzania
-   * jest z niej wyprowadzana (engine-heat.ts), więc ta wartość to realny, mierzalny limit.
+   * Czas przejścia od ustalonej temperatury BOJOWEJ (equilibrium przy 100% gazu bez WEP) do czerwonej
+   * linii NA WEP, przy 100% gazu i prędkości referencyjnej [s]. Nagłówkowa liczba historyczna (Spitfire
+   * 300 ≈ 5 min WEP; Bf 60 ≈ 1 min Notleistung). Wewnętrzna stała czasowa grzania jest z niej wyprowadzana
+   * (engine-heat.ts), więc to realny, mierzalny limit WEP.
    */
-  overheatTimeFullS: number;
+  wepTimeToRedlineS: number;
   /** Czas schłodzenia od czerwonej linii do ~zimnego na biegu jałowym i prędkości referencyjnej [s]. */
   coolTimeS: number;
   /**
-   * Temperatura równowagi przy 100% gazu i prędkości referencyjnej (>1). Steruje DWOMA rzeczami:
-   * jak wysoko silnik się przegrzewa ORAZ gdzie kończy się „zielony" zakres gazu (mocy ciągłej) —
-   * gaz, przy którym equilibrium = czerwona linia, to 1/√(tej wartości). Większa = mniejszy zielony
-   * zakres + szybsze wypełzanie ponad próg (Bf 109 gorętszy niż Spitfire).
+   * Temperatura równowagi przy 100% gazu MOCY BOJOWEJ (bez WEP) i prędkości referencyjnej. MUSI być < 1
+   * (poniżej czerwonej linii) — lot na maksie mocy bojowej bez limitu. WEP mnoży ją przez wepHeatMul (patrz
+   * niżej) i wtedy przekracza próg. Większa (przy tym samym chłodzeniu) = cieplejszy silnik w locie bojowym.
    */
-  fullThrottleEqHeat: number;
+  militaryEqHeat: number;
+  /**
+   * Mnożnik temperatury równowagi przy AKTYWNYM WEP (fizyka v2 R2, §6.3). militaryEqHeat·wepHeatMul MUSI
+   * być > 1 (WEP przebija czerwoną linię) — loader to waliduje. Wraz z wepTimeToRedlineS wyznacza, jak
+   * szybko WEP dochodzi do przegrzania (Bf agresywniejszy niż Spitfire).
+   */
+  wepHeatMul: number;
   /** Czułość chłodzenia na opływ: mnożnik chłodzenia = 1 + tym·(IAS/referencja − 1). 0 = niezależne od prędkości. */
   speedCoolingK: number;
   /** Prędkość referencyjna chłodzenia [km/h IAS], przy której mnożnik chłodzenia = 1 (kalibracja overheatTimeFullS). */
@@ -324,9 +352,13 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   clMax: [0.5, 5],
   clAlphaPerRad: [1, 10],
   enginePowerW: [10_000, 100_000_000],
+  wepBoostFrac: [0, 0.5], // 0 = brak WEP (Zero); myśliwiec z boostem ~0.1–0.15 (+12 lb vs +9 lb)
   fullThrottleHeightM: [0, 20_000],
   propEfficiency: [0.1, 1],
   staticThrustN: [100, 10_000_000],
+  vneKmh: [300, 1200], // Vne IAS; Zero 630 (słaby) … Bf 750 (mocny)
+  flutterDamagePerS: [0, 200], // HP/s skrzydła na jednostkę względnego przekroczenia Vne
+  flutterWarnFrac: [0.5, 1], // od tego ułamka Vne HUD ostrzega
   fuelEnduranceFullThrottleS: [60, 36_000],
   spawnSpeedMs: [40, 250],
   nMaxG: [1, 20],
@@ -379,11 +411,13 @@ const CTRL_DRAG_RANGES: Record<keyof ControlDragConfig, readonly [min: number, m
 };
 
 const ENGINE_THERMAL_RANGES: Record<keyof EngineThermalConfig, readonly [min: number, max: number]> = {
-  overheatTimeFullS: [30, 1800],
+  wepTimeToRedlineS: [30, 1800],
   coolTimeS: [10, 1800],
-  // > 1 wymagane: equilibrium 100% gazu MUSI przekroczyć czerwoną linię (inaczej nigdy się nie przegrzeje;
-  // log(fullEq/(fullEq−1)) w engine-heat.ts dzieli przez 0/ujemne przy ≤1). Górny 3 = silnik bardzo gorący.
-  fullThrottleEqHeat: [1.02, 3],
+  // < 1 wymagane: equilibrium 100% gazu BOJOWEGO musi zostać PONIŻEJ czerwonej linii (lot bez limitu);
+  // WEP (·wepHeatMul) przekracza próg — walidacja krzyżowa niżej pilnuje militaryEqHeat·wepHeatMul > 1.
+  militaryEqHeat: [0.3, 0.95],
+  // > 1: WEP podnosi equilibrium; górny 3 z zapasem. Iloczyn z militaryEqHeat sprawdzany krzyżowo.
+  wepHeatMul: [1, 3],
   speedCoolingK: [0, 2],
   speedCoolingRefKmh: [50, 1000],
   overheatDamagePerS: [0, 50],
@@ -727,6 +761,22 @@ export function loadPlaneConfig(raw: unknown, source = 'konfiguracja samolotu'):
   const nMin = obj['nMinG'];
   if (typeof nMin === 'number' && nMin >= 0) {
     problems.push(`nMinG: ${String(nMin)} — limit ujemny musi być < 0`);
+  }
+
+  // walidacja krzyżowa termiki (R2): WEP MUSI przebić czerwoną linię (militaryEqHeat·wepHeatMul > 1),
+  // inaczej engine-heat.ts liczyłby log z liczby ≤ 0 (NaN) i WEP nigdy by się nie przegrzał.
+  const thermal = obj['engineThermal'];
+  if (typeof thermal === 'object' && thermal !== null && !Array.isArray(thermal)) {
+    const th = thermal as Record<string, unknown>;
+    const mil = th['militaryEqHeat'];
+    const mul = th['wepHeatMul'];
+    if (typeof mil === 'number' && typeof mul === 'number' && Number.isFinite(mil) && Number.isFinite(mul)) {
+      if (mil * mul <= 1) {
+        problems.push(
+          `engineThermal: militaryEqHeat·wepHeatMul = ${(mil * mul).toFixed(3)} musi być > 1 (WEP przebija czerwoną linię)`,
+        );
+      }
+    }
   }
 
   for (const key of Object.keys(obj)) {

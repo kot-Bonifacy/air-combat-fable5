@@ -50,6 +50,14 @@ export interface PlaneState {
    * — idzie autorytatywnie przez poziomy uszkodzeń strefy 'silnik'). Reset do 0 przy (re)spawnie.
    */
   engineHeatFrac: number;
+  /**
+   * Czy WEP (boost) jest AKTYWNY w tym ticku (fizyka v2 R2, §6.3). Echo inputu (bit WEP z ramki INPUT)
+   * przefiltrowane przez próg gazu i `wepBoostFrac>0` — ustawiane w `stepPilotedPlane`. Wpływa na moc
+   * (thrustForce: ·(1+wepBoostFrac)) i na grzanie (engine-heat: ·wepHeatMul). NIE jest w snapshocie —
+   * jak wychylenia sterów: to per-tick input, replay deterministyczny (bez akumulatora → reconcile-safe).
+   * Boty go nie ustawiają (zawsze false — nie używają WEP). Reset do false przy (re)spawnie i we wraku.
+   */
+  wepActive: boolean;
   /** Prędkość wskazywana [m/s] (pochodna, liczona od fazy 2). */
   iasMs: number;
   /** Bieżące przeciążenie [G] (pochodne, liczone od fazy 2). */
@@ -69,6 +77,7 @@ export function createPlaneState(): PlaneState {
     throttle: 0,
     fuelFrac: 1,
     engineHeatFrac: 0,
+    wepActive: false,
     iasMs: 0,
     loadFactor: 1,
     stalled: false,
@@ -88,6 +97,7 @@ export function copyPlaneState(src: PlaneState, dst: PlaneState): PlaneState {
   dst.throttle = src.throttle;
   dst.fuelFrac = src.fuelFrac;
   dst.engineHeatFrac = src.engineHeatFrac;
+  dst.wepActive = src.wepActive;
   dst.iasMs = src.iasMs;
   dst.loadFactor = src.loadFactor;
   dst.stalled = src.stalled;

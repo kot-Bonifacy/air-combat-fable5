@@ -53,8 +53,13 @@ import { ZONE_COUNT } from '../combat/damage-model';
  * PLANE_TYPES). Układ bajtów BEZ zmian, ale stary klient nie zna kodu 2 (planeTypeFromCode rzuca
  * NetError w locie przy pierwszym Zero w meczu) → bump gwarantuje czysty błąd handshake zamiast
  * crasha. Deploy front+back RAZEM.
+ * v10 (fizyka v2 R2, §6.3): ramka INPUT niesie bit WEP (boost) w bajcie flag (bit1, obok bit0=fire).
+ * ROZMIAR ramki BEZ zmian (bajt flag miał 7 wolnych bitów — R3 dołoży tu 2 bity klap), ale SEMANTYKA
+ * się rozjeżdża: v9-klient nigdy nie ustawi WEP, a serwer v10 karze przekroczenie Vne/przegrzanie WEP —
+ * bump wymusza spójny deploy front+back. Nowa przyczyna śmierci 'structure' (rozpad konstrukcji od
+ * przekroczenia Vne, flutter) — dopisana na końcu KILL_CAUSES (u8, zgodna z drutem jak 'overheat').
  */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 /** Tag pierwszego bajtu ramki binarnej: wejście gracza (klient → serwer). */
 export const MSG_INPUT = 1;
@@ -133,6 +138,9 @@ export interface InputFrame {
   yawRight: number;
   /** Spust (faza 8: broń online wyłączona — bit przenoszony pod fazę 11). */
   fire: boolean;
+  /** WEP / boost (fizyka v2 R2, §6.3): kop mocy + agresywne grzanie silnika. Bit1 bajtu flag INPUT.
+   *  Serwer stosuje go tylko przy gazie ≥ WEP_MIN_THROTTLE i gdy samolot ma WEP (wepBoostFrac>0). */
+  wep: boolean;
   /** Kierunek celu instruktora w świecie (jednostkowy). */
   aimX: number;
   aimY: number;
@@ -140,7 +148,7 @@ export interface InputFrame {
 }
 
 // layout: u8 type | u32 seq | u32 ackServerTick | u16 throttle | i16×3 deflekcje |
-//         i16×3 aim | u8 flags(bit0=fire)
+//         i16×3 aim | u8 flags(bit0=fire, bit1=wep; bity 2–7 rezerwa — R3 klapy)
 const OFF_TYPE = 0;
 const OFF_SEQ = 1;
 const OFF_ACK_TICK = 5;
@@ -157,6 +165,8 @@ const OFF_FLAGS = 23;
 export const INPUT_BYTES = 24;
 
 const FIRE_BIT = 0b1;
+/** WEP / boost (fizyka v2 R2) — bit1 bajtu flag INPUT, obok FIRE_BIT. */
+const WEP_BIT = 0b10;
 
 /** Zapisuje ramkę INPUT do `view` (offset 0). `view` musi mieć ≥ INPUT_BYTES. */
 export function encodeInput(view: DataView, frame: InputFrame): void {
@@ -170,7 +180,7 @@ export function encodeInput(view: DataView, frame: InputFrame): void {
   view.setInt16(OFF_AIM_X, quantizeUnit(frame.aimX), true);
   view.setInt16(OFF_AIM_Y, quantizeUnit(frame.aimY), true);
   view.setInt16(OFF_AIM_Z, quantizeUnit(frame.aimZ), true);
-  view.setUint8(OFF_FLAGS, frame.fire ? FIRE_BIT : 0);
+  view.setUint8(OFF_FLAGS, (frame.fire ? FIRE_BIT : 0) | (frame.wep ? WEP_BIT : 0));
 }
 
 /** Alokuje i zwraca bufor z zakodowaną ramką INPUT (do testów / prostego użycia). */
@@ -202,6 +212,7 @@ export function decodeInput(view: DataView): InputFrame {
     aimY: dequantizeUnit(view.getInt16(OFF_AIM_Y, true)),
     aimZ: dequantizeUnit(view.getInt16(OFF_AIM_Z, true)),
     fire: (view.getUint8(OFF_FLAGS) & FIRE_BIT) !== 0,
+    wep: (view.getUint8(OFF_FLAGS) & WEP_BIT) !== 0,
   };
 }
 
@@ -476,12 +487,13 @@ export const EV_AA_DESTROYED = 5;
 
 /**
  * Rodzaj śmierci w zdarzeniu KILL (`'flak'` = zestrzelenie przez naziemne stanowisko, v6;
- * `'overheat'` = awaria z przegrzania silnika, z własnej winy, bez sprawcy — 2026-06-30).
- * Wartości DOPISYWANE NA KOŃCU (indeks = pozycja w KILL_CAUSES jedzie u8 w EVENT) — nie zmieniać
- * kolejności istniejących, by nie złamać zgodności drutu.
+ * `'overheat'` = awaria z przegrzania silnika, z własnej winy, bez sprawcy — 2026-06-30;
+ * `'structure'` = rozpad konstrukcji od przekroczenia Vne, flutter urwał skrzydła — z własnej winy,
+ * bez sprawcy, fizyka v2 R2 §6.2). Wartości DOPISYWANE NA KOŃCU (indeks = pozycja w KILL_CAUSES jedzie
+ * u8 w EVENT) — nie zmieniać kolejności istniejących, by nie złamać zgodności drutu.
  */
-export type KillCause = 'air' | 'ground' | 'collision' | 'flak' | 'overheat';
-const KILL_CAUSES: readonly KillCause[] = ['air', 'ground', 'collision', 'flak', 'overheat'];
+export type KillCause = 'air' | 'ground' | 'collision' | 'flak' | 'overheat' | 'structure';
+const KILL_CAUSES: readonly KillCause[] = ['air', 'ground', 'collision', 'flak', 'overheat', 'structure'];
 
 export interface MuzzleEvent {
   kind: 'muzzle';

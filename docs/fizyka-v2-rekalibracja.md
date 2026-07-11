@@ -412,7 +412,7 @@ testy zielone. **Bez protokołu** (czysto shared/JSON).
   poziomego → CFIT w górkę ~900 m; pomiar wymaga wspinaczki przed beczkami i kroku
   wyprowadzenia po oknie), porównanie z harnessem MUSI zrównać gaz (wrażliwość
   ~1,5 m E-dropu na 0,01 gazu — trym ≠ wartość skryptu).
-- **Następny etap: R2** (WEP + Vne/flutter, **bump protokołu v10**).
+- **Następny etap: R2** (WEP + Vne/flutter, **bump protokołu v10**). ✅ UKOŃCZONY 2026-07-11 (patrz „Wynik R2").
 
 ### R2 — Skraje koperty: WEP + Vne/flutter (**protokół v10**)
 **Zakres:** §6.3 (bit WEP w INPUT, moc mil/WEP w JSON, sprzężenie z termiką),
@@ -420,6 +420,54 @@ testy zielone. **Bez protokołu** (czysto shared/JSON).
 `wepHeatTest`/`vneFlutterTest`. **Bump v10, deploy front+back RAZEM.**
 **Kryteria:** WEP Spit ~5 min/Bf ~1 min do czerwonej linii; nurkowanie Zero > Vne urywa
 skrzydła w teście i E2E; reconcile bez dryfu (wzorzec heatBefore sprawdzony testem).
+
+#### Wynik R2 (2026-07-11) — UKOŃCZONY, 720 testów zielone, **protokół v10**
+
+**Decyzje usera (AskUserQuestion):** (1) WEP = **jedyny reżim grzejący** (100 % mocy BOJOWEJ trwałe,
+WT/§6.3) — wymusiło rewizję semantyki termiki; (2) nowa przyczyna śmierci **`'structure'`** (rozpad
+konstrukcji, osobna od `'ground'`); (3) skutek flutteru = **HUD + realne uszkodzenia stref skrzydeł**
+(buffet kamery/audio → R5).
+
+**§6.3 WEP.** Bit `wep` w bajcie flag INPUT (bit1 obok `fire`; **rozmiar ramki BEZ zmian** — 6 wolnych
+bitów zostaje na klapy R3), gate klawisza **B** (Shift/Ctrl zajęte przez gaz). `P_eff = P_mil·(1+wepBoostFrac)`
+tylko przy gazie ≥ `WEP_MIN_THROTTLE`=0,99 i `wepBoostFrac>0`; `state.wepActive` = per-tick echo inputu
+(bez akumulatora → reconcile bezpieczny). **Rewizja modelu termiki (kluczowa):** stary `fullThrottleEqHeat`
+(100 % gazu grzało) → `militaryEqHeat < 1` (100 % bojowe OSIADA pod czerwoną linią = lot bez limitu) +
+`wepHeatMul` (WEP wypycha `heatEq` ponad 1). `τ` grzania WYPROWADZANA z `wepTimeToRedlineS`: od ustalonej
+temp. bojowej do czerwonej linii na WEP. Kalibracja: Spit `militaryEqHeat` 0,75 / `wepHeatMul` 1,7 /
+`wepTimeToRedlineS` 300 (5 min); Bf 0,75 / 1,9 / 60 (1 min Notleistung); Zero `wepBoostFrac` 0 (bez WEP).
+Loader waliduje `militaryEqHeat·wepHeatMul > 1` (inaczej WEP nigdy nie przegrzeje — strażnik NaN τ). **Podział
+`enginePowerW`→`militaryPowerW` + rekalibracja Vmax „na WEP" ZOSTAWIONE na R4** (dziś WEP = dodatek nad mocą
+bojową; złote Vmax bez WEP nietknięte).
+
+**§6.2 Vne/flutter.** `shared/physics/flutter.ts`: `flutterWingDamageHp(ias,plane,dt) ∝ max(0, IAS/Vne−1)`
+(czyste), `vneWarnLevel` 0/1/2 dla HUD. **Serwer autorytatywnie** (`stepFlutterDamage`, TYLKO ludzie jak
+przegrzanie): powyżej Vne (IAS) obrażenia do OBU stref skrzydeł; oba w 0 HP → `onStructureKill` (wrak, cause
+`'structure'`, bez kredytu). Skutek jedzie poziomami w snapshocie v8 → klient predykuje spójnie. HUD: sufiks
+przy IAS (`vneWarning`, pierwszeństwo nad „lotki sztywne"), znacznik „WEP" przy gazie, pełnoekranowe
+„PRZEKROCZONA Vne — DRŻENIE URYWA SKRZYDŁA". `KillCause 'structure'` DOPISANA NA KOŃCU `KILL_CAUSES`
+(u8 zgodny), etykieta „ROZPAD KONSTRUKCJI", killfeed „rozpad konstrukcji". JSON: `vneKmh` (Spit 720 / Bf 750 /
+Zero **630** = kanoniczna kruchość), `flutterDamagePerS` (15/15/25), `flutterWarnFrac` 0,95.
+
+**Testy (+21 vs R1 → 720):** przepisany `engine-heat.test.ts` (WEP od temp. bojowej → redline ≈ `wepTimeToRedlineS`;
+100 % bojowe = punkt równowagi pod progiem „gorąco"); `physics/flutter.test.ts` (math + poziomy + Zero najniższe
+Vne); `server/flutter.test.ts` (**pełny `room.step`: nurkowanie > Vne urywa skrzydła → śmierć strukturalna;
+kontrola < Vne = 0 obrażeń; boty odporne**); `thrust.test.ts` (WEP +wepBoostFrac); `piloted-plane.test.ts`
+(bramkowanie WEP: gaz/wepBoostFrac/null); `prediction.test.ts` (**WEP nie dopala ciepła przy replayu —
+heatBefore**); protokół (round-trip bitu WEP niezależnie od FIRE). Kotwice R0 NIETKNIĘTE (WEP/flutter to skraje
+poza harnessem manewrów; złote osiągów bez WEP → bez zmian).
+
+**E2E (MCP chrome-devtools):** **WEP** potwierdzony end-to-end na Spitfire — `wepAny=true` (input→`wepActive`),
+temperatura rośnie monotonicznie 0,015→0,063 w ~19 s (transient z zimna, zgodny z tauUp≈464 s). **Vne:** fizyka
+nurkowania i telemetria (`vneLevel`/`wepAny`) działają (Zero rozpędzony 351→533 km/h w nurkowaniu), ale pełne
+przekroczenie Vne 630 było ograniczone terenem (CFIT w górę przy 533 km/h — spawny nie dają dość wysokości nad
+górzystym terenem); sam mechanizm rozpadu skrzydeł zablokowany testem pełnego pipeline'u serwera. Sonda
+`__acDebug` rozszerzona (`AcInputStep.wep`, telemetria `wep`/`vneLevel`, raport `heatMax01`/`wepAny`/`vneMaxLevel`).
+
+**⏳ user:** playtest (WEP: kop mocy + zarządzanie temp. w pościgu, Spit 5 min / Bf 1 min adekwatne?;
+nurkowanie > Vne w realnej grze — najłatwiej Zero z pułapu nad wodą/płaskim; czytelność ostrzeżeń HUD);
+**deploy front+back RAZEM (v10)** — jeszcze NIEWDROŻONE. **Następny etap: R3** (klapy + śmigło; 2 bity klap
+JUŻ w rezerwie v10).
 
 ### R3 — Mechanizacja i śmigło: klapy + efekty śmigła
 **Zakres:** §6.4 (2 bity klap w INPUT — JUŻ w v10 z R2, rezerwa; pozycje per samolot,

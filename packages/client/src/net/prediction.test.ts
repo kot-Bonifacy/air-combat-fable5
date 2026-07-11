@@ -59,7 +59,7 @@ function entityOf(
 }
 
 function cmd(over: Partial<PilotCommand> = {}): PilotCommand {
-  return { throttle: 0.85, pitchUp: 0, rollRight: 0, yawRight: 0, aimX: 0, aimY: 0, aimZ: 1, ...over };
+  return { throttle: 0.85, pitchUp: 0, rollRight: 0, yawRight: 0, wep: false, aimX: 0, aimY: 0, aimZ: 1, ...over };
 }
 
 function makeServer() {
@@ -129,6 +129,26 @@ describe('Predictor — predykcja i reconciliation', () => {
     const p = new Predictor(SPITFIRE_MK2, terrain);
     p.reconcile(server.entity(), 0);
     expect(p.sim.damageLevels).toBeNull(); // sprawny → null (ścieżka złotych testów fizyki)
+  });
+
+  it('WEP: reconcile NIE „dopala" temperatury (wzorzec heatBefore) — replay nie mnoży ciepła', () => {
+    // temperatura silnika nie jest w snapshocie; predict() advances ją raz/tick (zegar ścienny), a
+    // reconcile odtwarza niepotwierdzone inputy — bez heatBefore każdy replay „dopaliłby" ciepło (błąd
+    // paliwa sprzed v7). WEP grzeje agresywnie, więc jest czułym probierzem tego niezmiennika.
+    const server = makeServer();
+    const p = new Predictor(SPITFIRE_MK2, terrain);
+    p.reconcile(server.entity(), 0);
+    const c = cmd({ throttle: 1, wep: true }); // WEP wymaga pełnego gazu
+    for (let t = 1; t <= 180; t++) {
+      p.predict(c, t); // 3 s predykcji na WEP → temperatura rośnie
+      server.step(c);
+    }
+    const heatA = p.sim.state.engineHeatFrac;
+    expect(heatA).toBeGreaterThan(0); // WEP faktycznie grzeje lokalną predykcję
+    expect(p.sim.state.wepActive).toBe(true); // echo inputu w stanie (per-tick, nie akumulator)
+    // ack=0 → wszystkie 180 inputów w buforze do replay; ciepło MUSI zostać sprzed reconcile (nie ×wiele)
+    p.reconcile(server.entity(), 0);
+    expect(p.sim.state.engineHeatFrac).toBeCloseTo(heatA, 10);
   });
 
   it('zamknięta pętla z lagiem 100 ms: korekty < próg snap, klient nadąża za serwerem', () => {

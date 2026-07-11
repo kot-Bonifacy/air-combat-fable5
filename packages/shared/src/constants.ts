@@ -34,13 +34,23 @@ export const THRUST_V_EPS_MS = 1;
 /** Konwersja m/s → km/h (HUD i cele osiągów podawane w km/h). */
 export const MS_TO_KMH = 3.6;
 
-// --- przegrzewanie silnika (limit czasu na 100% gazu; kalibracja do realnych limitów WEP) ---
+// --- WEP / boost (fizyka v2 R2, §6.3) ---
+
+/**
+ * Minimalny gaz, przy którym WEP w ogóle działa (kop mocy + agresywne grzanie). WT: WEP dostępny
+ * dopiero „na maksie". Klawiatura dobija gaz do 1.0 (Shift), więc 0.99 jest osiągalne bez ślizgania
+ * się poniżej progu. Poniżej — bit WEP z inputu ignorowany (wepActive=false), bez mocy i bez grzania.
+ */
+export const WEP_MIN_THROTTLE = 0.99;
+
+// --- przegrzewanie silnika (fizyka v2 R2, §6.3: 100% gazu = moc bojowa TRWAŁA; przegrzewa się WEP) ---
 
 /**
  * „Czerwona linia" temperatury silnika (engineHeatFrac, bezwymiarowo): od tej wartości w górę silnik
  * się PRZEGRZEWA i bierze realne obrażenia strefy 'silnik' (serwer, autorytatywnie). 1.0 z definicji
- * modelu — equilibrium dobrane tak, że gaz „mocy ciągłej" osiada poniżej, a 100% gazu wypełza powyżej
- * (patrz physics/engine-heat.ts: heatEq = fullThrottleEqHeat·gaz²/chłodzenie).
+ * modelu. Fizyka v2 R2: equilibrium przy 100% gazu MOCY BOJOWEJ (militaryEqHeat) osiada PONIŻEJ tej
+ * linii — lot na maksie bez limitu; dopiero WEP (mnożnik wepHeatMul) wypycha equilibrium powyżej i po
+ * wepTimeToRedlineS sięga przegrzania (patrz physics/engine-heat.ts).
  */
 export const ENGINE_HEAT_REDLINE = 1;
 
