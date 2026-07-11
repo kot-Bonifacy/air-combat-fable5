@@ -41,6 +41,8 @@ import {
   factionsInPlay,
   firstZoneHit,
   flutterWingDamageHp,
+  effectiveFlapIndex,
+  flapRipWingDamageHp,
   nearestZoneToPoint,
   getForward,
   MATCH_LIVES,
@@ -165,6 +167,7 @@ const scratchAutopilotDir = new Vector3();
 const autopilotCommand: PilotCommand = {
   throttle: DISCONNECT_CRUISE_THROTTLE,
   wep: false,
+  flaps: 0,
   pitchUp: 0,
   rollRight: 0,
   yawRight: 0,
@@ -1214,6 +1217,10 @@ export class GameRoom {
     // konstrukcji (wrak, cause 'structure'). Skutek jak przegrzanie jedzie w snapshocie v8 (poziomy).
     this.stepFlutterDamage(dtS);
 
+    // 1a4) urwanie klap (autorytatywnie, tylko ludzie): wysunięte klapy powyżej ich ripIas biorą
+    // obrażenia skrzydeł (flapRipWingDamageHp); po urwaniu (poziom skrzydła) efekt sam ustaje. R3 §6.4.
+    this.stepFlapRipDamage(dtS);
+
     // 1b) kolizje samolot↔samolot (faza 15): zamiatany test prevPos→pozycja; zderzeni → wrak
     // 'dying'. PRZED historią/ogniem, by encja zderzona w tym ticku nie była celem ani nie strzelała.
     this.resolvePlaneCollisions();
@@ -1831,6 +1838,31 @@ export class GameRoom {
     }
   }
 
+  /**
+   * Urwanie klap (fizyka v2 R3, §6.4), co tick po ruchu — tylko dla LUDZI (jak flutter/przegrzanie:
+   * boty konsekwencji nie odczuwają). Gdy klapy są WYSUNIĘTE (efektywny indeks > 0 — czyli żądane i
+   * jeszcze nieurwane) i IAS przekracza ripIas danej pozycji, drżenie mechanizacji aplikuje obrażenia
+   * (flapRipWingDamageHp) do OBU stref skrzydeł. Gdy skrzydło osiągnie poziom FLAP_DISABLE_WING_LEVEL,
+   * effectiveFlapIndex spada do 0 (klapy urwane trwale) i obrażenia ustają — mechanizm SAM się ogranicza
+   * (normalnie skrzydła nie giną). Rzadki combo do 0 HP (już wcześniej postrzelone skrzydło) → rozpad
+   * konstrukcji jak flutter (onStructureKill). Efektywny indeks liczony z `sim.state.flapIndex` (żądanie
+   * gracza z tego ticku, ustawione w stepPilotedPlane) i `sim.damageLevels` (poziomy z początku ticku).
+   */
+  private stepFlapRipDamage(dtS: number): void {
+    for (const player of this.players.values()) {
+      if (player.sim.state.life !== 'alive' || player.isBot) continue;
+      const effIndex = effectiveFlapIndex(player.sim.state.flapIndex, player.sim.damageLevels, player.plane);
+      const dmg = flapRipWingDamageHp(effIndex, player.sim.state.iasMs, player.plane, dtS);
+      if (dmg <= 0) continue;
+      let destroyed = false;
+      const lIdx = player.plane.zones.findIndex((z) => z.role === 'wingL');
+      if (lIdx >= 0 && applyZoneHit(player.plane.zones, player.damage, lIdx, dmg).zoneDestroyed) destroyed = true;
+      const rIdx = player.plane.zones.findIndex((z) => z.role === 'wingR');
+      if (rIdx >= 0 && applyZoneHit(player.plane.zones, player.damage, rIdx, dmg).zoneDestroyed) destroyed = true;
+      if (destroyed) this.onStructureKill(player);
+    }
+  }
+
   /** Rozpad konstrukcji (przekroczenie Vne → utrata skrzydła, fizyka v2 R2): spadający wrak BEZ kredytu
    *  dla kogokolwiek (cause 'structure', śmierć z własnej winy). Ta sama buchalteria asyst co inne
    *  śmierci bez sprawcy (creditAssists null). Bias roll z modyfikatorów utraconego skrzydła daje
@@ -1903,6 +1935,7 @@ export class GameRoom {
     state.fuelFrac = 1; // nowe życie = pełny bak
     state.engineHeatFrac = 0; // zimny silnik na świeżym życiu
     state.wepActive = false; // dopalacz wyłączony na starcie (włącza go input pilota)
+    state.flapIndex = 0; // klapy schowane na starcie (wysuwa je input pilota)
     state.iasMs = player.plane.spawnSpeedMs;
     state.loadFactor = 1;
     state.stalled = false;

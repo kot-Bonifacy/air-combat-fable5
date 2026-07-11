@@ -58,6 +58,16 @@ export interface PlaneState {
    * Boty go nie ustawiają (zawsze false — nie używają WEP). Reset do false przy (re)spawnie i we wraku.
    */
   wepActive: boolean;
+  /**
+   * Wybrana pozycja klap (fizyka v2 R3, §6.4): indeks w `plane.flaps.positions[]` (0 = schowane).
+   * Echo inputu (2 bity klap z ramki INPUT) — ustawiane w `stepPilotedPlane`, jak `wepActive`. Wpływa
+   * na aerodynamikę (clMax/cd0 przez efektywną konfigurację) w `pilotStep`. NIE jest w snapshocie: to
+   * per-tick input, replay deterministyczny (bez akumulatora → reconcile-safe). URWANIE klap (przekroczenie
+   * ripIasKmh) nie żyje tutaj — wywodzi się z poziomu uszkodzenia skrzydła (snapshot v8), więc pole trzyma
+   * ŻĄDANY indeks, a efektywny (po urwaniu 0) liczy `effectiveFlapIndex`. Boty go nie ustawiają (0). Reset
+   * do 0 przy (re)spawnie i we wraku.
+   */
+  flapIndex: number;
   /** Prędkość wskazywana [m/s] (pochodna, liczona od fazy 2). */
   iasMs: number;
   /** Bieżące przeciążenie [G] (pochodne, liczone od fazy 2). */
@@ -78,6 +88,7 @@ export function createPlaneState(): PlaneState {
     fuelFrac: 1,
     engineHeatFrac: 0,
     wepActive: false,
+    flapIndex: 0,
     iasMs: 0,
     loadFactor: 1,
     stalled: false,
@@ -98,6 +109,7 @@ export function copyPlaneState(src: PlaneState, dst: PlaneState): PlaneState {
   dst.fuelFrac = src.fuelFrac;
   dst.engineHeatFrac = src.engineHeatFrac;
   dst.wepActive = src.wepActive;
+  dst.flapIndex = src.flapIndex;
   dst.iasMs = src.iasMs;
   dst.loadFactor = src.loadFactor;
   dst.stalled = src.stalled;

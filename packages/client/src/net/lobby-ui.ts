@@ -56,7 +56,8 @@ function teamLabel(faction: number): string {
 
 // Sterowanie w wersji ONLINE (onboarding, parytet z ekranem „JAK GRAĆ" w menu.ts SP).
 // Źródło prawdy = input.ts + obsługa klawiszy w online-main.ts. Różnice względem SP: BEZ
-// „Respawn (R)" (w MP nie ma respawnu graczem), dochodzi „Panel sieci (N)".
+// „Respawn (R)" (w MP nie ma respawnu graczem), dochodzi „Panel sieci (N)". WEP (B) i klapy (F)
+// dodane w fizyce v2 (R2/R3) — skrót klawiszy powielony w HUD (wiersz „klawisze").
 const ONLINE_CONTROL_ROWS: readonly (readonly [string, string])[] = [
   ['Celowanie / lot', 'Mysz (kliknij w ekran)'],
   ['Ogień', 'LPM  •  Spacja'],
@@ -64,6 +65,8 @@ const ONLINE_CONTROL_ROWS: readonly (readonly [string, string])[] = [
   ['Przechylenie L / P', 'A / ←   •   D / →'],
   ['Ster kierunku L / P', 'Q   •   E'],
   ['Gaz +  /  −', 'L.Shift  /  L.Ctrl'],
+  ['WEP / dopalacz', 'B (przytrzymaj)'],
+  ['Klapy (wysuń / schowaj)', 'F (cyklicznie)'],
   ['Rozglądanie się (kamera)', 'Lewy Alt (przytrzymaj)'],
   ['Tabela wyników', 'Tab (przytrzymaj)'],
   ['Panel sieci', 'N'],

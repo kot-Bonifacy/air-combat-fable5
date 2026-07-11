@@ -47,6 +47,18 @@
     "aileron": 0.003,
     "rudder": 0.002
   },
+  "flaps": {
+    "positions": [
+      { "name": "schowane", "clMaxAdd": 0, "cd0Add": 0, "ripIasKmh": 2000 },
+      { "name": "pełne", "clMaxAdd": 0.6, "cd0Add": 0.09, "ripIasKmh": 260 }
+    ],
+    "ripDamagePerS": 60
+  },
+  "propEffect": {
+    "yawBiasMaxRadS": -0.5,
+    "rollBiasMaxRadS": -0.3,
+    "fadeKmh": 200
+  },
   "alignTauS": 0.4,
   "weathervaneMaxRateDegS": 120,
   "sideslipDampingS": 0.5,

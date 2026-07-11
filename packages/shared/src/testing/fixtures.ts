@@ -52,6 +52,17 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
       [1500, 1],
     ],
     ctrlDragK: { aileron: 0, rudder: 0 },
+    // klapy + śmigło (R3): fikstura neutralna — prop biasy 0 (testy sił/koperty nie widzą śmigła,
+    // a i tak pilotStep w harnessie ma applyPropEffect=false); klapy schowane domyślnie (flapIndex=0),
+    // druga pozycja obecna tylko dla testów mechaniki klap, które ją włączają celowo.
+    flaps: {
+      positions: [
+        { name: 'schowane', clMaxAdd: 0, cd0Add: 0, ripIasKmh: 2000 },
+        { name: 'pełne', clMaxAdd: 0.5, cd0Add: 0.08, ripIasKmh: 250 },
+      ],
+      ripDamagePerS: 60,
+    },
+    propEffect: { yawBiasMaxRadS: 0, rollBiasMaxRadS: 0, fadeKmh: 200 },
     alignTauS: 0.4,
     weathervaneMaxRateDegS: 120,
     sideslipDampingS: 0.5,

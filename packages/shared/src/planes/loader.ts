@@ -96,6 +96,18 @@ export interface PlaneConfig {
    */
   ctrlDragK: ControlDragConfig;
   /**
+   * Klapy (fizyka v2 R3, §6.4): dyskretne pozycje per samolot + tempo urwania. Pozycja 0 = schowane
+   * (bez wpływu na aero). Wysunięcie zwiększa clMax (ciaśniejszy zakręt / niższe przeciągnięcie) kosztem
+   * cd0; przekroczenie ripIasKmh urywa je (obrażenia skrzydeł → poziom ≥ FLAP_DISABLE_WING_LEVEL = trwałe).
+   */
+  flaps: FlapsConfig;
+  /**
+   * Szczątkowe efekty śmigła (fizyka v2 R3, §6.5): moment/P-factor odchylająco-przechylający, aktywny
+   * TYLKO przy małej prędkości i dużym gazie (zanika kwadratowo do zera powyżej fadeKmh). Kierunek
+   * historyczny: Merlin/Sakae (prawoskrętne) ściągają nos w lewo (ujemny yaw), DB 601 odwrotnie (dodatni).
+   */
+  propEffect: PropEffectConfig;
+  /**
    * OPCJONALNA krzywa mocy vs wysokość (fizyka v2 R1 infrastruktura, §6.6): punkty
    * [h m, frac 0..1.5], moc = enginePowerW·frac(h). Brak pola = prosty model sprężarki
    * (pełna moc do fullThrottleHeightM, wyżej ∝ ρ). Kalibracja liczbowa per silnik → R4.
@@ -193,6 +205,50 @@ export interface ControlDragConfig {
   aileron: number;
   /** Cd przy pełnym wychyleniu steru kierunku. */
   rudder: number;
+}
+
+/**
+ * Jedna pozycja klap (fizyka v2 R3, §6.4). Wartości `clMaxAdd`/`cd0Add` są ADDYTYWNE do bazowej
+ * biegunowej (nie mnożniki), więc pozycja 0 = schowane ma oba 0. `ripIasKmh` to prędkość [km/h IAS],
+ * powyżej której naciąg zrywa klapy — patrz `physics/flaps.ts` (obrażenia skrzydeł ∝ przekroczeniu).
+ * Pozycja 0 nigdy się nie urywa (schowane), więc jej ripIasKmh jest umownie duże (nieużywane).
+ */
+export interface FlapPosition {
+  /** Nazwa do HUD (np. „schowane", „bojowe", „pełne"). */
+  name: string;
+  /** Przyrost clMax (wyższy = ciaśniejszy zakręt / niższe przeciągnięcie). 0 = schowane. */
+  clMaxAdd: number;
+  /** Przyrost cd0 (opór wysuniętych klap). 0 = schowane. */
+  cd0Add: number;
+  /** Prędkość graniczna wysunięcia [km/h IAS] — powyżej klapy się urywają (obrażenia skrzydeł). */
+  ripIasKmh: number;
+}
+
+/**
+ * Konfiguracja klap samolotu (fizyka v2 R3, §6.4): lista pozycji (indeks 0 = schowane) i tempo urwania.
+ * Historyczna różnorodność: Spitfire 2 pozycje (schowane/pełne 85°), Bf 109 3 (schowane/bojowe/pełne),
+ * A6M2 2 (schowane/pełne). Indeks pozycji jedzie 2 bitami w INPUT (v10), więc ≤ 4 pozycji.
+ */
+export interface FlapsConfig {
+  /** Pozycje klap; positions[0] = schowane (clMaxAdd/cd0Add = 0). 2..4 pozycji (2 bity w INPUT). */
+  positions: readonly FlapPosition[];
+  /** Obrażenia [HP/s] KAŻDEGO skrzydła na jednostkę względnego przekroczenia ripIasKmh (jak flutter). */
+  ripDamagePerS: number;
+}
+
+/**
+ * Szczątkowe efekty śmigła (fizyka v2 R3, §6.5) — moment reakcyjny + P-factor + strumień zaśmigłowy
+ * na sterze, ODCZUWALNE tylko przy małej prędkości i dużym gazie. Wartości znakowane (kierunek
+ * historyczny obrotu śmigła): dodatni yaw = nos w prawo. Merlin/Sakae → ujemny (nos w lewo), DB 601 →
+ * dodatni. Instruktor tego NIE kontruje (gracz musi) — boty mają efekt wyłączony (kompensacja aim).
+ */
+export interface PropEffectConfig {
+  /** Maks. bias yaw [rad/s] przy IAS→0 i pełnym gazie (znak = kierunek ściągania nosa). */
+  yawBiasMaxRadS: number;
+  /** Maks. bias roll [rad/s] przy IAS→0 i pełnym gazie (moment reakcyjny; ten sam znak co yaw). */
+  rollBiasMaxRadS: number;
+  /** Prędkość [km/h IAS], powyżej której efekt = 0 (zanik ∝ (1 − IAS/fadeKmh)²). */
+  fadeKmh: number;
 }
 
 /** Parametry tolerancji przeciążenia pilota / G-LOC (physics/g-load.ts). */
@@ -326,6 +382,8 @@ type NumericKey = Exclude<
   | 'pitchAuthorityCurve'
   | 'powerCurve'
   | 'ctrlDragK'
+  | 'flaps'
+  | 'propEffect'
   | 'stall'
   | 'gTolerance'
   | 'instructor'
@@ -410,6 +468,26 @@ const CTRL_DRAG_RANGES: Record<keyof ControlDragConfig, readonly [min: number, m
   rudder: [0, 0.05],
 };
 
+// Efekty śmigła (R3, §6.5): yaw/roll znakowane (kierunek obrotu śmigła), fade w km/h IAS.
+const PROP_EFFECT_RANGES: Record<keyof PropEffectConfig, readonly [min: number, max: number]> = {
+  yawBiasMaxRadS: [-3, 3],
+  rollBiasMaxRadS: [-3, 3],
+  fadeKmh: [50, 500],
+};
+
+// Pola pozycji klap (R3, §6.4). clMaxAdd do 1.5 (klapa lądowaniowa mocno podnosi clMax); cd0Add do
+// 0.3 (split-flapy Spitfire'a dają duży opór); ripIasKmh w [50, 3000] (pozycja 0 schowana → wartość
+// umowna, byle w zakresie).
+const FLAP_POSITION_RANGES: Record<Exclude<keyof FlapPosition, 'name'>, readonly [min: number, max: number]> = {
+  clMaxAdd: [0, 1.5],
+  cd0Add: [0, 0.3],
+  ripIasKmh: [50, 3000],
+};
+
+const FLAP_KNOWN_KEYS = new Set<string>(['name', ...Object.keys(FLAP_POSITION_RANGES)]);
+/** Obrażenia urwania klap [HP/s skrzydła na jednostkę względnego przekroczenia] — zakres jak flutter. */
+const FLAP_RIP_DAMAGE_RANGE: readonly [number, number] = [0, 200];
+
 const ENGINE_THERMAL_RANGES: Record<keyof EngineThermalConfig, readonly [min: number, max: number]> = {
   wepTimeToRedlineS: [30, 1800],
   coolTimeS: [10, 1800],
@@ -467,6 +545,8 @@ const KNOWN_KEYS = new Set<string>([
   'pitchAuthorityCurve',
   'powerCurve',
   'ctrlDragK',
+  'flaps',
+  'propEffect',
   'stall',
   'gTolerance',
   'instructor',
@@ -504,7 +584,7 @@ function checkNumericFields(
 
 function checkSection(
   obj: Record<string, unknown>,
-  key: 'stall' | 'gTolerance' | 'instructor' | 'wreck' | 'damage' | 'engineThermal' | 'ctrlDragK',
+  key: 'stall' | 'gTolerance' | 'instructor' | 'wreck' | 'damage' | 'engineThermal' | 'ctrlDragK' | 'propEffect',
   ranges: Record<string, readonly [number, number]>,
   problems: string[],
 ): void {
@@ -726,6 +806,48 @@ function checkZones(obj: Record<string, unknown>, problems: string[]): void {
 }
 
 /**
+ * Walidacja klap (R3, §6.4): sekcja `flaps` z tablicą pozycji (2..4 — indeks jedzie 2 bitami w INPUT),
+ * pozycja 0 = schowane (clMaxAdd/cd0Add MUSZĄ być 0), każda pozycja z poprawnymi polami, `ripDamagePerS`
+ * w zakresie. 2 pozycje minimum (schowane + ≥1 wysunięta), inaczej klapy nie miałyby czego przełączać.
+ */
+function checkFlaps(obj: Record<string, unknown>, problems: string[]): void {
+  const section = obj['flaps'];
+  if (typeof section !== 'object' || section === null || Array.isArray(section)) {
+    problems.push('flaps: oczekiwano obiektu z polami positions i ripDamagePerS');
+    return;
+  }
+  const flaps = section as Record<string, unknown>;
+  checkInRange(flaps['ripDamagePerS'], FLAP_RIP_DAMAGE_RANGE, 'flaps.ripDamagePerS', problems);
+  const positions = flaps['positions'];
+  if (!Array.isArray(positions) || positions.length < 2 || positions.length > 4) {
+    problems.push('flaps.positions: oczekiwano tablicy 2..4 pozycji (indeks jedzie 2 bitami INPUT)');
+  } else {
+    positions.forEach((p, i) => {
+      const prefix = `flaps.positions[${String(i)}].`;
+      if (typeof p !== 'object' || p === null || Array.isArray(p)) {
+        problems.push(`${prefix.slice(0, -1)}: oczekiwano obiektu pozycji klap`);
+        return;
+      }
+      const pos = p as Record<string, unknown>;
+      if (typeof pos['name'] !== 'string' || (pos['name'] as string).trim() === '') {
+        problems.push(`${prefix}name: oczekiwano niepustego stringa`);
+      }
+      checkNumericFields(pos, FLAP_POSITION_RANGES, prefix, problems);
+      for (const k of Object.keys(pos)) {
+        if (!FLAP_KNOWN_KEYS.has(k)) problems.push(`${prefix}${k}: nieznane pole (literówka?)`);
+      }
+      // pozycja 0 = schowane: brak wpływu na aero (inaczej złote testy „czyste" nie startowałyby czyste)
+      if (i === 0 && (pos['clMaxAdd'] !== 0 || pos['cd0Add'] !== 0)) {
+        problems.push('flaps.positions[0]: pozycja schowana musi mieć clMaxAdd=0 i cd0Add=0');
+      }
+    });
+  }
+  for (const key of Object.keys(flaps)) {
+    if (key !== 'positions' && key !== 'ripDamagePerS') problems.push(`flaps.${key}: nieznane pole (literówka?)`);
+  }
+}
+
+/**
  * Walidacja schematu przy ładowaniu: wymagane pola, typy, zakresy sanity,
  * brak nieznanych kluczy. Wszystkie problemy zbierane do jednego wyjątku.
  */
@@ -749,6 +871,8 @@ export function loadPlaneConfig(raw: unknown, source = 'konfiguracja samolotu'):
     checkCurve(obj, 'powerCurve', POWER_CURVE_SPEC, problems);
   }
   checkSection(obj, 'ctrlDragK', CTRL_DRAG_RANGES, problems);
+  checkSection(obj, 'propEffect', PROP_EFFECT_RANGES, problems);
+  checkFlaps(obj, problems);
   checkSection(obj, 'stall', STALL_RANGES, problems);
   checkSection(obj, 'gTolerance', G_TOLERANCE_RANGES, problems);
   checkSection(obj, 'instructor', INSTRUCTOR_RANGES, problems);

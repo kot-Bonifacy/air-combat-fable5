@@ -47,6 +47,14 @@ function validRaw(): Record<string, unknown> {
       [720, 0.55],
     ],
     ctrlDragK: { aileron: 0.01, rudder: 0.002 },
+    flaps: {
+      positions: [
+        { name: 'schowane', clMaxAdd: 0, cd0Add: 0, ripIasKmh: 2000 },
+        { name: 'pełne', clMaxAdd: 0.5, cd0Add: 0.08, ripIasKmh: 250 },
+      ],
+      ripDamagePerS: 60,
+    },
+    propEffect: { yawBiasMaxRadS: -0.5, rollBiasMaxRadS: -0.3, fadeKmh: 200 },
     alignTauS: 0.4,
     weathervaneMaxRateDegS: 120,
     sideslipDampingS: 0.5,
@@ -403,5 +411,63 @@ describe('loader konfiguracji samolotu', () => {
       [0, 1],
     ];
     expect(() => loadPlaneConfig(raw)).toThrowError(/monotonicznie/);
+  });
+
+  // --- nowe pola R3 (fizyka v2): flaps, propEffect ---
+  it('flaps + propEffect: poprawne sekcje przechodzą i zachowują wartości', () => {
+    const config = loadPlaneConfig(validRaw());
+    expect(config.flaps.positions).toHaveLength(2);
+    expect(config.flaps.positions[0]?.name).toBe('schowane');
+    expect(config.flaps.positions[1]?.clMaxAdd).toBe(0.5);
+    expect(config.flaps.ripDamagePerS).toBe(60);
+    expect(config.propEffect.fadeKmh).toBe(200);
+    expect(config.propEffect.yawBiasMaxRadS).toBe(-0.5);
+  });
+
+  it('propEffect: wymagane → brak = PlaneConfigError', () => {
+    const raw = validRaw();
+    delete raw['propEffect'];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/propEffect/);
+  });
+
+  it('propEffect: fadeKmh poza zakresem → PlaneConfigError ze ścieżką', () => {
+    const raw = validRaw();
+    (raw['propEffect'] as Record<string, unknown>)['fadeKmh'] = 5; // za mało (< 50)
+    expect(() => loadPlaneConfig(raw)).toThrowError(/propEffect\.fadeKmh/);
+  });
+
+  it('flaps: wymagane → brak = PlaneConfigError', () => {
+    const raw = validRaw();
+    delete raw['flaps'];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/flaps/);
+  });
+
+  it('flaps: pozycja 0 z niezerowym aero → PlaneConfigError (schowane musi być neutralne)', () => {
+    const raw = validRaw();
+    const flaps = raw['flaps'] as { positions: Record<string, unknown>[] };
+    flaps.positions[0]!['clMaxAdd'] = 0.2;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/flaps\.positions\[0\]/);
+  });
+
+  it('flaps: tylko jedna pozycja → PlaneConfigError (min. schowane + wysunięta)', () => {
+    const raw = validRaw();
+    (raw['flaps'] as { positions: unknown[] }).positions = [
+      { name: 'schowane', clMaxAdd: 0, cd0Add: 0, ripIasKmh: 2000 },
+    ];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/flaps\.positions/);
+  });
+
+  it('flaps: clMaxAdd poza zakresem → PlaneConfigError ze ścieżką pozycji', () => {
+    const raw = validRaw();
+    const flaps = raw['flaps'] as { positions: Record<string, unknown>[] };
+    flaps.positions[1]!['clMaxAdd'] = 5; // ponad 1.5
+    expect(() => loadPlaneConfig(raw)).toThrowError(/flaps\.positions\[1\]\.clMaxAdd/);
+  });
+
+  it('flaps: literówka w polu pozycji → PlaneConfigError', () => {
+    const raw = validRaw();
+    const flaps = raw['flaps'] as { positions: Record<string, unknown>[] };
+    flaps.positions[1]!['clMaxAdded'] = 0.5;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/flaps\.positions\[1\]\.clMaxAdded/);
   });
 });

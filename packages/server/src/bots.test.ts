@@ -35,6 +35,7 @@ function input(over: Partial<InputFrame> = {}): InputFrame {
     yawRight: 0,
     fire: false,
     wep: false,
+    flaps: 0,
     aimX: 0,
     aimY: 0,
     aimZ: 1,
@@ -42,7 +43,10 @@ function input(over: Partial<InputFrame> = {}): InputFrame {
   };
 }
 
-/** „Przykleja" pozę ŻYWEJ encji co tick (deterministyczna walka — jak w combat.test). */
+/** „Przykleja" pozę ŻYWEJ encji co tick (deterministyczna walka — jak w combat.test).
+ *  iasMs = prędkość przelotowa POWYŻEJ progu zaniku efektu śmigła (R3, §6.5): przy iasMs=0 i gazie 0,9
+ *  strzelec-człowiek dostawałby MAKSYMALny moment śmigła (realne „wiszenie na śmigle" ściągające nos)
+ *  i pudłował — a ten rig ma testować kredyt zestrzelenia, nie celność przy zerowej prędkości. */
 function repose(room: GameRoom, id: number, pos: [number, number, number], noseNegZ = false): void {
   const s = room.snapshotEntities().find((e) => e.id === id)?.state;
   if (!s || s.life !== 'alive') return;
@@ -53,7 +57,7 @@ function repose(room: GameRoom, id: number, pos: [number, number, number], noseN
   s.angularRates.pitch = 0;
   s.angularRates.roll = 0;
   s.angularRates.yaw = 0;
-  s.iasMs = 0;
+  s.iasMs = 120; // > fadeKmh każdego samolotu → efekt śmigła = 0 (czysta geometria ognia)
 }
 
 function lifeOf(room: GameRoom, id: number): string {

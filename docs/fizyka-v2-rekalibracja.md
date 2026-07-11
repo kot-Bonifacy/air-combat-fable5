@@ -476,6 +476,62 @@ w snapshocie; HUD klap; `flapsRipTest`.
 **Kryteria:** klapy zmieniają stall/zakręt zgodnie z JSON; rip działa; pętla z małej
 prędkości „ściąga" i jest wyprowadzalna; boty strzelają nie gorzej niż przed etapem.
 
+#### Wynik R3 (2026-07-11) — UKOŃCZONY, 755 testów zielone, **BEZ bumpu protokołu (v10)**
+
+**Klapy (§6.4).** Pozycja klap jest INPUTEM: 2 bity w bajcie flag INPUT (rezerwa z v10 R2 —
+**bez bumpu**, bo wartość 0 = schowane jest neutralna, więc v10-klient sprzed R3 wysyła spójne 0).
+`state.flapIndex` = echo inputu (jak `wepActive` — reconcile-safe, deterministyczne przy replayu).
+Aerodynamika: `FlapPosition{clMaxAdd, cd0Add, ripIasKmh}` per pozycja, ADDYTYWNIE do biegunowej
+(pozycja 0 ma oba 0 — walidator loadera tego pilnuje, żeby złote „czyste" startowały czyste);
+`effectivePlaneConfig` w `pilotStep` dokłada `flapClMaxAdd`/`flapCd0Add` (ciaśniejszy zakręt / niższe
+przeciągnięcie + większy opór). Konfiguracje: **Spitfire** 2 pozycje (schowane / pełne 0,6/0,09, rip
+260 km/h), **Bf 109** 3 (schowane / bojowe 0,25/0,025 rip 400 / pełne 0,6/0,1 rip 250), **A6M2** 2
+(schowane / pełne 0,5/0,08 rip 250). Klawisz **F** cyklicznie przełącza pozycje (edge-triggered
+`consumeFlapCycle`, modulo liczba pozycji typu; reset przy spawnie/zmianie typu). HUD: wiersz „klapy
+<nazwa>" gdy wysunięte, **czerwone „URWANE"** gdy urwane (potwierdzone w DOM `color:#ff5a4d`).
+
+**Urwanie klap = trwałe, wywodzone z POZIOMU uszkodzenia skrzydła** (decyzja usera AskUserQuestion —
+„urywają się na stałe"; mocne postrzelenie skrzydła też wyłącza klapy). Kluczowe dla reconcile: zamiast
+osobnego ukrytego stanu „ripped" (który przy replayu mógłby się fałszywie zatrzasnąć na kliencie)
+liczymy dostępność z poziomów stref skrzydeł (`FLAP_DISABLE_WING_LEVEL = 2`) — te same liczby jadą
+w snapshocie v8, więc klient i serwer identycznie (`flapsAvailable`/`effectiveFlapIndex` w
+`physics/flaps.ts`). Obrażenia urwania aplikuje **SERWER autorytatywnie** (`stepFlapRipDamage`, jak
+flutter/przegrzanie — tylko ludzie): wysunięte klapy powyżej `ripIasKmh` biorą
+`flapRipWingDamageHp ∝ max(0, IAS/ripIas − 1)·ripDamagePerS·dt` do OBU stref skrzydeł; gdy skrzydło
+osiągnie poziom 2, `effectiveFlapIndex`→0 i obrażenia USTAJĄ — mechanizm SAM się ogranicza (skrzydła
+normalnie nie giną). Rzadki combo do 0 HP (skrzydło już wcześniej postrzelone) → rozpad konstrukcji
+(`onStructureKill`, cause `'structure'` jak flutter). **BEZ bajtu mechanizacji w snapshocie** —
+skutek jedzie przez istniejące poziomy stref v8 (modele 3D nie mają ruchomych klap; wystarczył HUD +
+wizualny kanał uszkodzeń), więc decyzja z §6.4 rozstrzygnięta na „nie".
+
+**Szczątkowe efekty śmigła (§6.5).** `propEffectRates` (czysta funkcja): `factor = throttle·(1−IAS/fadeKmh)²`,
+`biasYaw = yawBiasMaxRadS·factor`, `biasRoll = rollBiasMaxRadS·factor` — dodawane do `angularRates`
+PO koordynacji zakrętu, TYLKO przy `applyPropEffect=true`. Zanik KWADRATOWY do zera powyżej `fadeKmh`
+(200 km/h) → w locie poziomym / na prędkości bojowej efekt = 0 (honor odstępstwa §3 pkt 1: brak
+ciągłego trymu). Znak z konfiguracji (kierunek obrotu śmigła): Merlin/Sakae ujemny (nos w lewo), DB 601
+dodatni. **Instruktor tego NIE kontruje** (bias dokładany PO demands → gracz musi sterem/lotką).
+`stepPilotedPlane` (gracz, obie strony sieci) podaje `applyPropEffect=true` (reconcile-safe — czysta
+funkcja throttle/IAS); **boty i harness mają FALSE** (domyślny arg) → kompensacja botów zbędna, a
+zamrożone kotwice R0 (harness woła `pilotStep` z `flapIndex=0` bez prop) są NIETKNIĘTE — to spełnia
+kryterium „boty strzelają nie gorzej" trywialnie i chroni złote testy przed przeliczeniem.
+
+**Testy (+35, razem 755):** `flaps.test.ts` (clamp/dostępność/effIndex/rip), `prop-effect.test.ts`
+(zanik kwadratowy/skala gazu/znak), `pilot-step-flaps.test.ts` (klapy↑clMax/↑opór; urwane==schowane
+przy tym samym uszkodzeniu; prop tylko przy applyPropEffect=true), `flaps-rip.test.ts` serwer (pełny
+pipeline `room.step`: nadprędkość z klapami niszczy skrzydła ale SAMO się ogranicza; poniżej ripIas i
+schowane — kontrole; boty odporne), + walidacja loadera (flaps/propEffect: brak/zakres/pozycja 0
+neutralna/literówka), round-trip klap w bitach 2–3 INPUT. **Zamrożone kotwice R0 bez zmian** (harness
+nie używa klap ani prop → tożsamość). **E2E (MCP chrome-devtools):** override `flaps:1` przy 436 km/h
+→ serwer urwał klapy → HUD `klapy URWANE` na czerwono (`rgb(255,90,77)`), samolot żywy (urwanie się
+ograniczyło), konsola czysta (jedyny 404 = favicon). Pułapka E2E: 1v1 z botem → eliminacja szybko
+kończyła mecz, a wolny lot kończył się CFIT — pomiar łańcucha okablowania łapany w oknie ochrony spawnu.
+
+**Pozostawione do R4** (świadomie — R3 = mechaniki, R4 = kalibracja): dostrojenie liczb klap
+(clMaxAdd/rip per samolot) do tabeli stall §5 i pętli z małej prędkości; kalibracja `propEffect`
+(biasy/fade) na pomiarach; `flapsRipTest`/`stallTest z klapami` w harnessie combat-maneuvers jako
+kotwice R4. Deploy front+back RAZEM (v10 z R2 wciąż NIEWDROŻONE). **Następny etap: R4** (wielka
+kalibracja ±5 %).
+
 ### R4 — Wielka kalibracja trzech samolotów (±5 %)
 **Zakres:** dostrojenie WSZYSTKICH JSON-ów do tabel §5 na macierzy §8.4; zacieśnienie
 złotych do ±5 %; komplet testów relacji §5.4; ponowna próba zakrętu Zero 12–14 s na nowym

@@ -42,6 +42,7 @@ function makeInput(over: Partial<InputFrame> = {}): InputFrame {
     yawRight: 0.1,
     fire: true,
     wep: false,
+    flaps: 0,
     aimX: 0,
     aimY: 0,
     aimZ: 1,
@@ -78,6 +79,24 @@ describe('protokół INPUT round-trip', () => {
     expect(both.wep).toBe(true);
     expect(roundTripInput(makeInput({ fire: true, wep: false })).wep).toBe(false);
     expect(roundTripInput(makeInput({ fire: true, wep: false })).fire).toBe(true);
+  });
+
+  it('indeks klap round-trip w bitach 2–3, niezależnie od fire/wep (fizyka v2 R3)', () => {
+    // wszystkie 4 wartości indeksu (2 bity) przechodzą wiernie
+    for (const f of [0, 1, 2, 3]) {
+      expect(roundTripInput(makeInput({ flaps: f })).flaps).toBe(f);
+    }
+    // klapy nie przeciekają na fire/wep i odwrotnie (współdzielony bajt flag)
+    const mix = roundTripInput(makeInput({ fire: true, wep: true, flaps: 3 }));
+    expect(mix.fire).toBe(true);
+    expect(mix.wep).toBe(true);
+    expect(mix.flaps).toBe(3);
+    const clean = roundTripInput(makeInput({ fire: false, wep: false, flaps: 2 }));
+    expect(clean.fire).toBe(false);
+    expect(clean.wep).toBe(false);
+    expect(clean.flaps).toBe(2);
+    // indeks ponad 3 clampowany do 2 bitów (nie przepełnia bajtu flag)
+    expect(roundTripInput(makeInput({ flaps: 7 })).flaps).toBe(3);
   });
 
   it('wartości brzegowe: throttle 0/1, wychylenia ±1, aim ±1', () => {

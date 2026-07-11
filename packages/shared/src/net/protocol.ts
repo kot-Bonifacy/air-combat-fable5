@@ -54,10 +54,15 @@ import { ZONE_COUNT } from '../combat/damage-model';
  * NetError w locie przy pierwszym Zero w meczu) → bump gwarantuje czysty błąd handshake zamiast
  * crasha. Deploy front+back RAZEM.
  * v10 (fizyka v2 R2, §6.3): ramka INPUT niesie bit WEP (boost) w bajcie flag (bit1, obok bit0=fire).
- * ROZMIAR ramki BEZ zmian (bajt flag miał 7 wolnych bitów — R3 dołoży tu 2 bity klap), ale SEMANTYKA
- * się rozjeżdża: v9-klient nigdy nie ustawi WEP, a serwer v10 karze przekroczenie Vne/przegrzanie WEP —
- * bump wymusza spójny deploy front+back. Nowa przyczyna śmierci 'structure' (rozpad konstrukcji od
- * przekroczenia Vne, flutter) — dopisana na końcu KILL_CAUSES (u8, zgodna z drutem jak 'overheat').
+ * ROZMIAR ramki BEZ zmian (bajt flag miał 7 wolnych bitów), ale SEMANTYKA się rozjeżdża: v9-klient
+ * nigdy nie ustawi WEP, a serwer v10 karze przekroczenie Vne/przegrzanie WEP — bump wymusza spójny
+ * deploy front+back. Nowa przyczyna śmierci 'structure' (rozpad konstrukcji od przekroczenia Vne,
+ * flutter) — dopisana na końcu KILL_CAUSES (u8, zgodna z drutem jak 'overheat').
+ * R3 (fizyka v2, §6.4, ta sama wersja v10 — BEZ bumpu): ramka INPUT niesie żądany indeks KLAP w
+ * bitach 2–3 bajtu flag (rezerwa wykorzystana; rozmiar ramki niezmieniony). Wartość 0 (schowane) jest
+ * neutralna, więc v10-klient sprzed R3 wysyła spójne 0 — brak potrzeby bumpu. Serwer aplikuje aero klap
+ * i obrażenia urwania (flapRipWingDamageHp → strefy skrzydeł); efekty jadą do klienta jako poziomy stref
+ * (v8), więc obraz jest spójny przy każdej mieszance klient/serwer w obrębie v10.
  */
 export const PROTOCOL_VERSION = 10;
 
@@ -141,6 +146,10 @@ export interface InputFrame {
   /** WEP / boost (fizyka v2 R2, §6.3): kop mocy + agresywne grzanie silnika. Bit1 bajtu flag INPUT.
    *  Serwer stosuje go tylko przy gazie ≥ WEP_MIN_THROTTLE i gdy samolot ma WEP (wepBoostFrac>0). */
   wep: boolean;
+  /** Żądany indeks pozycji klap (fizyka v2 R3, §6.4): 0 = schowane, 1..3 wysunięte (per samolot).
+   *  Bity 2–3 bajtu flag INPUT (0..3 mieści wszystkie pozycje). Serwer klampuje do dostępnych pozycji;
+   *  efektywna pozycja = 0 po urwaniu klap (poziom uszkodzenia skrzydła). */
+  flaps: number;
   /** Kierunek celu instruktora w świecie (jednostkowy). */
   aimX: number;
   aimY: number;
@@ -148,7 +157,7 @@ export interface InputFrame {
 }
 
 // layout: u8 type | u32 seq | u32 ackServerTick | u16 throttle | i16×3 deflekcje |
-//         i16×3 aim | u8 flags(bit0=fire, bit1=wep; bity 2–7 rezerwa — R3 klapy)
+//         i16×3 aim | u8 flags(bit0=fire, bit1=wep, bity 2–3=klapy(0..3); bity 4–7 rezerwa)
 const OFF_TYPE = 0;
 const OFF_SEQ = 1;
 const OFF_ACK_TICK = 5;
@@ -167,6 +176,9 @@ export const INPUT_BYTES = 24;
 const FIRE_BIT = 0b1;
 /** WEP / boost (fizyka v2 R2) — bit1 bajtu flag INPUT, obok FIRE_BIT. */
 const WEP_BIT = 0b10;
+/** Klapy (fizyka v2 R3) — bity 2–3 bajtu flag INPUT (indeks pozycji 0..3). */
+const FLAPS_SHIFT = 2;
+const FLAPS_MASK = 0b11;
 
 /** Zapisuje ramkę INPUT do `view` (offset 0). `view` musi mieć ≥ INPUT_BYTES. */
 export function encodeInput(view: DataView, frame: InputFrame): void {
@@ -180,7 +192,12 @@ export function encodeInput(view: DataView, frame: InputFrame): void {
   view.setInt16(OFF_AIM_X, quantizeUnit(frame.aimX), true);
   view.setInt16(OFF_AIM_Y, quantizeUnit(frame.aimY), true);
   view.setInt16(OFF_AIM_Z, quantizeUnit(frame.aimZ), true);
-  view.setUint8(OFF_FLAGS, (frame.fire ? FIRE_BIT : 0) | (frame.wep ? WEP_BIT : 0));
+  view.setUint8(
+    OFF_FLAGS,
+    (frame.fire ? FIRE_BIT : 0) |
+      (frame.wep ? WEP_BIT : 0) |
+      ((Math.round(clamp(frame.flaps, 0, FLAPS_MASK)) & FLAPS_MASK) << FLAPS_SHIFT),
+  );
 }
 
 /** Alokuje i zwraca bufor z zakodowaną ramką INPUT (do testów / prostego użycia). */
@@ -213,6 +230,7 @@ export function decodeInput(view: DataView): InputFrame {
     aimZ: dequantizeUnit(view.getInt16(OFF_AIM_Z, true)),
     fire: (view.getUint8(OFF_FLAGS) & FIRE_BIT) !== 0,
     wep: (view.getUint8(OFF_FLAGS) & WEP_BIT) !== 0,
+    flaps: (view.getUint8(OFF_FLAGS) >> FLAPS_SHIFT) & FLAPS_MASK,
   };
 }
 

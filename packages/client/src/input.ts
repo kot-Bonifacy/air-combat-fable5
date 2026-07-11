@@ -27,12 +27,16 @@ const CAPTURED_CODES = new Set([
   'KeyQ',
   'KeyE',
   'KeyB',
+  'KeyF',
   'ShiftLeft',
   'ControlLeft',
 ]);
 
 export class KeyboardInput {
   private readonly held = new Set<string>();
+  /** Zbocze wciśnięcia F (cykl klap) — ustawiane na przejściu up→down, zjadane przez consumeFlapCycle().
+   *  Osobno od `held`, bo klapy przełączają się RAZ na wciśnięcie (nie co klatkę auto-repeatu). */
+  private flapCyclePending = false;
   /** Przepustnica 0..1 — integrowana z LShift/LCtrl w update(). */
   throttle = 0.8;
 
@@ -43,6 +47,8 @@ export class KeyboardInput {
       // wpisać (gracz traci litery „wsadqe", a przechodzą tylko klawisze spoza CAPTURED_CODES).
       if (CAPTURED_CODES.has(event.code) && !isEditingText()) {
         event.preventDefault(); // strzałki/spacja scrollują stronę
+        // zbocze klapy: tylko świeże wciśnięcie F (nie auto-repeat trzymania)
+        if (event.code === 'KeyF' && !this.held.has('KeyF')) this.flapCyclePending = true;
         this.held.add(event.code);
       }
     });
@@ -86,5 +92,13 @@ export class KeyboardInput {
    *  gazie i gdy samolot ma WEP; klient wysyła surowy bit (echo w PilotCommand → spójny reconcile). */
   get wepHeld(): boolean {
     return this.held.has('KeyB');
+  }
+
+  /** Klapy (fizyka v2 R3): true RAZ na każde świeże wciśnięcie F (zjada zbocze). Caller cyklicznie
+   *  zmienia indeks pozycji klap modulo liczba pozycji samolotu. Zwraca false przy trzymaniu/braku. */
+  consumeFlapCycle(): boolean {
+    if (!this.flapCyclePending) return false;
+    this.flapCyclePending = false;
+    return true;
   }
 }

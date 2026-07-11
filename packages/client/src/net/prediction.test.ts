@@ -59,7 +59,7 @@ function entityOf(
 }
 
 function cmd(over: Partial<PilotCommand> = {}): PilotCommand {
-  return { throttle: 0.85, pitchUp: 0, rollRight: 0, yawRight: 0, wep: false, aimX: 0, aimY: 0, aimZ: 1, ...over };
+  return { throttle: 0.85, pitchUp: 0, rollRight: 0, yawRight: 0, wep: false, flaps: 0, aimX: 0, aimY: 0, aimZ: 1, ...over };
 }
 
 function makeServer() {

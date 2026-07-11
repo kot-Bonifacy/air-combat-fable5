@@ -7,6 +7,8 @@ import {
 } from '../combat/damage-model';
 import { GRAVITY_MS2 } from '../constants';
 import { stepEngineHeat } from './engine-heat';
+import { effectiveFlapIndex } from './flaps';
+import { propEffectRates, type PropRates } from './prop-effect';
 import { getRight } from '../math/frame';
 import type { PlaneConfig } from '../planes/loader';
 import { airDensityKgM3, dynamicPressurePa } from './atmosphere';
@@ -65,26 +67,36 @@ export function createSimPlane(stallSeed: number): SimPlane {
 }
 
 /**
- * Efektywna konfiguracja po uszkodzeniach: klon bazy z nadpisanymi polami AERO/silnika (moc,
- * ciąg statyczny, clMax, cd0). Pozostałe pola (i obiekty zagnieżdżone) współdzielone przez
- * referencję. Alokuje TYLKO gdy któreś pole faktycznie zmienione — sprawny samolot zwraca bazę
- * (zero kosztu, ścieżka złotych testów bez zmian). Roll bias / autorytet ogona / wyciek paliwa
- * NIE są tu — aplikowane osobno na poziomie rate'ów/paliwa w pilotStep.
+ * Efektywna konfiguracja po uszkodzeniach ORAZ klapach (R3, §6.4): klon bazy z nadpisanymi polami
+ * AERO/silnika (moc, ciąg statyczny, clMax, cd0). Uszkodzenia skrzydeł skalują clMax (mnożnik) i dodają
+ * cd0; klapy DODAJĄ clMax i cd0 (addytywnie — pozycja schowana ma oba 0). Pozostałe pola współdzielone
+ * przez referencję. Alokuje TYLKO gdy któreś pole faktycznie zmienione — sprawny samolot z klapami
+ * schowanymi zwraca bazę (zero kosztu, ścieżka złotych testów bez zmian). Roll bias / autorytet ogona /
+ * wyciek paliwa NIE są tu — aplikowane osobno na poziomie rate'ów/paliwa w pilotStep.
  */
-function effectivePlaneConfig(base: PlaneConfig, mods: DamageModifiers): PlaneConfig {
-  if (mods.enginePowerFactor === 1 && mods.clMaxFactor === 1 && mods.cd0Add === 0) return base;
+function effectivePlaneConfig(
+  base: PlaneConfig,
+  mods: DamageModifiers | null,
+  flapClMaxAdd: number,
+  flapCd0Add: number,
+): PlaneConfig {
+  const engF = mods ? mods.enginePowerFactor : 1;
+  const clF = mods ? mods.clMaxFactor : 1;
+  const cd0A = mods ? mods.cd0Add : 0;
+  if (engF === 1 && clF === 1 && cd0A === 0 && flapClMaxAdd === 0 && flapCd0Add === 0) return base;
   return {
     ...base,
-    enginePowerW: base.enginePowerW * mods.enginePowerFactor,
-    staticThrustN: base.staticThrustN * mods.enginePowerFactor,
-    clMax: base.clMax * mods.clMaxFactor,
-    cd0: base.cd0 + mods.cd0Add,
+    enginePowerW: base.enginePowerW * engF,
+    staticThrustN: base.staticThrustN * engF,
+    clMax: base.clMax * clF + flapClMaxAdd,
+    cd0: base.cd0 + cd0A + flapCd0Add,
   };
 }
 
 const DEG_TO_RAD = Math.PI / 180;
 
 const scratchRightCoord = new Vector3();
+const scratchProp: PropRates = { yaw: 0, roll: 0 };
 
 export interface PilotTickResult extends PlaneTickResult {
   stall: StallEffects;
@@ -111,17 +123,24 @@ export function pilotStep(
   plane: PlaneConfig,
   demands: PilotDemands,
   dtS: number,
+  applyPropEffect = false,
 ): PilotTickResult {
   const { state } = sim;
 
-  // (0) modyfikatory uszkodzeń (faza 22): z poziomów stref → efektywna konfiguracja AERO/silnika
-  // + osobne skutki na rate'y/paliwo. Sprawny samolot (damageLevels=null) → tożsamość, baza configu.
+  // (0) modyfikatory uszkodzeń (faza 22) + klapy (R3, §6.4): z poziomów stref → efektywna konfiguracja
+  // AERO/silnika + osobne skutki na rate'y/paliwo. Sprawny samolot (damageLevels=null) z klapami schowanymi
+  // (flapIndex=0) → tożsamość, baza configu (złote testy nietknięte).
   let mods: DamageModifiers | null = null;
-  let effPlane = plane;
   if (sim.damageLevels) {
     mods = computeDamageModifiers(sim.damageLevels, plane.damage, sim.damageMods);
-    effPlane = effectivePlaneConfig(plane, mods);
   }
+  // efektywna pozycja klap: żądany indeks, chyba że urwane (skrzydło uszkodzone) → 0. Aero (clMax/cd0)
+  // dodawane addytywnie; klapy wysunięte podnoszą clMax (ciaśniejszy zakręt / niższe przeciągnięcie).
+  const effFlap = effectiveFlapIndex(state.flapIndex, sim.damageLevels, plane);
+  const flapPos = plane.flaps.positions[effFlap];
+  const flapClMaxAdd = flapPos ? flapPos.clMaxAdd : 0;
+  const flapCd0Add = flapPos ? flapPos.cd0Add : 0;
+  const effPlane = effectivePlaneConfig(plane, mods, flapClMaxAdd, flapCd0Add);
   const pitchAuth = mods ? mods.pitchAuthorityFactor : 1;
   const yawAuth = mods ? mods.yawAuthorityFactor : 1;
   const rollBias = mods ? mods.rollBiasRadS : 0;
@@ -223,6 +242,16 @@ export function pilotStep(
   if (tasMs > 1) {
     getRight(state.orientation, scratchRightCoord);
     state.angularRates.yaw += (-GRAVITY_MS2 * scratchRightCoord.y) / tasMs;
+  }
+
+  // szczątkowe efekty śmigła (R3, §6.5): moment/P-factor ściągający nos przy MAŁEJ prędkości i dużym
+  // gazie — dodawany do yaw/roll PO koordynacji, jako czysta funkcja (throttle, IAS) → reconcile-safe.
+  // applyPropEffect=false dla botów (kompensacja aim) i harnessu/złotych (pomiar czystego płatowca);
+  // stepPilotedPlane (gracz, obie strony sieci) podaje true — gracz musi kontrować sam (instruktor nie).
+  if (applyPropEffect) {
+    propEffectRates(state, plane, scratchProp);
+    state.angularRates.yaw += scratchProp.yaw;
+    state.angularRates.roll += scratchProp.roll;
   }
 
   // siły (nośna/opór/ciąg) na EFEKTYWNYM configu — degradacja silnika i skrzydeł działa tu;

@@ -43,6 +43,18 @@ export const MS_TO_KMH = 3.6;
  */
 export const WEP_MIN_THROTTLE = 0.99;
 
+// --- klapy (fizyka v2 R3, §6.4) ---
+
+/**
+ * Poziom uszkodzenia skrzydła (0..3, kwantyzacja damage-model), od którego klapy są URWANE (trwale
+ * bezużyteczne do końca życia samolotu — decyzja usera 2026-07-11). Zamiast osobnego ukrytego stanu
+ * „ripped" (który przy replayu reconcile mógłby fałszywie zatrzasnąć się na kliencie) wywodzimy urwanie
+ * z POZIOMU strefy skrzydła — a te jadą w snapshocie v8, więc klient i serwer liczą je identycznie
+ * (reconcile-safe). Konsekwencja przyjęta świadomie: MOCNE postrzelenie skrzydła (poziom ≥ tego) też
+ * wyłącza klapy. 2 = „ciężkie" — light combat/rip (poziom 1) klap nie urywa.
+ */
+export const FLAP_DISABLE_WING_LEVEL = 2;
+
 // --- przegrzewanie silnika (fizyka v2 R2, §6.3: 100% gazu = moc bojowa TRWAŁA; przegrzewa się WEP) ---
 
 /**

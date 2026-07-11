@@ -17,7 +17,13 @@ Po fazie 22 trwa **rekalibracja fizyki lotu v2** (`docs/fizyka-v2-rekalibracja.m
 699 testów; BEZ protokołu — v9; szczegóły w sekcji „Wynik R1" dokumentu), **R2 ✅** (WEP: bit `wep`
 w INPUT + `wepBoostFrac`/`wepHeatMul`, 100 % mocy bojowej trwałe / WEP grzeje — Spit ~5 min, Bf ~1 min;
 Vne/flutter serwerowo → strefy skrzydeł, cause `'structure'`; HUD ostrzeżenia; **BUMP protokołu v10**;
-720 testów; szczegóły „Wynik R2"), **R3–R5 ⏳** (R3 = klapy + śmigło; 2 bity klap już w rezerwie v10).
+720 testów; szczegóły „Wynik R2"), **R3 ✅** (klapy: 2 bity pozycji w INPUT — rezerwa v10, **BEZ bumpu**;
+`flapIndex` echo inputu, aero addytywne `clMaxAdd`/`cd0Add` per pozycja, klawisz **F** cyklicznie; urwanie
+= TRWAŁE, wywodzone z poziomu uszkodzenia skrzydła — reconcile-safe, `stepFlapRipDamage` serwerowo jak
+flutter, SAMO się ogranicza; szczątkowe efekty śmigła `propEffectRates` ∝ `throttle·(1−IAS/fade)²` tylko
+przy `applyPropEffect=true` = gracz, boty/harness FALSE → złote kotwice R0 nietknięte; HUD „klapy"/czerwone
+„URWANE"; **BEZ bajtu mechanizacji w snapshocie** — skutek przez poziomy stref v8; 755 testów; szczegóły
+„Wynik R3"), **R4–R5 ⏳** (R4 = wielka kalibracja ±5 %; dostrojenie liczb klap/śmigła + `flapsRipTest`).
 
 | #     | Temat                                                                 | Stan / uwaga |
 | ----- | --------------------------------------------------------------------- | ------------ |

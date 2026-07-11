@@ -43,6 +43,9 @@ export interface HudData {
   engineTempC: number;
   /** WEP (dopalacz, fizyka v2 R2) aktywny — HUD dopisuje znacznik „WEP" przy wierszu gazu. */
   wepActive: boolean;
+  /** Etykieta pozycji klap (fizyka v2 R3): nazwa pozycji („pełne"/„bojowe") gdy wysunięte, „URWANE"
+   *  gdy urwane od przeciążenia; undefined = schowane (wiersz „klapy" ukryty). */
+  flapsLabel?: string;
   /**
    * Poziom ostrzeżenia Vne (prędkość nieprzekraczalna): 0 poniżej progu, 1 zbliżanie (ostrzeżenie
    * przy IAS), 2 przekroczenie — drżenie strukturalne (flutter) urywa skrzydła. Steruje sufiksem
@@ -201,6 +204,14 @@ export class Hud {
     const tempLine = hudRow('temp.', data.engineTempC.toFixed(0), '°C') + engineTempWarning(data.engineHeat01);
     const tempColor = engineTempColor(data.engineHeat01);
     const tempHtml = tempColor ? `<span style="color:${tempColor}">${escHtml(tempLine)}</span>` : escHtml(tempLine);
+    // wiersz klap (R3) — tylko gdy wysunięte lub urwane; „URWANE" na czerwono (utrata mechanizacji)
+    const flapsTorn = data.flapsLabel === 'URWANE';
+    const flapsHtml =
+      data.flapsLabel === undefined
+        ? null
+        : flapsTorn
+          ? `<span style="color:#ff5a4d">${escHtml(hudRow('klapy', data.flapsLabel))}</span>`
+          : escHtml(hudRow('klapy', data.flapsLabel));
     this.textEl.innerHTML = [
       // Vne (rozpad konstrukcji) ma pierwszeństwo nad sztywnymi lotkami — oba wynikają z prędkości
       escHtml(
@@ -211,6 +222,7 @@ export class Hud {
       escHtml(hudRow('alt', data.altM.toFixed(0), 'm')),
       escHtml(hudRow('wznosz.', varioValue(data.verticalSpeedMs), 'm/s')),
       escHtml(hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%') + (data.wepActive ? '   WEP' : '')),
+      ...(flapsHtml !== null ? [flapsHtml] : []),
       tempHtml,
       escHtml(hudRow('paliwo', (data.fuel01 * 100).toFixed(0), '%') + fuelWarning(data.fuel01)),
       escHtml(hudRow('n', data.nG.toFixed(1), 'G') + gLocText),

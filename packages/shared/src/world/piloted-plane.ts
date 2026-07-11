@@ -33,6 +33,9 @@ export interface PilotCommand {
   /** WEP / boost (fizyka v2 R2, §6.3) — kop mocy + agresywne grzanie; stosowany tylko przy pełnym
    *  gazie i gdy samolot ma WEP (wepBoostFrac>0). InputFrame spełnia to strukturalnie (pole `wep`). */
   wep: boolean;
+  /** Żądany indeks pozycji klap (fizyka v2 R3, §6.4): 0 = schowane, 1..3 wysunięte (per samolot).
+   *  Echo 2 bitów INPUT; pilotStep liczy z niego aero (efektywna pozycja po urwaniu = 0). */
+  flaps: number;
   /** Kierunek celu instruktora w świecie (jednostkowy, renormalizowany u źródła). */
   aimX: number;
   aimY: number;
@@ -74,6 +77,9 @@ export function stepPilotedPlane(
     // klawisz WEP jest no-opem (brak mocy i grzania).
     state.wepActive =
       command.wep && command.throttle >= WEP_MIN_THROTTLE && plane.wepBoostFrac > 0;
+    // klapy (R3, §6.4): echo żądanego indeksu (pilotStep liczy efektywną pozycję po urwaniu).
+    // Niezależne od myszy/klawiatury — wysunięcie klap działa w obu trybach sterowania.
+    state.flapIndex = command.flaps;
     const hasKeyboard =
       command.pitchUp !== 0 || command.rollRight !== 0 || command.yawRight !== 0;
     if (hasKeyboard) {
@@ -98,9 +104,12 @@ export function stepPilotedPlane(
     demands.rollRateRadS = 0;
     demands.yawRateRadS = 0;
     state.wepActive = false;
+    state.flapIndex = 0;
   }
 
-  pilotStep(sim, plane, demands, dtS);
+  // applyPropEffect=true: gracz (obie strony sieci) czuje moment śmigła na małej prędkości i musi go
+  // kontrować (instruktor NIE kontruje — §6.5). Boty (stepBot woła pilotStep wprost) mają go wyłączony.
+  pilotStep(sim, plane, demands, dtS, true);
   wrapToArena(state.position, scratchWrap);
   validatePlaneState(state, context);
   return updateLifecycle(state, terrain, dtS);
@@ -129,6 +138,7 @@ export function stepWreckPiloted(
 ): LifeEvent {
   const { state } = sim;
   state.wepActive = false; // wrak: silnik martwy — WEP bez znaczenia (throttle wymuszony na 0)
+  state.flapIndex = 0; // wrak: klapy schowane (nie ma czym sterować mechanizacją)
   if (command) {
     scratchWreckDefl.pitchUp = command.pitchUp;
     scratchWreckDefl.rollRight = command.rollRight;

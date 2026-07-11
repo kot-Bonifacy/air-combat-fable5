@@ -33,6 +33,7 @@ import {
   distanceToArenaEdgeM,
   dynamicPressurePa,
   engineDisplayTempC,
+  flapsAvailable,
   getForward,
   getRight,
   getUp,
@@ -589,6 +590,8 @@ interface AcInputStep {
   yawRight?: number;
   fire?: boolean;
   wep?: boolean;
+  /** Żądany indeks pozycji klap (R3) — skrypt E2E ustawia go wprost (bez cyklu klawiszem F). */
+  flaps?: number;
 }
 interface AcInputScript {
   steps: AcInputStep[];
@@ -603,6 +606,8 @@ let telemetryClockS = 0;
 let e2eScript: AcInputScript | null = null;
 let e2eScriptElapsedS = 0;
 let e2eScriptBaseThrottle = 0.8;
+/** Bieżący indeks klap ze skryptu E2E (0 domyślnie) — przepisywany do localFlapIndex gdy skrypt aktywny. */
+let e2eFlapIndex = 0;
 const telUp = new Vector3();
 const telFwd = new Vector3();
 
@@ -1062,6 +1067,8 @@ function resetGameState(): void {
   localHealthFrac = 1;
   localAmmoFrac = 1;
   localAmmoSecondaryFrac = 1;
+  localFlapIndex = 0; // nowy mecz/reconnect — klapy schowane
+  e2eFlapIndex = 0;
   healthFracById.clear();
   damageById.clear();
   lifeById.clear();
@@ -1161,6 +1168,7 @@ function setLocalPlane(type: PlaneType): void {
   localPlane = planeConfigOf(type);
   localAmmoMax = totalAmmo(localPlane.armament);
   localSecondaryMax = secondaryAmmoMaxOf(localPlane);
+  localFlapIndex = 0; // inny typ = inny zestaw pozycji klap — schowaj (uniknij indeksu poza zakresem)
   predictor = new Predictor(localPlane, terrain);
   muzzleFlash.dispose();
   muzzleFlash = new MuzzleFlash(scene, allMuzzles(localPlane.armament));
@@ -1918,6 +1926,10 @@ function enterPlaying(): void {
 const scratchNose = new Vector3();
 const scratchAim = new Vector3();
 let sequence = 0;
+/** Żądany indeks pozycji klap (fizyka v2 R3): cyklowany klawiszem F modulo liczba pozycji lokalnego
+ *  samolotu. Wysyłany w inputFrame.flaps; serwer aplikuje aero i obrażenia urwania. Reset do 0 przy
+ *  nowym meczu/spawnie (resetGameState) i po zmianie typu (setLocalPlane — inny zestaw pozycji). */
+let localFlapIndex = 0;
 const inputFrame: InputFrame = {
   sequence: 0,
   ackServerTick: 0,
@@ -1927,6 +1939,7 @@ const inputFrame: InputFrame = {
   yawRight: 0,
   fire: false,
   wep: false,
+  flaps: 0,
   aimX: 0,
   aimY: 0,
   aimZ: 1,
@@ -1956,6 +1969,7 @@ function sendInputTick(dtS: number): void {
     let yr = 0;
     let fi = false;
     let we = false;
+    let fl = 0;
     for (const step of e2eScript.steps) {
       if (step.tS > scriptTS) break;
       if (step.throttle !== undefined) th = step.throttle;
@@ -1964,6 +1978,7 @@ function sendInputTick(dtS: number): void {
       if (step.yawRight !== undefined) yr = step.yawRight;
       if (step.fire !== undefined) fi = step.fire;
       if (step.wep !== undefined) we = step.wep;
+      if (step.flaps !== undefined) fl = step.flaps;
     }
     throttleCmd = th;
     pitchUp = pu;
@@ -1971,6 +1986,7 @@ function sendInputTick(dtS: number): void {
     yawRight = yr;
     fireCmd = fi;
     wepCmd = we;
+    e2eFlapIndex = fl;
     scriptActive = true;
     if (e2eScriptElapsedS >= e2eScript.durationS) {
       e2eScript = null;
@@ -2003,6 +2019,14 @@ function sendInputTick(dtS: number): void {
   inputFrame.yawRight = yawRight;
   inputFrame.fire = fireCmd;
   inputFrame.wep = wepCmd;
+  // klapy (R3): F cyklicznie przełącza pozycje 0..n−1 lokalnego samolotu. Skrypt E2E steruje wprost.
+  if (scriptActive) {
+    localFlapIndex = e2eFlapIndex;
+  } else if (keyboard.consumeFlapCycle()) {
+    const nPos = localPlane.flaps.positions.length;
+    localFlapIndex = nPos > 0 ? (localFlapIndex + 1) % nPos : 0;
+  }
+  inputFrame.flaps = localFlapIndex;
   inputFrame.aimX = scratchAim.x;
   inputFrame.aimY = scratchAim.y;
   inputFrame.aimZ = scratchAim.z;
@@ -2034,6 +2058,18 @@ function updateHud(frameDtS: number): void {
   getRight(s.orientation, scratchRight);
   getForward(s.orientation, scratchFwd);
 
+  // etykieta klap (R3): nazwa pozycji gdy wysunięte, „URWANE" gdy skrzydło zbyt uszkodzone (poziomy
+  // ze snapshotu v8 — te same, którymi liczy się aero). Schowane/sprawne → undefined (bez wiersza HUD).
+  const localFlapDamage = localAlive
+    ? (damageById.get(net?.localPlayerId ?? -1)?.levels ?? null)
+    : null;
+  let flapsLabel: string | undefined;
+  if (localAlive && localFlapIndex > 0) {
+    flapsLabel = flapsAvailable(localFlapDamage)
+      ? localPlane.flaps.positions[localFlapIndex]?.name
+      : 'URWANE';
+  }
+
   hud.update({
     iasKmh: s.iasMs * MS_TO_KMH,
     tasKmh: tasMs * MS_TO_KMH,
@@ -2063,6 +2099,8 @@ function updateHud(frameDtS: number): void {
     engineTempC: engineDisplayTempC(localAlive ? s.engineHeatFrac : 0, localPlane.engineThermal),
     // WEP aktywny (dopalacz, fizyka v2 R2): wskaźnik „WEP" + ostrzeżenie o grzaniu; tylko w locie
     wepActive: localAlive && s.wepActive,
+    // klapy (fizyka v2 R3): nazwa pozycji / „URWANE"; undefined = schowane (wiersz ukryty)
+    flapsLabel,
     // poziom ostrzeżenia Vne (0/1/2): zbliżanie → ostrzeżenie, przekroczenie → alarm „FLATTER — ZWOLNIJ"
     vneLevel: localAlive ? vneWarnLevel(s.iasMs, localPlane) : 0,
     ammo: Math.round(localAmmoFrac * localAmmoMax),
@@ -2090,7 +2128,10 @@ function updateHud(frameDtS: number): void {
  *  uczestników (lewy górny róg, `RosterOverlay`); redundancja usunięta na życzenie usera. */
 function hudExtraLines(): string[] {
   const lines: string[] = [''];
-  // klawiszologia żyje w ekranie „Jak grać" (lobby); status celowania pokazuje już wiersz „ster"
+  // przypomnienie klawiszy walki (WEP/klapy) — dublet onboardingu „Jak grać" (życzenie usera):
+  // gracz ma je pod ręką bez otwierania pomocy; pełna klawiszologia dalej w lobby, wiersz „ster"
+  // pokazuje status celowania.
+  lines.push(hudRow('klawisze', 'B — WEP  ·  F — klapy'));
   lines.push(hudRow('ping', String(displayedPingMs), 'ms'), fpsHudLine(fpsValue));
   return lines;
 }
