@@ -39,6 +39,14 @@ export function createTestPlane(overrides: Partial<PlaneConfig> = {}): PlaneConf
       [100, 40],
       [400, 80],
     ],
+    // płaski autorytet + zerowy opór sterów: fikstura neutralna wobec mechanik R1
+    // (testy sił/koperty liczone ręcznie nie widzą różnicy; mechaniki R1 testowane
+    // na realnych JSON-ach i celowanych overrides)
+    pitchAuthorityCurve: [
+      [0, 1],
+      [1500, 1],
+    ],
+    ctrlDragK: { aileron: 0, rudder: 0 },
     alignTauS: 0.4,
     weathervaneMaxRateDegS: 120,
     sideslipDampingS: 0.5,

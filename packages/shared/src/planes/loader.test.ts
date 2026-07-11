@@ -37,6 +37,11 @@ function validRaw(): Record<string, unknown> {
       [300, 70],
       [450, 85],
     ],
+    pitchAuthorityCurve: [
+      [450, 1],
+      [720, 0.55],
+    ],
+    ctrlDragK: { aileron: 0.01, rudder: 0.002 },
     alignTauS: 0.4,
     weathervaneMaxRateDegS: 120,
     sideslipDampingS: 0.5,
@@ -311,5 +316,79 @@ describe('loader konfiguracji samolotu', () => {
     const raw = validRaw();
     (raw['damage'] as Record<string, unknown>)['fireIgniteChanceCannon'] = 2;
     expect(() => loadPlaneConfig(raw)).toThrowError(/damage\.fireIgniteChanceCannon/);
+  });
+
+  // --- nowe pola R1 (fizyka v2): pitchAuthorityCurve, ctrlDragK, powerCurve ---
+
+  it('pitchAuthorityCurve: wymagane → brak = PlaneConfigError', () => {
+    const raw = validRaw();
+    delete raw['pitchAuthorityCurve'];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/pitchAuthorityCurve/);
+  });
+
+  it('pitchAuthorityCurve: frac poza [0.05, 1] → PlaneConfigError (ster nigdy martwy)', () => {
+    const raw = validRaw();
+    raw['pitchAuthorityCurve'] = [
+      [450, 1],
+      [720, 0.01],
+    ];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/pitchAuthorityCurve\[1\]\[1\]/);
+  });
+
+  it('pitchAuthorityCurve: malejąca IAS → PlaneConfigError (monotoniczność)', () => {
+    const raw = validRaw();
+    raw['pitchAuthorityCurve'] = [
+      [720, 1],
+      [450, 0.55],
+    ];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/monotonicznie/);
+  });
+
+  it('ctrlDragK: wymagane → brak = PlaneConfigError', () => {
+    const raw = validRaw();
+    delete raw['ctrlDragK'];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/ctrlDragK/);
+  });
+
+  it('ctrlDragK: wartość poza zakresem sanity → PlaneConfigError ze ścieżką', () => {
+    const raw = validRaw();
+    (raw['ctrlDragK'] as Record<string, unknown>)['aileron'] = 0.5; // pomyłka rzędu wielkości
+    expect(() => loadPlaneConfig(raw)).toThrowError(/ctrlDragK\.aileron/);
+  });
+
+  it('ctrlDragK: literówka w sekcji → PlaneConfigError', () => {
+    const raw = validRaw();
+    (raw['ctrlDragK'] as Record<string, unknown>)['aileronDrag'] = 0.01;
+    expect(() => loadPlaneConfig(raw)).toThrowError(/ctrlDragK\.aileronDrag/);
+  });
+
+  it('powerCurve: opcjonalne — poprawna krzywa przechodzi i zachowuje wartości', () => {
+    const raw = validRaw();
+    raw['powerCurve'] = [
+      [0, 1],
+      [4500, 1.1],
+      [9000, 0.5],
+    ];
+    const config = loadPlaneConfig(raw);
+    expect(config.powerCurve).toHaveLength(3);
+    expect(config.powerCurve?.[1]?.[1]).toBe(1.1);
+  });
+
+  it('powerCurve: frac poza [0, 1.5] → PlaneConfigError', () => {
+    const raw = validRaw();
+    raw['powerCurve'] = [
+      [0, 1],
+      [4500, 2.5],
+    ];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/powerCurve\[1\]\[1\]/);
+  });
+
+  it('powerCurve: malejąca wysokość → PlaneConfigError (monotoniczność)', () => {
+    const raw = validRaw();
+    raw['powerCurve'] = [
+      [4500, 1],
+      [0, 1],
+    ];
+    expect(() => loadPlaneConfig(raw)).toThrowError(/monotonicznie/);
   });
 });

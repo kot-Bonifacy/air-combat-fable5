@@ -5,7 +5,7 @@ import { inducedDragFactor, type PlaneConfig } from '../planes/loader';
 
 /**
  * Opór z biegunowej (fizyka-lotu.md rozdz. 5.2): D = q·S·Cd przeciwnie do v̂, gdzie
- *   Cd = Cd0 + K·Cl²  +  dragHighClK·Cl⁴  +  dragStallK·(|Cl_wym|−Cl_max)²₊
+ *   Cd = Cd0 + K·Cl²  +  dragHighClK·Cl⁴  +  dragStallK·(|Cl_wym|−Cl_max)²₊  +  cdExtra
  * 1. K·Cl² — opór indukowany (biegunowa paraboliczna).
  * 2. dragHighClK·Cl⁴ — ZAGIĘCIE biegunowej blisko Cl_max: znikome przy małym Cl
  *    (lot poziomy/nurkowanie/łagodny zakręt — V_max i wznoszenie nietknięte), rośnie
@@ -16,6 +16,9 @@ import { inducedDragFactor, type PlaneConfig } from '../planes/loader';
  *    skacze. `cl` jest już obcięty do ±Cl_max, więc nadwyżkę liczymy z `clRequired`
  *    (nieobciętego). Nadwyżka nasycana do Cl_max (skrzydło w pełni oderwane → Cd plateau,
  *    zarazem strażnik NaN przy clRequired→±∞ dla q→0).
+ * 4. cdExtra — dodatkowy Cd spoza biegunowej skrzydła: opór manewrowy wychylonych
+ *    sterów (fizyka v2 R1, §6.1 — beczka przestaje być darmowa). Liczy go caller
+ *    (pilotStep z ctrlDragK·wychylenie), tu tylko wchodzi do sumy.
  *
  * Cl przychodzi z modułu nośnej przez parametry — moduły sił nie importują siebie nawzajem.
  * `clRequired` domyślnie = `cl` (gdy caller nie rozróżnia — wtedy excess=0 poniżej Cl_max).
@@ -26,6 +29,7 @@ export function dragForce(
   qPa: number,
   cl: number,
   clRequired: number = cl,
+  cdExtra = 0,
 ): ForceContribution {
   const force = new Vector3();
   const speed = state.velocity.length();
@@ -36,7 +40,8 @@ export function dragForce(
       plane.cd0 +
       inducedDragFactor(plane) * clSq +
       plane.dragHighClK * clSq * clSq +
-      plane.dragStallK * excessCl * excessCl;
+      plane.dragStallK * excessCl * excessCl +
+      cdExtra;
     const dragN = qPa * plane.wingAreaM2 * cd;
     force.copy(state.velocity).multiplyScalar(-dragN / speed);
   }

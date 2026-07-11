@@ -367,6 +367,53 @@ dał roll 47,4°/s @ 446 km/h IAS vs harness 46,5 @ 450 (<2%), telemetria bez Na
 **Kryteria:** beczki bleedują; wyrwanie @ 650 km/h ograniczone autorytetem; wszystkie
 testy zielone. **Bez protokołu** (czysto shared/JSON).
 
+**Wynik R1 (2026-07-11): ✅ UKOŃCZONY, 699 testów zielone (675 + 24 nowe), protokół v9 bez zmian.**
+
+- **Kod:** wspólny helper `math/curve.ts` (`sampleCurve` — refaktor `maxRollRateRadS`
+  bez zmiany semantyki, złote nietknięte); `dragForce(..., cdExtra)`; `stepPlane(..., ctrlCd)`;
+  `envelope.ts`: `pitchAuthorityFrac` + `peakRollRateRadS` (HUD-owy `rollAuthority01`
+  w kliencie przepisany na ten helper); `enginePowerW` z `powerCurve` (fallback = stary
+  model; JSON-y bez krzywej — kalibracja liczbowa w R4). Loader: `ctrlDragK` i
+  `pitchAuthorityCurve` WYMAGANE, `powerCurve` opcjonalne (walidacja krzywych ujednolicona).
+- **`pilotStep`:** (0b) cap autorytetu `nCapHi=max(1, nMaxG·frac(IAS))` /
+  `nCapLo=min(−1, nMinG·frac(IAS))` na żądaniu PRZED kopertą i maszyną przeciągnięcia
+  (over-pull przy dużej IAS nie sięga buffetu — ster fizycznie nie da rady); (1a) opór
+  sterów `ctrlCd = k_ail·δa + k_rud·δr`, gdzie `δa = |rollClamped| / szczyt krzywej rolla`
+  (wychylenie REALNE — decyzja usera: sztywnienie samo redukuje wychylenie, Zero przy
+  400+ km/h nie płaci podwójnie), `δr` znormalizowany jak w `keyboardDemands`.
+  Czyste funkcje inputu+stanu → reconcile bez wzorca `heatBefore`.
+- **Kalibracja (kotwice §6.1 pogodzone POMIAREM):** cel „3 pełne beczki z 400 km/h
+  zjadają ~40–60 km/h" okazał się CAŁKOWITYM kosztem manewru — samo osiadanie toru
+  w beczkach (kontrola k=0, pomiar ograniczony: stop po 3 obrotach albo 20 s, start
+  2000 m) daje już 39–52 km/h, a opór lotek dokłada resztę przy k_ail w rzędzie
+  „+15–25 % Cd0". Ręczny rachunek z planu (k≈0.007–0.010) zakładał idealny lot poziomy,
+  którego pełny pipeline (i gra) nie utrzymuje — zapisany w memory „konflikt kotwic §6.1"
+  rozwiązał się sam, bez odstępstwa. Finalnie: Spitfire `aileron=0.003` (+15 % cd0)
+  → 60,0 km/h; Bf 109 `0.005` (+23 %) → 49,2 km/h; Zero `0.005` (+25 %) → kotwica
+  własna @ 300 km/h: 78,3 km/h (@ 400 beton lotek nie domyka nawet 1 beczki);
+  `rudder=0.002` (kosmetyczny). `pitchAuthorityCurve`: Spit `[[450,1],[720,0.55]]`,
+  Bf `[[420,1],[550,0.65],[750,0.3]]`, Zero `[[400,1],[500,0.55],[630,0.3]]` →
+  cap wyrwania @ 650 km/h: Spit ~5,3 G > Bf 3,8 G > Zero 2,1 G.
+- **Testy:** +24 (sampleCurve, cdExtra, powerCurve, walidacja loadera, pipeline @ 650
+  z porządkiem asymetrii i strażnikami ±1 G — `physics/pitch-authority.test.ts`, cele
+  §6.1 w `combat-maneuvers.test.ts`). Kotwice zamrożone R0: poruszone WYŁĄCZNIE
+  `rollBleedKmh` (10 s @ 400: 5,3/2,9/7,6 → 9,5/8,4/10,2 — komentarz R1); turn180
+  (w tym @ 450!), loop, Ps, timeTo6000, wszystkie złote — bez ruchu (sufit G-LOC ~5 G
+  był już wiążącym ograniczeniem zakrętu; autorytet gryzie >500 km/h, gdzie manewry
+  testowe nie przebywają). `rollBleedTest` rozszerzony o `stopAfterTurns` + diagnostykę
+  (`rollTimeS`, `altitudeEndM`) — bez sufitu czasu pomiar degeneruje się w spiralę
+  nurkową (nurkowanie → wyższa IAS → sztywniejsze lotki → dłuższe okno).
+- **E2E (§8.3 pkt 2, MCP chrome-devtools):** skrypt `__acDebug.overrideInput`
+  (wspinaczka → pushover do poziomu → trym → pełna lotka 10 s @ 398,5 km/h / 911 m)
+  vs replika w harnessie w IDENTYCZNYCH warunkach: E-drop 20,8 vs 20,5 m (**1,3 %**),
+  obroty 1,43 vs 1,48 (**3,2 %**), wyjściowa IAS 461,8 vs 461,1 km/h (**0,2 %**) —
+  kryterium ≤3–5 % spełnione; konsola czysta (jedyny 404 = favicon, pre-existing).
+  Pułapki sesji: tryb eliminacji kończy mecz po 1 śmierci pilota (skrypt ślepego lotu
+  poziomego → CFIT w górkę ~900 m; pomiar wymaga wspinaczki przed beczkami i kroku
+  wyprowadzenia po oknie), porównanie z harnessem MUSI zrównać gaz (wrażliwość
+  ~1,5 m E-dropu na 0,01 gazu — trym ≠ wartość skryptu).
+- **Następny etap: R2** (WEP + Vne/flutter, **bump protokołu v10**).
+
 ### R2 — Skraje koperty: WEP + Vne/flutter (**protokół v10**)
 **Zakres:** §6.3 (bit WEP w INPUT, moc mil/WEP w JSON, sprzężenie z termiką),
 §6.2 Vne/flutter (serwer autorytatywnie → strefy skrzydeł; HUD ostrzeżenie + buffet);

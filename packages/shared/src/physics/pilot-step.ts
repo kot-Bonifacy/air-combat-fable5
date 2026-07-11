@@ -10,7 +10,15 @@ import { stepEngineHeat } from './engine-heat';
 import { getRight } from '../math/frame';
 import type { PlaneConfig } from '../planes/loader';
 import { airDensityKgM3, dynamicPressurePa } from './atmosphere';
-import { clampLoadFactorG, dampSideslip, maxRollRateRadS, nAvailG, weathervaneRates } from './envelope';
+import {
+  clampLoadFactorG,
+  dampSideslip,
+  maxRollRateRadS,
+  nAvailG,
+  peakRollRateRadS,
+  pitchAuthorityFrac,
+  weathervaneRates,
+} from './envelope';
 import { GLoadMachine, createGLoadEffects, type GLoadEffects } from './g-load';
 import { pitchRateForLoadFactor, stepPlane, type PlaneTickResult } from './plane-step';
 import { StallMachine, createStallEffects, type StallEffects } from './stall';
@@ -73,6 +81,8 @@ function effectivePlaneConfig(base: PlaneConfig, mods: DamageModifiers): PlaneCo
     cd0: base.cd0 + mods.cd0Add,
   };
 }
+
+const DEG_TO_RAD = Math.PI / 180;
 
 const scratchRightCoord = new Vector3();
 
@@ -140,12 +150,34 @@ export function pilotStep(
   const tasMs = state.velocity.length();
   const qPa = dynamicPressurePa(airDensityKgM3(state.position.y), tasMs);
 
+  // (0b) autorytet steru wysokości vs IAS (fizyka v2 R1, §6.2): przy dużej prędkości
+  // ster fizycznie nie wychyli się do pełna → cap na ŻĄDANIE, PRZED kopertą i maszyną
+  // przeciągnięcia (over-pull @ 700 km/h nie sięga nawet buffetu — realistyczne).
+  // Strażniki max(1,·)/min(−1,·) gwarantują lot poziomy normalny i odwrócony przy
+  // każdym IAS (bez nich frac < 1/nMaxG odbierałby możliwość utrzymania wysokości).
+  const pitchAuthIas = pitchAuthorityFrac(state.iasMs, plane);
+  const nCapHi = Math.max(1, effPlane.nMaxG * pitchAuthIas);
+  const nCapLo = Math.min(-1, effPlane.nMinG * pitchAuthIas);
+  const nDemandCapped = Math.min(nCapHi, Math.max(nCapLo, nDemandAdj));
+
   // (1) koperta — clMax (a więc nAvail) i clamp n liczone na EFEKTYWNYM configu (uszkodzone
   // skrzydło → mniejsze clMax → mniejsze dostępne n). Krzywa roll rate nie jest modyfikowana.
   const nAvail = nAvailG(qPa, effPlane);
-  const nEnvelopeG = clampLoadFactorG(nDemandAdj, qPa, effPlane);
+  const nEnvelopeG = clampLoadFactorG(nDemandCapped, qPa, effPlane);
   const maxRoll = maxRollRateRadS(state.iasMs, plane);
   const rollClamped = Math.min(maxRoll, Math.max(-maxRoll, demands.rollRateRadS));
+
+  // (1a) opór manewrowy sterów (fizyka v2 R1, §6.1): Cd_ctrl = k_ail·δa + k_rud·δr.
+  // δa = REALNE wychylenie lotek: |roll żądany po kopercie| / SZCZYT krzywej rolla —
+  // powyżej szczytu sztywnienie samo redukuje wychylenie (rollClamped ≤ maxRoll(IAS)),
+  // więc Zero z betonem lotek przy 400+ km/h nie płaci oporem za pełny drążek.
+  // Z rollClamped, NIE z state.angularRates.roll (tam siedzi wing drop i damage
+  // rollBias — to nie jest wychylenie pilota). δr normalizowane jak w keyboardDemands.
+  const peakRoll = peakRollRateRadS(plane);
+  const aileronFrac = peakRoll > 0 ? Math.abs(rollClamped) / peakRoll : 0;
+  const maxYawRadS = plane.instructor.maxYawRateDegS * DEG_TO_RAD;
+  const rudderFrac = maxYawRadS > 0 ? Math.min(1, Math.abs(demands.yawRateRadS) / maxYawRadS) : 0;
+  const ctrlCd = plane.ctrlDragK.aileron * aileronFrac + plane.ctrlDragK.rudder * rudderFrac;
 
   // (1b) tolerancja przeciążenia pilota (G-LOC): sufit dodatniego n opada przy
   // UTRZYMYWANIU wysokiego G — chwilowe szarpnięcie do nMaxG przechodzi, ale
@@ -154,13 +186,15 @@ export function pilotStep(
   const gLoad = sim.gLoadMachine.update(nEnvelopeG, plane, dtS, sim.gLoadEffects);
   const nClampedG = gLoad.nLimitedG;
 
-  // (2) przeciągnięcie — próg na ŻĄDANIU obciętym tylko strukturalnie:
+  // (2) przeciągnięcie — próg na ŻĄDANIU obciętym strukturalnie I autorytetem steru
+  // (R1: ster, który fizycznie nie da rady, nie wciąga w buffet — over-pull przy
+  // dużej IAS jest ograniczony siłą na drążku, nie aerodynamiką skrzydła):
   // koperta n_avail z definicji nie pozwala przekroczyć clMax, a maszyna
   // ma wykrywać właśnie "chcę więcej, niż fizyka daje". Maszyna patrzy na
   // |clRatio| (znak bez znaczenia — przeciągnięcie i pchanie symetryczne);
   // liczymy go ze znakiem tylko po to, by przy q→0 (nAvail=0) ±Infinity
   // zachowało sens dla obu kierunków
-  const nStructG = Math.min(effPlane.nMaxG, Math.max(effPlane.nMinG, nDemandAdj));
+  const nStructG = Math.min(effPlane.nMaxG, Math.max(effPlane.nMinG, nDemandCapped));
   const clRatio =
     nAvail > 0 ? nStructG / nAvail : nStructG === 0 ? 0 : Infinity * Math.sign(nStructG);
   sim.stallMachine.update(clRatio, plane, dtS, sim.stallEffects);
@@ -191,8 +225,9 @@ export function pilotStep(
     state.angularRates.yaw += (-GRAVITY_MS2 * scratchRightCoord.y) / tasMs;
   }
 
-  // siły (nośna/opór/ciąg) na EFEKTYWNYM configu — degradacja silnika i skrzydeł działa tu
-  const tick = stepPlane(state, effPlane, nClampedG, dtS);
+  // siły (nośna/opór/ciąg) na EFEKTYWNYM configu — degradacja silnika i skrzydeł działa tu;
+  // ctrlCd = opór wychylonych sterów (R1 §6.1) dodawany do biegunowej w dragForce
+  const tick = stepPlane(state, effPlane, nClampedG, dtS, ctrlCd);
   state.stalled = stall.phase === 'stalled';
 
   // (5) koordynacja yaw

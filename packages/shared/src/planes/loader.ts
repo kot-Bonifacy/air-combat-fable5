@@ -58,6 +58,28 @@ export interface PlaneConfig {
    * poza zakresem wartości brzegowe (fizyka-lotu.md rozdz. 6.2).
    */
   rollRateCurve: readonly (readonly [iasKmh: number, rollRateDegS: number])[];
+  /**
+   * Autorytet steru wysokości vs IAS (fizyka v2 R1, §6.2): punkty [IAS km/h, frac 0.05..1],
+   * interpolacja jak rollRateCurve. Mnożnik maksymalnego ŻĄDANEGO n (pilotStep nasyca
+   * cap do ≥1 G / ≤−1 G, żeby lot poziomy normalny i odwrócony był zawsze osiągalny).
+   * Historyczna asymetria: Spitfire ster lekki (cap dopiero przy Vne), Bf 109 ciężki
+   * od ~420 km/h („obie ręce"), Zero najcięższy od ~400 km/h.
+   */
+  pitchAuthorityCurve: readonly (readonly [iasKmh: number, frac: number])[];
+  /**
+   * Opór manewrowy sterów (fizyka v2 R1, §6.1): dodatkowy człon biegunowej
+   * Cd_ctrl = aileron·δa + rudder·δr, gdzie δa/δr = znormalizowane REALNE wychylenie
+   * (lotki: |roll żądany po kopercie| / szczyt krzywej rolla — sztywnienie przy dużej
+   * IAS samo redukuje wychylenie, więc Zero nie płaci podwójnie). Kalibracja `aileron`:
+   * 3 pełne beczki z 400 km/h zjadają ~40–60 km/h IAS-ekwiwalentu (§6.1).
+   */
+  ctrlDragK: ControlDragConfig;
+  /**
+   * OPCJONALNA krzywa mocy vs wysokość (fizyka v2 R1 infrastruktura, §6.6): punkty
+   * [h m, frac 0..1.5], moc = enginePowerW·frac(h). Brak pola = prosty model sprężarki
+   * (pełna moc do fullThrottleHeightM, wyżej ∝ ρ). Kalibracja liczbowa per silnik → R4.
+   */
+  powerCurve?: readonly (readonly [altitudeM: number, frac: number])[];
   /** Stała czasowa weathervaningu nosa do toru lotu [s] (rozdz. 6.4). */
   alignTauS: number;
   /**
@@ -130,6 +152,19 @@ export interface EngineThermalConfig {
   coldTempC: number;
   /** Temperatura wskazywana na czerwonej linii (engineHeatFrac=1) [°C] — próg przegrzania na skali HUD. */
   redlineTempC: number;
+}
+
+/**
+ * Współczynniki oporu manewrowego sterów (fizyka v2 R1, §6.1) — Cd dodawany do
+ * biegunowej przy PEŁNYM znormalizowanym wychyleniu danej powierzchni. Rząd wielkości:
+ * pełna lotka ≈ +kilkadziesiąt % Cd0 (dokładna wartość z kalibracji celu §6.1);
+ * ster kierunku kosmetyczny (max yaw 10°/s). 0 = powierzchnia bez oporu (stary model).
+ */
+export interface ControlDragConfig {
+  /** Cd przy pełnym realnym wychyleniu lotek. */
+  aileron: number;
+  /** Cd przy pełnym wychyleniu steru kierunku. */
+  rudder: number;
 }
 
 /** Parametry tolerancji przeciążenia pilota / G-LOC (physics/g-load.ts). */
@@ -260,6 +295,9 @@ type NumericKey = Exclude<
   keyof PlaneConfig,
   | 'name'
   | 'rollRateCurve'
+  | 'pitchAuthorityCurve'
+  | 'powerCurve'
+  | 'ctrlDragK'
   | 'stall'
   | 'gTolerance'
   | 'instructor'
@@ -333,6 +371,13 @@ const WRECK_RANGES: Record<keyof WreckConfig, readonly [min: number, max: number
   pitchAuthority: [0, 1],
 };
 
+// Górny 0.05 = +250% cd0 typowego myśliwca przy pełnym wychyleniu — z dużym zapasem
+// ponad kalibrację §6.1; więcej to niemal na pewno pomyłka rzędu wielkości.
+const CTRL_DRAG_RANGES: Record<keyof ControlDragConfig, readonly [min: number, max: number]> = {
+  aileron: [0, 0.05],
+  rudder: [0, 0.05],
+};
+
 const ENGINE_THERMAL_RANGES: Record<keyof EngineThermalConfig, readonly [min: number, max: number]> = {
   overheatTimeFullS: [30, 1800],
   coolTimeS: [10, 1800],
@@ -385,6 +430,9 @@ const INSTRUCTOR_RANGES: Record<keyof InstructorConfig, readonly [min: number, m
 const KNOWN_KEYS = new Set<string>([
   'name',
   'rollRateCurve',
+  'pitchAuthorityCurve',
+  'powerCurve',
+  'ctrlDragK',
   'stall',
   'gTolerance',
   'instructor',
@@ -422,7 +470,7 @@ function checkNumericFields(
 
 function checkSection(
   obj: Record<string, unknown>,
-  key: 'stall' | 'gTolerance' | 'instructor' | 'wreck' | 'damage' | 'engineThermal',
+  key: 'stall' | 'gTolerance' | 'instructor' | 'wreck' | 'damage' | 'engineThermal' | 'ctrlDragK',
   ranges: Record<string, readonly [number, number]>,
   problems: string[],
 ): void {
@@ -438,33 +486,72 @@ function checkSection(
   }
 }
 
-function checkRollRateCurve(obj: Record<string, unknown>, problems: string[]): void {
-  const curve = obj['rollRateCurve'];
+/** Specyfikacja walidacji krzywej strojeniowej [[x, y]…] — wspólna dla trzech krzywych (R1). */
+interface CurveSpec {
+  /** Etykieta osi X do komunikatów (np. 'IAS'). */
+  xLabel: string;
+  xUnit: string;
+  xRange: readonly [number, number];
+  /** Etykieta osi Y do komunikatów (np. 'rate'). */
+  yLabel: string;
+  yUnit: string;
+  yRange: readonly [number, number];
+}
+
+/** Walidacja krzywej: tablica ≥2 punktów [x, y], x rosnące monotonicznie, zakresy sanity. */
+function checkCurve(
+  obj: Record<string, unknown>,
+  key: 'rollRateCurve' | 'pitchAuthorityCurve' | 'powerCurve',
+  spec: CurveSpec,
+  problems: string[],
+): void {
+  const curve = obj[key];
   if (!Array.isArray(curve) || curve.length < 2) {
-    problems.push('rollRateCurve: oczekiwano tablicy ≥2 punktów [IAS km/h, °/s]');
+    problems.push(`${key}: oczekiwano tablicy ≥2 punktów [${spec.xLabel} ${spec.xUnit}, ${spec.yUnit}]`);
     return;
   }
-  let prevIas = -Infinity;
+  let prevX = -Infinity;
   curve.forEach((point, i) => {
     if (!Array.isArray(point) || point.length !== 2) {
-      problems.push(`rollRateCurve[${String(i)}]: oczekiwano pary [IAS km/h, °/s]`);
+      problems.push(`${key}[${String(i)}]: oczekiwano pary [${spec.xLabel} ${spec.xUnit}, ${spec.yUnit}]`);
       return;
     }
-    const [ias, rate] = point as [unknown, unknown];
-    if (typeof ias !== 'number' || !Number.isFinite(ias) || ias < 0 || ias > 1500) {
-      problems.push(`rollRateCurve[${String(i)}][0]: IAS ${JSON.stringify(ias)} poza [0, 1500] km/h`);
-    } else if (ias <= prevIas) {
-      problems.push(`rollRateCurve[${String(i)}][0]: IAS musi rosnąć monotonicznie`);
-    } else {
-      prevIas = ias;
-    }
-    if (typeof rate !== 'number' || !Number.isFinite(rate) || rate < 0 || rate > 720) {
+    const [x, y] = point as [unknown, unknown];
+    const [xMin, xMax] = spec.xRange;
+    const [yMin, yMax] = spec.yRange;
+    if (typeof x !== 'number' || !Number.isFinite(x) || x < xMin || x > xMax) {
       problems.push(
-        `rollRateCurve[${String(i)}][1]: rate ${JSON.stringify(rate)} poza [0, 720] °/s`,
+        `${key}[${String(i)}][0]: ${spec.xLabel} ${JSON.stringify(x)} poza [${String(xMin)}, ${String(xMax)}] ${spec.xUnit}`,
+      );
+    } else if (x <= prevX) {
+      problems.push(`${key}[${String(i)}][0]: ${spec.xLabel} musi rosnąć monotonicznie`);
+    } else {
+      prevX = x;
+    }
+    if (typeof y !== 'number' || !Number.isFinite(y) || y < yMin || y > yMax) {
+      problems.push(
+        `${key}[${String(i)}][1]: ${spec.yLabel} ${JSON.stringify(y)} poza [${String(yMin)}, ${String(yMax)}] ${spec.yUnit}`,
       );
     }
   });
 }
+
+const ROLL_RATE_CURVE_SPEC: CurveSpec = {
+  xLabel: 'IAS', xUnit: 'km/h', xRange: [0, 1500],
+  yLabel: 'rate', yUnit: '°/s', yRange: [0, 720],
+};
+
+// frac ≥ 0.05: ster nigdy całkiem martwy (zawsze da się powoli wyprowadzić z nurkowania).
+const PITCH_AUTHORITY_CURVE_SPEC: CurveSpec = {
+  xLabel: 'IAS', xUnit: 'km/h', xRange: [0, 1500],
+  yLabel: 'frac', yUnit: 'frac', yRange: [0.05, 1],
+};
+
+// frac do 1.5: RAM/overboost może chwilowo przekraczać moc nominalną enginePowerW.
+const POWER_CURVE_SPEC: CurveSpec = {
+  xLabel: 'h', xUnit: 'm', xRange: [0, 20_000],
+  yLabel: 'frac', yUnit: 'frac', yRange: [0, 1.5],
+};
 
 function checkMuzzles(group: Record<string, unknown>, prefix: string, problems: string[]): void {
   const muzzles = group['muzzles'];
@@ -621,7 +708,13 @@ export function loadPlaneConfig(raw: unknown, source = 'konfiguracja samolotu'):
   }
 
   checkNumericFields(obj, NUMERIC_RANGES, '', problems);
-  checkRollRateCurve(obj, problems);
+  checkCurve(obj, 'rollRateCurve', ROLL_RATE_CURVE_SPEC, problems);
+  checkCurve(obj, 'pitchAuthorityCurve', PITCH_AUTHORITY_CURVE_SPEC, problems);
+  if (obj['powerCurve'] !== undefined) {
+    // opcjonalna (R1 = infrastruktura §6.6; JSON-y dostaną krzywe w kalibracji R4)
+    checkCurve(obj, 'powerCurve', POWER_CURVE_SPEC, problems);
+  }
+  checkSection(obj, 'ctrlDragK', CTRL_DRAG_RANGES, problems);
   checkSection(obj, 'stall', STALL_RANGES, problems);
   checkSection(obj, 'gTolerance', G_TOLERANCE_RANGES, problems);
   checkSection(obj, 'instructor', INSTRUCTOR_RANGES, problems);

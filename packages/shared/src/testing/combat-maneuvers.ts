@@ -241,6 +241,10 @@ export interface RollBleedResult {
   energyDropM: number;
   /** Ile pełnych obrotów wykręcono w oknie pomiaru. */
   rolledTurns: number;
+  /** Czas okna beczek [s] (przy stopAfterTurns — faktyczny czas do domknięcia obrotów). */
+  rollTimeS: number;
+  /** Wysokość na końcu okna [m] — sanity: pomiar nie może zdegenerować się w spiralę nurkową. */
+  altitudeEndM: number;
 }
 
 /**
@@ -250,13 +254,17 @@ export interface RollBleedResult {
  * miarą kosztu jest WYSOKOŚĆ ENERGETYCZNA (E = h + V²/2g), nie sama IAS —
  * ekwiwalent IAS liczony z powrotem na wysokości wejścia. Na STAREJ fizyce
  * (roll czysto kinematyczny) koszt ≈ tylko trym toru — baseline dla §6.1;
- * po R1 (opór lotek) iasEquivDropKmh ma być wyraźnie dodatni.
+ * po R1 (opór lotek) iasEquivDropKmh jest wyraźnie dodatni.
+ * `stopAfterTurns` (R1): przerwij po wykręceniu tylu pełnych obrotów (cel §6.1
+ * mówi o „3 pełnych beczkach" — czas trwania różni się między samolotami);
+ * `rollS` działa wtedy jako sufit czasu.
  */
 export function rollBleedTest(
   plane: PlaneConfig,
   iasKmh = 400,
   altitudeM = 1000,
   rollS = 10,
+  stopAfterTurns?: number,
 ): RollBleedResult {
   const sim = setupLevelSim(plane, iasKmh, altitudeM, 23);
   const { state } = sim;
@@ -265,11 +273,13 @@ export function rollBleedTest(
   const demands = createPilotDemands();
   const settleTicks = 1 * PHYSICS_HZ;
   const rollTicks = Math.round(rollS * PHYSICS_HZ);
+  const stopRad = stopAfterTurns === undefined ? Infinity : stopAfterTurns * 2 * Math.PI;
   let rolledRad = 0;
   let iasStartMs = state.iasMs;
   let energyStartM = 0;
   let altStartM = altitudeM;
-  for (let i = 0; i < settleTicks + rollTicks; i++) {
+  let rollTicksUsed = 0;
+  for (let i = 0; i < settleTicks + rollTicks && rolledRad < stopRad; i++) {
     demands.nDemandG = nDemandForPitchRate(state, 0);
     demands.rollRateRadS = i < settleTicks ? 0 : 100;
     pilotStep(sim, plane, demands, FIXED_DT_S);
@@ -279,7 +289,10 @@ export function rollBleedTest(
       altStartM = state.position.y;
       energyStartM = state.position.y + state.velocity.lengthSq() / (2 * GRAVITY_MS2);
     }
-    if (i >= settleTicks) rolledRad += Math.abs(state.angularRates.roll) * FIXED_DT_S;
+    if (i >= settleTicks) {
+      rolledRad += Math.abs(state.angularRates.roll) * FIXED_DT_S;
+      rollTicksUsed++;
+    }
   }
   const energyEndM = state.position.y + state.velocity.lengthSq() / (2 * GRAVITY_MS2);
   // TAS, jaką miałby samolot po bezstratnym odzyskaniu wysokości wejściowej
@@ -292,6 +305,8 @@ export function rollBleedTest(
     iasEquivDropKmh: (iasStartMs - iasEquivMs) * MS_TO_KMH,
     energyDropM: energyStartM - energyEndM,
     rolledTurns: rolledRad / (2 * Math.PI),
+    rollTimeS: rollTicksUsed * FIXED_DT_S,
+    altitudeEndM: state.position.y,
   };
 }
 

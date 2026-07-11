@@ -24,13 +24,16 @@ export interface PlaneTickResult {
  * atmosfera → siły (nośna z zadanego n, opór, ciąg, grawitacja) →
  * semi-implicit Euler → aktualizacja pól pochodnych stanu (iasMs,
  * loadFactor, stalled). Prędkości kątowe (kinematyczne) ustawia caller
- * na state.angularRates przed wywołaniem.
+ * na state.angularRates przed wywołaniem. `ctrlCd` = dodatkowy Cd oporu
+ * wychylonych sterów (fizyka v2 R1, §6.1) — liczy go pilotStep; harness
+ * i testy sił wołające stepPlane bezpośrednio zostają przy 0.
  */
 export function stepPlane(
   state: PlaneState,
   plane: PlaneConfig,
   nDemandG: number,
   dtS: number,
+  ctrlCd = 0,
 ): PlaneTickResult {
   const tasMs = state.velocity.length();
   const rhoKgM3 = airDensityKgM3(state.position.y);
@@ -39,7 +42,7 @@ export function stepPlane(
   const lift = liftForce(state, plane, nDemandG, qPa);
   const contributions: ForceContribution[] = [
     lift.contribution,
-    dragForce(state, plane, qPa, lift.cl, lift.clRequired),
+    dragForce(state, plane, qPa, lift.cl, lift.clRequired, ctrlCd),
     thrustForce(state, plane),
     gravityForce(plane.massKg),
   ];

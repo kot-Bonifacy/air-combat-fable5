@@ -38,6 +38,7 @@ import {
   getUp,
   maxRollRateRadS,
   nAvailG,
+  peakRollRateRadS,
   planeConfigOf,
   primaryGroup,
   surfaceHeightM,
@@ -2018,10 +2019,9 @@ function updateHud(frameDtS: number): void {
     pitchRad: Math.asin(Math.min(1, Math.max(-1, scratchFwd.y))),
     controlMode: mouseAim.locked ? 'mysz' : 'klawiatura',
     // autorytet lotek: bieżący maxRoll(IAS) względem szczytu krzywej (ostrzeżenie „lotki sztywne"
-    // przy IAS — kanoniczna słabość Zero powyżej ~370 km/h, u innych dopiero w głębokim nurkowaniu)
-    rollAuthority01:
-      maxRollRateRadS(s.iasMs, localPlane) /
-      Math.max(1e-6, localPlane.rollRateCurve.reduce((m, [, r]) => Math.max(m, r), 0) * (Math.PI / 180)),
+    // przy IAS — kanoniczna słabość Zero powyżej ~370 km/h, u innych dopiero w głębokim nurkowaniu);
+    // ten sam szczyt służy fizyce oporu lotek (R1 §6.1) — helper z shared, nie inline reduce
+    rollAuthority01: maxRollRateRadS(s.iasMs, localPlane) / Math.max(1e-6, peakRollRateRadS(localPlane)),
     // ostrzeżenie „pusty bak" tylko w locie — wrak/obserwator nie ma silnika do zgaszenia
     fuel01: localAlive ? s.fuelFrac : 1,
     // temperatura silnika (predykowana lokalnie pod wskaźnik; skutek przegrzania idzie przez poziomy v8)

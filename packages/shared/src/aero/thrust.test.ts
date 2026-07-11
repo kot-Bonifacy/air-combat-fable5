@@ -47,6 +47,29 @@ describe('ciąg', () => {
     expect(enginePowerW(PLANE, 6000)).toBeLessThan(PLANE.enginePowerW);
   });
 
+  it('powerCurve (R1 §6.6): moc = P0·frac(h), interpolacja + wartości brzegowe', () => {
+    const curved = createTestPlane({
+      powerCurve: [
+        [0, 1],
+        [4000, 1.2],
+        [8000, 0.5],
+      ],
+    });
+    expect(enginePowerW(curved, 0)).toBeCloseTo(curved.enginePowerW, 9);
+    expect(enginePowerW(curved, 2000)).toBeCloseTo(curved.enginePowerW * 1.1, 6);
+    expect(enginePowerW(curved, 4000)).toBeCloseTo(curved.enginePowerW * 1.2, 9);
+    // poza prawym końcem — wartość brzegowa (bez ekstrapolacji w dół)
+    expect(enginePowerW(curved, 12_000)).toBeCloseTo(curved.enginePowerW * 0.5, 9);
+    // krzywa ma pierwszeństwo przed prostym modelem (h_fth ignorowane)
+    expect(enginePowerW(curved, 6000)).toBeCloseTo(curved.enginePowerW * (1.2 - (0.7 * 2000) / 4000), 6);
+  });
+
+  it('powerCurve nieobecne (fallback): zachowanie identyczne ze starym modelem', () => {
+    // PLANE (fikstura) nie ma powerCurve — asercje „moc: pełna do h_fth" wyżej
+    // pilnują fallbacku; tu tylko jawny dowód, że pole jest opcjonalne
+    expect(PLANE.powerCurve).toBeUndefined();
+  });
+
   it('kierunek wzdłuż osi nosa (nos w górę → ciąg w górę)', () => {
     const state = createPlaneState();
     state.throttle = 1;

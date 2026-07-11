@@ -12,7 +12,10 @@ Fazy ukończone: **0–18 + domknięcie parytetu MP↔SP (P1–P5) + Faza 19 (19
 każdej fazy w `docs/phases/faza-NN.md` i `memory/`; cały wysiłek parytetu MP↔SP (fazy 14–18 + P1–P5) spięty
 w przewodniku **`docs/parytet-mp-sp.md`** (mapa SP→MP, decyzje, pułapki, otwarte sprawy).
 Po fazie 22 trwa **rekalibracja fizyki lotu v2** (`docs/fizyka-v2-rekalibracja.md`, etapy R0–R5):
-**R0 ✅** (narzędzia pomiarowe + baseline + zamrożenie celów; 675 testów), **R1–R5 ⏳**.
+**R0 ✅** (narzędzia pomiarowe + baseline + zamrożenie celów; 675 testów), **R1 ✅** (opór sterów
+`ctrlDragK` + autorytet pitch `pitchAuthorityCurve` + infrastruktura `powerCurve` z fallbackiem;
+699 testów; BEZ protokołu — v9; szczegóły w sekcji „Wynik R1" dokumentu), **R2–R5 ⏳** (R2 = WEP +
+Vne/flutter, bump v10).
 
 | #     | Temat                                                                 | Stan / uwaga |
 | ----- | --------------------------------------------------------------------- | ------------ |

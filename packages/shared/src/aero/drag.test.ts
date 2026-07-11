@@ -40,4 +40,13 @@ describe('opór', () => {
     const { force } = dragForce(state, PLANE, 0, 0);
     expect(force.length()).toBe(0);
   });
+
+  it('cdExtra (opór sterów, R1 §6.1): delta siły dokładnie q·S·cdExtra', () => {
+    const state = createPlaneState();
+    state.velocity.set(0, 0, 100);
+    const cl = 0.8;
+    const base = dragForce(state, PLANE, Q_PA, cl).force.length();
+    const withCtrl = dragForce(state, PLANE, Q_PA, cl, cl, 0.01).force.length();
+    expect(withCtrl - base).toBeCloseTo(Q_PA * PLANE.wingAreaM2 * 0.01, 6);
+  });
 });

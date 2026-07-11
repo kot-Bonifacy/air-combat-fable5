@@ -1,5 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import { GRAVITY_MS2, MS_TO_KMH } from '../constants';
+import { sampleCurve } from '../math/curve';
 import { getForward, getRight, getUp } from '../math/frame';
 import type { PlaneConfig } from '../planes/loader';
 import type { AngularRates, PlaneState } from './state';
@@ -30,21 +31,33 @@ export function clampLoadFactorG(nDemandG: number, qPa: number, plane: PlaneConf
  * po punktach [km/h, °/s] z konfiguracji, poza zakresem wartości brzegowe (rozdz. 6.2).
  */
 export function maxRollRateRadS(iasMs: number, plane: PlaneConfig): number {
-  const curve = plane.rollRateCurve;
-  const iasKmh = iasMs * MS_TO_KMH;
-  let prev = curve[0];
-  if (prev === undefined) return 0; // nieosiągalne — loader wymaga ≥2 punktów
-  if (iasKmh <= prev[0]) return prev[1] * DEG_TO_RAD;
-  for (let i = 1; i < curve.length; i++) {
-    const point = curve[i];
-    if (point === undefined) break;
-    if (iasKmh <= point[0]) {
-      const t = (iasKmh - prev[0]) / (point[0] - prev[0]);
-      return (prev[1] + t * (point[1] - prev[1])) * DEG_TO_RAD;
-    }
-    prev = point;
+  return sampleCurve(plane.rollRateCurve, iasMs * MS_TO_KMH) * DEG_TO_RAD;
+}
+
+/**
+ * Szczytowy roll rate krzywej [rad/s] — mianownik „realnego wychylenia lotek"
+ * (fizyka v2 R1, §6.1): przy IAS powyżej szczytu pełny drążek wychyla lotki tylko
+ * częściowo (siła na drążku), więc δa = |roll żądany| / szczyt, nie / maxRoll(IAS) —
+ * Zero z zabetonowanymi lotkami przy 400+ km/h NIE płaci oporem za wychylenie,
+ * którego fizycznie nie osiąga.
+ */
+export function peakRollRateRadS(plane: PlaneConfig): number {
+  let peakDegS = 0;
+  for (const [, rateDegS] of plane.rollRateCurve) {
+    if (rateDegS > peakDegS) peakDegS = rateDegS;
   }
-  return prev[1] * DEG_TO_RAD; // poza prawym końcem krzywej — wartość brzegowa
+  return peakDegS * DEG_TO_RAD;
+}
+
+/**
+ * Autorytet steru wysokości vs IAS [0..1] z krzywej pitchAuthorityCurve (fizyka v2 R1,
+ * §6.2): mnożnik maksymalnego ŻĄDANEGO n (poniżej ograniczeń koperty/G-LOC — nigdy
+ * powyżej). Przy dużej prędkości ster „ciężknie" — wyrwanie z nurkowania @650+ km/h
+ * nie osiąga nMaxG, promień wyrwania rośnie (duch WT RB). Nasycenie w pilotStep
+ * gwarantuje utrzymanie lotu poziomego (cap ≥ 1 G) i odwróconego (cap ≤ −1 G).
+ */
+export function pitchAuthorityFrac(iasMs: number, plane: PlaneConfig): number {
+  return sampleCurve(plane.pitchAuthorityCurve, iasMs * MS_TO_KMH);
 }
 
 const scratchVHat = new Vector3();

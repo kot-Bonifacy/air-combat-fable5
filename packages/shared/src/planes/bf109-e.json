@@ -34,6 +34,15 @@
     [480, 45],
     [640, 15]
   ],
+  "pitchAuthorityCurve": [
+    [420, 1],
+    [550, 0.65],
+    [750, 0.3]
+  ],
+  "ctrlDragK": {
+    "aileron": 0.005,
+    "rudder": 0.002
+  },
   "alignTauS": 0.4,
   "weathervaneMaxRateDegS": 120,
   "sideslipDampingS": 0.5,
