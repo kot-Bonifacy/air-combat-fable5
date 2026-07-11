@@ -2128,10 +2128,8 @@ function updateHud(frameDtS: number): void {
  *  uczestników (lewy górny róg, `RosterOverlay`); redundancja usunięta na życzenie usera. */
 function hudExtraLines(): string[] {
   const lines: string[] = [''];
-  // przypomnienie klawiszy walki (WEP/klapy) — dublet onboardingu „Jak grać" (życzenie usera):
-  // gracz ma je pod ręką bez otwierania pomocy; pełna klawiszologia dalej w lobby, wiersz „ster"
-  // pokazuje status celowania.
-  lines.push(hudRow('klawisze', 'B — WEP  ·  F — klapy'));
+  // klawiszologia żyje w ekranie „Jak grać" (lobby); status celowania pokazuje już wiersz „ster".
+  // (HUD celowo BEZ instrukcji klawiszy WEP/klap — życzenie usera; status pokazują wiersze „gaz"/„klapy".)
   lines.push(hudRow('ping', String(displayedPingMs), 'ms'), fpsHudLine(fpsValue));
   return lines;
 }

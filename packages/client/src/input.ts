@@ -26,7 +26,6 @@ const CAPTURED_CODES = new Set([
   'KeyD',
   'KeyQ',
   'KeyE',
-  'KeyB',
   'KeyF',
   'ShiftLeft',
   'ControlLeft',
@@ -88,10 +87,12 @@ export class KeyboardInput {
     return this.axis(['KeyE'], ['KeyQ']);
   }
 
-  /** WEP / boost (fizyka v2 R2): przytrzymanie B = dopalacz. Serwer stosuje go tylko przy pełnym
-   *  gazie i gdy samolot ma WEP; klient wysyła surowy bit (echo w PilotCommand → spójny reconcile). */
+  /** WEP / boost (fizyka v2 R2): „detent" za pełnym gazem — przytrzymanie L.Shift, GDY gaz jest już
+   *  na 100%, włącza dopalacz (L.Shift dalej podnosi gaz; po osiągnięciu maksa dokłada WEP). Puszczenie
+   *  L.Shift gasi WEP, ale zostawia gaz na 100% (tylko L.Ctrl go zmniejsza). Serwer i tak niezależnie
+   *  bramkuje WEP progiem WEP_MIN_THROTTLE; klient wysyła surowy bit (echo w PilotCommand → reconcile). */
   get wepHeld(): boolean {
-    return this.held.has('KeyB');
+    return this.held.has('ShiftLeft') && this.throttle >= 1;
   }
 
   /** Klapy (fizyka v2 R3): true RAZ na każde świeże wciśnięcie F (zjada zbocze). Caller cyklicznie
