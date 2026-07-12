@@ -30,8 +30,69 @@ złote [Vmax SL/wys., stall, zakręt, roll] wszystkie ±5 %; komplet relacji §5
 Bf≥Spit; wznosz. SL klaster; pętla 250 sloty]; **czas do 6000 m** hist. tylko dla Bf [433 s], Spit/Zero
 optymistyczne [345/375 vs 420/447] — udokumentowane ograniczenie point-mass [η śmigła stałe]; zakręt Zero
 15 s fallback utrwalony; spawn/instruktor/boty **bez zmian** [koperta G/roll nietknięta]; raport baseline→v2
-wypełniony; 763 testy; **BEZ protokołu — v10, czysto shared/JSON**; szczegóły „Wynik R4"), **R5 ⏳**
-(pełny E2E §8.3 × 3 samoloty + checklist WT RB §5.5 + doszlif + `docs/fizyka-lotu.md`).
+wypełniony; 763 testy; **BEZ protokołu — v10, czysto shared/JSON**; szczegóły „Wynik R4"), **R5 ✅**
+(weryfikacja E2E + handoff; **BEZ zmian kodu produkcyjnego** — pomiary nie ujawniły rozbieżności, decyzja
+usera „tylko sterowane danymi” → brak danych do zmiany = brak zmiany; 763 testy/typecheck/lint zielone;
+siatka E2E §8.3 skonsolidowana z R0–R4 [roll <2 % ćwiczy cały pipeline → uogólnia się; pkt rate-sterowane
+3/4/5/6 na poziomie B, bo open-loop degeneruje w CFIT i pkt 3 wymaga pointer-locka]; **MCP chrome-devtools
+odpadł w trakcie R5** → świeży 9-pkt sweep Bf/Zero do osobnej krótkiej sesji [poziom B je pokrywa]; sonda
+`propEffectRates` §6.5 poziom-B potwierdziła magnitudy [3,5°/s yaw na szczycie pętli, 0 ≥200 km/h] → BEZ
+zmiany; checklist §5.5 7/7 odhaczony [mechanizmy zmierzone]; poprawki instruktora/HUD **brak** [HUD ma
+komplet ostrzeżeń]; `docs/fizyka-lotu.md` §5.2/§5.3/**nowa §13** [formuły v2]; ankieta playtestowa usera
+w „Wynik R5"; **PROJEKT FIZYKA v2 domknięty po stronie kodu/docs — pozostaje playtest usera + smoke v10 na
+produkcji**). ⏳ user: playtest czucia 3 samolotów (ankieta 8 pkt w „Wynik R5") + deploy front+back RAZEM (v10).
+
+**WEP odczuwalny — sztuczne podkręcenie + fix HUD Zera 2026-07-12 (zgłoszenie usera, 763 testy zielone,
+BEZ protokołu — v10, czysto shared/JSON + klient):** user: WEP nic nie robi — Zero bez napisu „WEP", brak
+różnicy w dźwięku, brak wzrostu prędkości i szybszego grzania. Diagnoza sondą: boost 10–12% dawał tylko
++~4% Vmax (nieodczuwalne), τ grzania ~460 s (Spit) = igła prawie stoi, silnik gra tylko z `throttle` (WEP
+przy 100% gazu = zero różnicy audio). **Decyzje usera (AskUserQuestion):** (1) **Zero ZOSTAJE bez WEP**
+(`wepBoostFrac=0`, Sakae bez overboostu) — zamiast tego fix mylącego HUD; (2) **grzanie: długi zapas
+(locki 300/60 s), tylko mocniejszy wskaźnik**. **ODKRYCIE (przeciwintuicyjne):** model wywodzi τ z
+`wepTimeToRedlineS`, więc PODNIESIENIE `wepHeatMul` daje WOLNIEJSZY wskaźnik — OBNIŻENIE (bliżej redline)
+daje szybszy, a lock 300/60 s zostaje. Zmiany JSON: Spit `wepBoostFrac` 0.12→**0.24** (Vmax SL 463→**500**,
++37 km/h/+8%) + `wepHeatMul` 1.7→**1.4**; Bf 0.10→**0.22** (473→**509**, +36 km/h) + 1.9→**1.6**. Audio
+(`voices.ts`): `EngineVoice.update(...,wep)` przewija ton +0.12/×1.12 — słyszalny kop dopalacza, tylko
+WŁASNY samolot (`predictor.sim.state.wepActive`; WEP nie jedzie w snapshocie obcych). HUD (`hud.ts`):
+`HudData.wepCapable`+`wepRequested` (=trzyma L.Shift na pełnym gazie); aktywny WEP bursztynowy, a dla Zera
+„bez WEP" (wyszarzone) TYLKO gdy gracz trzyma L.Shift (nie stale przy 100% gazie — znika po puszczeniu →
+uczy, że nie warto trzymać).
+**Pre-existing bug (NIE mój):** `maneuvers.test.ts:187` TS18048 `'last' possibly undefined` istniał na
+czystym HEAD `c58dc36` (cache tsc go maskował) → naprawiony guardem. Knoby strojalne bez kodu.
+**NIEZACOMMITOWANE.** ⏳ user: playtest czucia WEP (prędkość „nieco"? dźwięk? igła temp.?) + deploy v10.
+
+**Nowy poziom botów „as" (b.trudny) 2026-07-12 (życzenie usera, 780 testów zielonych, BEZ protokołu — v10,
+addytywne JSON lobby, deploy front+back RAZEM):** klucz `'as'` DOPISANY NA KOŃCU `DIFFICULTY_LEVELS`
+(etykieta UI też „as" — decyzja usera, zamiast wcześniejszego „b. trudny"); selektory lobby/per-bot łapią
+go automatycznie (iterują listę). WSZYSTKIE nowe zachowania = knoby liczbowe per poziom w `difficulty.json`
+z konwencją **0 = wyłączone** (`optNum`) → łatwy/normalny/trudny BITOWO nietknięte (decyzja usera:
+antykolizja TYLKO as). Zachowania asa (`bot.ts`, nowy opcjonalny param `situation {enemies, traffic}`):
+(1) **separacja antykolizyjna** `separationRangeM=70` — CPA w horyzoncie 3 s od WSZYSTKICH samolotów
+(`collectBotTraffic` = też sojusznicy; leczy „sklejanie skrzydłami" dwóch goniących); ATAKOWANY cel tylko
+twarda bańka ×1,2 (pełne CPA psułoby strzał z wyprzedzeniem); składowa ⊥ do aim, po degradacji, POD ziemią;
+(2) **unik czołówki** `headOnAvoidRangeM=800` — offset **PIONOWY dominujący** (PUŁAPKA: czysto boczny dał
+21 m minięcia, bo beczka do 90° przy 450+ km/h trwa sekundy; pull działa od razu; aim W DÓŁ poza stożkiem
+pushover ODWRACA samolot → tylko w górę) + bias boczny „w swoje prawo" dekoreluje dwa asy; bez ognia w
+czołówce; histereza strony/wyjścia (closure<0 / cel odwrócił nos); test: minięcie >40 m vs <20 m u trudnego;
+(3) **check-six** `checkSixRangeM=800` (user zszedł z 1100) — skan WSZYSTKICH wrogów (nie tylko celu) → `BotPerception.rearThreat`
+→ FSM evade; zryw od NAJGROŹNIEJSZEGO (scratchThreatPos), nie od celu; domyka ślepą plamę „wróg wchodzi na
+ogon, gdy gonię kogoś innego"; (4) **WEP non-stop** `useWep=1` — ZMIANA DECYZJI usera w trakcie sesji
+(pierwotnie dyscyplina cieplna z histerezą — USUNIĘTA): as jedzie na WEP ZAWSZE przy pełnym gazie, silnik
+się „nie przegrzewa", bo boty są immune na obrażenia z przegrzania (stepOverheatDamage pomija isBot,
+2026-06-30); `BotControl.wep` → `stepBot` bramkuje jak input gracza (`WEP_MIN_THROTTLE`+`wepBoostFrac>0`
+→ Zero no-op); (5) **prędkość bojowa per samolot** `rollAuthorityMinFrac=0.5` — autorytet lotek z
+ISTNIEJĄCEJ `rollRateCurve` (zero nowych parametrów samolotu): kąt do celu >26° i authority<0,5 szczytu →
+gaz 0,62 (Zero wychodzi z „betonu", Spit/Bf prawie nieodczuwalne — ich zapaść wyżej); (6) **zmienna obrona**
+`evadeVariety01=1` — losowy okres (0,7–2 s)/amplituda jinku per cykl + REWERS nożycowy (zagrożenie <220 m
+i closure >40 m/s → break W JEGO stronę); (7) **priorytet strefy** (życzenie usera: wróg dalej niż 1000 m →
+leć zajmować teren) — per-level `detectRangeM=1000`/`disengageRangeM=1400` przez **`effectiveTuning`**
+(nakłada override'y na wspólny tuning W KONSTRUKTORZE bota → FSM bez zmian czyta BotTuning); patrol już
+celuje w strefę (PATROL_WAYPOINTS); progi energii 230/360 km/h (wyżej ceni energię). Strzelecko „lepszy,
+ale ludzki" (decyzja usera): reakcja 0,1 s / błąd 0,3° / maxG 9 (G-LOC i tak ogranicza sustained) /
+`hitReactionDelayS` 0,35. Testy: `bot-ace.test.ts` (10, każdy zestawia asa z „trudnym" jako kontrolą
+nietkniętych poziomów), FSM rearThreat, loader+effectiveTuning, serwerowy WEP w pełnym `room.step`.
+**NIEZACOMMITOWANE** (razem z sesją „WEP odczuwalny" wyżej). ⏳ user: playtest asa (czołówki? sklejanie się?
+ogon? WEP-przewaga zbyt brutalna?) + deploy v10.
 
 | #     | Temat                                                                 | Stan / uwaga |
 | ----- | --------------------------------------------------------------------- | ------------ |

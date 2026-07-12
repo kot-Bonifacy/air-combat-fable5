@@ -49,6 +49,25 @@
       "fireRangeM": 550,
       "fireConeDeg": 4.0,
       "hitReactionDelayS": 0.5
+    },
+    "as": {
+      "reactionTimeS": 0.1,
+      "aimErrorDeg": 0.3,
+      "maxG": 9.0,
+      "throttle": 1.0,
+      "fireRangeM": 550,
+      "fireConeDeg": 4.5,
+      "hitReactionDelayS": 0.35,
+      "separationRangeM": 70,
+      "headOnAvoidRangeM": 800,
+      "checkSixRangeM": 800,
+      "useWep": 1,
+      "rollAuthorityMinFrac": 0.5,
+      "evadeVariety01": 1.0,
+      "detectRangeM": 1000,
+      "disengageRangeM": 1400,
+      "lowEnergyIasKmh": 230,
+      "recoveredEnergyIasKmh": 360
     }
   }
 }

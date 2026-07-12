@@ -3,6 +3,7 @@ import { primaryGroup } from '../combat/fire';
 import { createRng } from '../math/rng';
 import { getForward, getRight, getUp } from '../math/frame';
 import { Instructor, type PilotDemands } from '../instructor/instructor';
+import { maxRollRateRadS, peakRollRateRadS } from '../physics/envelope';
 import type { PlaneState } from '../physics/state';
 import type { PlaneConfig } from '../planes/loader';
 import { nearestToroidalImage, toroidalDistanceSqM } from '../world/arena';
@@ -13,8 +14,8 @@ import {
   type AirCombatGeometry,
 } from './geometry';
 import { createLeadSolution, solveLead, type LeadSolution } from './lead';
-import type { BotDifficulty, BotTuning } from './difficulty';
-import { nextBotState, type BotPerception, type BotStateName } from './fsm';
+import { effectiveTuning, type BotDifficulty, type BotTuning } from './difficulty';
+import { isThreatened, nextBotState, type BotPerception, type BotStateName } from './fsm';
 
 // Bot (faza-06.md): steruje samolotem WYŁĄCZNIE przez interfejs instruktora
 // (kierunek nosa + throttle + spust) — fizycznie nie umie więcej niż gracz
@@ -34,11 +35,25 @@ export interface BotEnvironment {
   surfaceHeightM: number;
 }
 
+/** Otoczenie taktyczne (poziom „as", 2026-07-12): pełne listy żywych stanów do skanu
+ *  zagrożeń i separacji. Opcjonalne — bez niego (stare testy, niższe poziomy z knobami 0)
+ *  bot zachowuje się jak dotąd. */
+export interface BotSituation {
+  /** Żywe stany WSZYSTKICH wrogów — check-six skanuje pełną listę, nie tylko najbliższego. */
+  enemies: readonly PlaneState[];
+  /** Żywe stany wszystkich INNYCH samolotów, TAKŻE sojuszników (separacja antykolizyjna). */
+  traffic: readonly PlaneState[];
+}
+
 /** Wynik ticku bota dla wołającego (poza wypełnionym PilotDemands). */
 export interface BotOutput {
   state: BotStateName;
   throttle: number;
   fire: boolean;
+  /** Zamiar użycia WEP (as: zawsze przy pełnym gazie, bez limitu cieplnego — boty są
+   *  immune na przegrzanie). Serwer bramkuje jak input gracza (pełny gaz + wepBoostFrac>0)
+   *  — Zero zostaje no-opem. */
+  wep: boolean;
 }
 
 /** Co ile sekund losowany jest nowy cel błądzenia celownika (szum). */
@@ -51,6 +66,28 @@ const ENGAGE_CLOSE_THROTTLE = 0.5;
 const MIN_CMD_ANGLE_RAD = 0.12;
 const MAX_CMD_ANGLE_RAD = 2.6;
 
+// --- stałe zachowań „asa" (2026-07-12; progi bramkowane knobami difficulty > 0) ---
+
+/** Horyzont predykcji punktu największego zbliżenia (CPA) separacji [s]. */
+const SEPARATION_HORIZON_S = 3;
+/** Wzmocnienie odchylenia kursu przez wektor uniku (atan(gain·u) ≈ kąt przy pełnej pilności). */
+const SEPARATION_GAIN = 2.5;
+/** Pilność separacji, powyżej której bot wstrzymuje ogień (unik ważniejszy niż strzał). */
+const SEPARATION_HOLD_FIRE_U = 0.45;
+/** Czołówka: oba nosy w tym stożku [rad] (~26°) i zbliżanie szybsze niż próg [m/s]. */
+const HEAD_ON_CONE_RAD = 0.45;
+const HEAD_ON_MIN_CLOSURE_MS = 120;
+/** Zamierzony dystans minięcia się w czołówce [m] (kąt offsetu = atan2(MISS, range) —
+ *  hojny, bo samolot dolatuje do offsetu z opóźnieniem regulatora i budowy G). */
+const HEAD_ON_MISS_M = 280;
+/** Kąt do celu, powyżej którego engage to walka MANEWROWA (redukcja gazu przy słabych lotkach). */
+const MANEUVER_ANGLE_RAD = 0.45;
+/** Gaz asa w ciasnej walce przy zdrewniałych lotkach (powrót do reżimu sterowności). */
+const MANEUVER_THROTTLE = 0.62;
+/** Nożyce (evade z variety): rewers breaku, gdy zagrożenie tuż za nami wciąż szybko się zbliża. */
+const SCISSORS_RANGE_M = 220;
+const SCISSORS_CLOSURE_MS = 40;
+
 const scratchSelfFwd = new Vector3();
 const scratchSelfUp = new Vector3();
 const scratchSelfRight = new Vector3();
@@ -60,6 +97,14 @@ const scratchLos = new Vector3();
 const scratchHoriz = new Vector3();
 const scratchRotAxis = new Vector3();
 const scratchQuat = new Quaternion();
+// bufory asa: skan zagrożeń (pozycja utrzymywana przez CAŁY tick — patrz steerEvade) i separacja
+const scratchThreatPos = new Vector3();
+const scratchEnemyPos = new Vector3();
+const scratchEnemyFwd = new Vector3();
+const scratchSepPos = new Vector3();
+const scratchSepRel = new Vector3();
+const scratchSepVel = new Vector3();
+const scratchSepAvoid = new Vector3();
 
 function clamp(x: number, lo: number, hi: number): number {
   return x < lo ? lo : x > hi ? hi : x;
@@ -101,8 +146,11 @@ export class Bot {
     aspectRad: Math.PI,
     iasMs: 0,
     criticalDamage: false,
+    rearThreat: false,
   };
   private readonly rng: () => number;
+  /** Tuning z per-poziomowymi override'ami (as: progi wykrycia/energii) — patrz effectiveTuning. */
+  private readonly tuning: BotTuning;
 
   state: BotStateName = 'patrol';
   /** Bufor celu nosa — jeden, sekwencyjne użycie w obrębie ticku (zero alokacji). */
@@ -121,14 +169,27 @@ export class Bot {
   private hitDelayRemainingS = 0;
   private hitBreakRemainingS = 0;
   private hitBreakSign: 1 | -1 = 1;
+  // --- stan asa ---
+  /** Skan check-six znalazł zagrożenie (pozycja w scratchThreatPos, metryki niżej). */
+  private hasScanThreat = false;
+  private scanThreatRangeM = 0;
+  private scanThreatClosureMs = 0;
+  /** Trwający unik czołówki: strona minięcia wylosowana raz na zbliżenie (bez dygotania). */
+  private headOnActive = false;
+  private headOnSide: 1 | -1 = 1;
+  /** Nieregularny jink asa (evadeVariety01>0): losowany okres/amplituda per cykl. */
+  private jinkPeriodS = 1;
+  private jinkAmpScale = 1;
+  private jinkResampleAtS = 0;
 
   constructor(
-    private readonly tuning: BotTuning,
+    tuning: BotTuning,
     private readonly difficulty: BotDifficulty,
     rngSeed: number,
     private readonly waypoints: readonly Vector3[] = [],
   ) {
     this.rng = createRng(rngSeed);
+    this.tuning = effectiveTuning(tuning, difficulty);
   }
 
   /** Po (re)spawnie: zeruje filtry, stan i celownik na bieżący nos. */
@@ -145,6 +206,9 @@ export class Bot {
     this.waypointIndex = 0;
     this.hitDelayRemainingS = 0;
     this.hitBreakRemainingS = 0;
+    this.hasScanThreat = false;
+    this.headOnActive = false;
+    this.jinkResampleAtS = 0;
   }
 
   /**
@@ -161,9 +225,11 @@ export class Bot {
 
   /**
    * Jeden tick decyzji. Wypełnia `outDemands` (do pilotStep) i zwraca
-   * {state, throttle, fire}. `target` = null albo martwy → patrol.
+   * {state, throttle, fire, wep}. `target` = null albo martwy → patrol.
    * `criticalDamage` (faza 22 cz.3): serwer sygnalizuje krytyczne uszkodzenia — bot przerywa walkę
    * i ucieka (FSM → extend). Domyślnie false (sprawny / wywołania testów bez uszkodzeń).
+   * `situation` (poziom „as", 2026-07-12): pełne listy wrogów (check-six) i ruchu (separacja);
+   * bez niej lub przy knobach 0 zachowanie jak dotąd.
    */
   update(
     self: PlaneState,
@@ -173,6 +239,7 @@ export class Bot {
     dtS: number,
     outDemands: PilotDemands,
     criticalDamage = false,
+    situation?: BotSituation,
   ): BotOutput {
     this.jinkTimeS += dtS;
     this.updateHitReaction(dtS);
@@ -217,8 +284,14 @@ export class Bot {
     // niezależne od celu — krytycznie uszkodzony bot ucieka także w patrolu (często trafiany bez
     // wypatrzenia napastnika); FSM bez celu i tak zwróci patrol, więc zaszkodzić nie może
     this.perception.criticalDamage = criticalDamage;
+    // check-six (as): najbliższy zagrażający wróg z PEŁNEJ listy (nie tylko bieżący cel) —
+    // domyka ślepą plamę „ktoś wchodzi mi na ogon, gdy gonię kogoś innego"
+    this.perception.rearThreat = this.scanRearThreat(self, situation);
 
     this.state = nextBotState(this.state, this.perception, this.tuning);
+    // unik czołówki żyje wyłącznie w engage — po zmianie stanu zaczynamy od czysta
+    // (stale true po powrocie do engage aplikowałoby offset w zwykłym pościgu)
+    if (this.state !== 'engage') this.headOnActive = false;
 
     // (1) sterowanie per stan → surowy kierunek nosa + throttle + zamiar ognia
     const aimDir = this.aimScratch;
@@ -228,18 +301,28 @@ export class Bot {
     if (hasTarget && target) {
       switch (this.state) {
         case 'engage': {
-          this.steerEngage(aimDir);
+          this.steerEngage(self, aimDir);
           throttle =
             this.geom.rangeM < this.tuning.minRangeM
               ? this.difficulty.throttle * ENGAGE_CLOSE_THROTTLE
               : this.difficulty.throttle;
-          fire = this.shouldFire();
+          throttle = this.applyManeuverThrottle(self, plane, throttle);
+          // w czołówce as nie naciska spustu (nos i tak schodzi z celu; strzał czołowy
+          // to zaproszenie do wymiany, której unik ma właśnie zapobiec)
+          fire = this.shouldFire() && !this.headOnActive;
           break;
         }
-        case 'evade':
-          this.steerEvade(self, scratchTargetPos, aimDir);
-          throttle = this.difficulty.throttle;
+        case 'evade': {
+          // zryw od NAJGROŹNIEJSZEGO: skan check-six mógł znaleźć bliższego/faktycznego
+          // napastnika, podczas gdy scratchTargetPos to tylko najbliższy wróg (cel)
+          if (this.hasScanThreat && (!isThreatened(this.perception, this.tuning) || this.scanThreatRangeM < this.geom.rangeM)) {
+            this.steerEvade(self, scratchThreatPos, this.scanThreatRangeM, this.scanThreatClosureMs, aimDir);
+          } else {
+            this.steerEvade(self, scratchTargetPos, this.geom.rangeM, this.geom.closureMs, aimDir);
+          }
+          throttle = this.applyManeuverThrottle(self, plane, this.difficulty.throttle);
           break;
+        }
         case 'extend':
           this.steerExtend(self, scratchTargetPos, aimDir);
           throttle = this.difficulty.throttle;
@@ -254,7 +337,7 @@ export class Bot {
       this.steerPatrol(self, aimDir);
     }
 
-    // (1b) zryw obronny po trafieniu (tylko poziom „trudny"): nadrzędny nad FSM, bo bot ma
+    // (1b) zryw obronny po trafieniu (poziomy z hitReactionDelayS>0): nadrzędny nad FSM, bo bot ma
     // zerwać NIEZALEŻNIE od tego, czy wypatrzył napastnika (często jest trafiany w patrolu,
     // gdzie hasTarget=false). Override ziemi niżej i tak go skoryguje, gdy zryw groziłby
     // wbiciem się w teren (kryterium użytkownika: zryw, chyba że oznaczałby uderzenie w ziemię).
@@ -269,6 +352,10 @@ export class Bot {
     this.applyReactionLag(aimDir, dtS);
     this.applyAimNoise(aimDir, dtS);
 
+    // (2b) separacja antykolizyjna asa: PO degradacji (precyzyjna, jak override ziemi — szum
+    // nie może jej rozmyć), PRZED ziemią (ziemia pozostaje nadrzędna nad wszystkim)
+    if (this.applySeparation(self, hasTarget ? target : null, situation, aimDir)) fire = false;
+
     // (3) override bezpieczeństwa (nadrzędny, precyzyjny). Granicy areny NIE ma
     // co pilnować — świat jest torusem, wyjście poza krawędź zawija na drugą stronę.
     const climbed = this.applyGroundAvoidance(self, env, aimDir);
@@ -278,7 +365,7 @@ export class Bot {
     }
 
     this.instructor.update(self, plane, aimDir, dtS, outDemands);
-    return { state: this.state, throttle, fire };
+    return { state: this.state, throttle, fire, wep: this.updateWep(throttle) };
   }
 
   // --- sterowanie per stan (zapis do `aim`, świat, jednostkowy) ---
@@ -301,22 +388,86 @@ export class Bot {
     aim.normalize();
   }
 
-  private steerEngage(aim: Vector3): void {
+  private steerEngage(self: PlaneState, aim: Vector3): void {
     // wyprzedzenie (lead.aimDir fallbackuje do LOS gdy cel ucieka szybciej niż pocisk)
     aim.copy(this.lead.aimDir);
+
+    // unik czołówki (as, headOnAvoidRangeM>0): oba nosy na siebie + szybkie zbliżanie =
+    // zamiast grać w cykora, celuj OBOK celu (minięcie się bokiem ~HEAD_ON_MISS_M) i po
+    // minięciu wracaj do pościgu. Strona wybierana raz na zbliżenie (bez dygotania);
+    // offset psuje rozwiązanie ognia → shouldFire sam wygasza strzał czołowy.
+    const hoRange = this.difficulty.headOnAvoidRangeM;
+    if (hoRange <= 0) return;
+    const g = this.geom;
+    const headOnNow =
+      g.rangeM < hoRange &&
+      g.closureMs > HEAD_ON_MIN_CLOSURE_MS &&
+      g.attackerOffBoresightRad < HEAD_ON_CONE_RAD &&
+      g.targetOffBoresightRad < HEAD_ON_CONE_RAD;
+    if (!this.headOnActive && headOnNow) {
+      this.headOnActive = true;
+      // minięcie po stronie, po której cel JUŻ jest względem nosa (pogłębiaj istniejący
+      // offset); idealnie na wprost → w prawo (lotnicze „prawo drogi", symetryczne dla obu)
+      scratchLos.subVectors(scratchTargetPos, self.position).normalize();
+      const lateral = scratchLos.dot(scratchSelfRight);
+      this.headOnSide = lateral > 0.05 ? -1 : 1;
+    } else if (this.headOnActive) {
+      // koniec uniku: minęliśmy się (dystans rośnie), zbliżenie zerwane albo cel odwrócił nos
+      // (przestał być czołowy → zwykły pościg); warunek celowo NIE używa attackerOffBoresight,
+      // bo własny offset go psuje i unik gasłby natychmiast
+      if (g.closureMs < 0 || g.rangeM > hoRange * 1.2 || g.targetOffBoresightRad > HEAD_ON_CONE_RAD * 1.5) {
+        this.headOnActive = false;
+      }
+    }
+    if (!this.headOnActive) return;
+    const offRad = clamp(Math.atan2(HEAD_ON_MISS_M, Math.max(g.rangeM, 50)), 0.2, 0.9);
+    scratchLos.subVectors(scratchTargetPos, self.position).normalize();
+    // offset PIONOWY (w górę) dominuje: pull działa od razu (cel nad nosem = zero błędu
+    // przechylenia → instruktor ciągnie pełne G), podczas gdy czysto boczny offset wymaga
+    // ~90° beczki, która przy IAS czołówki (450+ km/h) trwa sekundy. Bias boczny w SWOJE
+    // prawo dekoreluje dwa asy naprzeciw siebie (przeciwne strony świata — „prawo drogi").
+    const off = Math.tan(offRad);
+    aim
+      .copy(scratchLos)
+      .addScaledVector(scratchSelfUp, off)
+      .addScaledVector(scratchSelfRight, this.headOnSide * 0.5 * off)
+      .normalize();
   }
 
-  private steerEvade(self: PlaneState, targetPos: Vector3, aim: Vector3): void {
-    scratchLos.subVectors(targetPos, self.position);
+  private steerEvade(
+    self: PlaneState,
+    threatPos: Vector3,
+    threatRangeM: number,
+    threatClosureMs: number,
+    aim: Vector3,
+  ): void {
+    scratchLos.subVectors(threatPos, self.position);
     if (scratchLos.lengthSq() < 1e-6) scratchLos.copy(scratchSelfFwd);
     scratchLos.normalize();
     // zrywaj W STRONĘ przeciwną do zagrożenia (wymuszony overshoot przeciwnika)
     const lateral = scratchLos.dot(scratchSelfRight);
-    const breakSign = lateral >= 0 ? -1 : 1;
+    let breakSign = lateral >= 0 ? -1 : 1;
+    const variety = this.difficulty.evadeVariety01;
+    let jinkPhase = (2 * Math.PI * this.jinkTimeS) / this.tuning.evadeJinkPeriodS;
+    let jinkAmp = this.tuning.evadeJinkRad;
+    if (variety > 0) {
+      // nożyce: napastnik tuż za nami wciąż szybko się zbliża = zaraz przestrzeli —
+      // rewers W JEGO stronę wymusza overshoot zamiast uciekania po przewidywalnym łuku
+      if (threatRangeM < SCISSORS_RANGE_M && threatClosureMs > SCISSORS_CLOSURE_MS) {
+        breakSign = -breakSign;
+      }
+      // nieprzewidywalny jink: okres i amplituda losowane co cykl (przeciwnik nie może
+      // „nastroić się" na stały sinus); zegar jinkTimeS wspólny, resample po okresie
+      if (this.jinkTimeS >= this.jinkResampleAtS) {
+        this.jinkPeriodS = 0.7 + this.rng() * 1.3;
+        this.jinkAmpScale = 1 + (this.rng() * 2 - 1) * 0.5 * variety;
+        this.jinkResampleAtS = this.jinkTimeS + this.jinkPeriodS;
+      }
+      jinkPhase = (2 * Math.PI * this.jinkTimeS) / this.jinkPeriodS;
+      jinkAmp *= this.jinkAmpScale;
+    }
     const a = this.tuning.evadeBreakRad;
-    const jink =
-      this.tuning.evadeJinkRad *
-      Math.sin((2 * Math.PI * this.jinkTimeS) / this.tuning.evadeJinkPeriodS);
+    const jink = jinkAmp * Math.sin(jinkPhase);
     aim.copy(scratchSelfFwd).multiplyScalar(Math.cos(a));
     aim.addScaledVector(scratchSelfRight, breakSign * Math.sin(a));
     aim.addScaledVector(scratchSelfUp, Math.sin(jink));
@@ -364,6 +515,128 @@ export class Bot {
     aim.addScaledVector(scratchSelfUp, Math.sin(a));
     aim.addScaledVector(scratchSelfRight, this.hitBreakSign * Math.sin(a) * 0.25);
     aim.normalize();
+  }
+
+  // --- zachowania asa (knoby difficulty > 0; 2026-07-12) ---
+
+  /**
+   * Check-six: skan WSZYSTKICH wrogów pod kątem zagrożenia z tylnej półsfery — te same
+   * warunki kątowe co isThreatened (celuje we mnie + za moją linią 3-9), ale po pełnej
+   * liście i z własnym zasięgiem (checkSixRangeM). Wynik: pozycja NAJBLIŻSZEGO
+   * zagrażającego w scratchThreatPos + metryki do steerEvade/nożyc. Zwraca flagę do FSM.
+   */
+  private scanRearThreat(self: PlaneState, situation?: BotSituation): boolean {
+    this.hasScanThreat = false;
+    const rangeLimit = this.difficulty.checkSixRangeM;
+    if (rangeLimit <= 0 || !situation) return false;
+    let bestD = rangeLimit;
+    for (const e of situation.enemies) {
+      if (e.life !== 'alive') continue;
+      const pos = nearestToroidalImage(e.position, self.position, scratchEnemyPos);
+      scratchSepRel.subVectors(pos, self.position);
+      const d = scratchSepRel.length();
+      if (d < 1e-3 || d >= bestD) continue;
+      scratchSepRel.divideScalar(d); // LOS ja→wróg, jednostkowy
+      if (angleBetweenRad(scratchSelfFwd, scratchSepRel) < this.tuning.threatBehindRad) continue;
+      getForward(e.orientation, scratchEnemyFwd);
+      // celuje we mnie: kąt(jego nos, −LOS) = π − kąt(jego nos, LOS)
+      if (Math.PI - angleBetweenRad(scratchEnemyFwd, scratchSepRel) > this.tuning.threatConeRad) continue;
+      bestD = d;
+      this.hasScanThreat = true;
+      scratchThreatPos.copy(pos);
+      this.scanThreatRangeM = d;
+      // zbliżanie (+ = dystans maleje): −d|rel|/dt = −LOS·(v_wróg − v_ja)
+      scratchSepVel.subVectors(e.velocity, self.velocity);
+      this.scanThreatClosureMs = -scratchSepRel.dot(scratchSepVel);
+    }
+    return this.hasScanThreat;
+  }
+
+  /**
+   * Separacja antykolizyjna (separationRangeM>0): dla każdego samolotu w ruchu (też
+   * sojusznika) przewiduje punkt największego zbliżenia (CPA) w horyzoncie i odchyla kurs
+   * składową ⊥ do aim (unik nie hamuje lotu). Leczy „sklejanie się skrzydłami" dwóch botów
+   * goniących ten sam cel (zbieżne kursy na wspólny punkt wyprzedzenia). WYJĄTEK: atakowany
+   * cel reaguje tylko na twardą bańkę — pełne CPA psułoby strzał z wyprzedzeniem (lot na cel
+   * to zamierzone „zbliżenie"), a czołówkę z celem rozbraja wcześniej steerEngage.
+   * Zwraca true przy pilnym uniku (wołający wstrzymuje ogień).
+   */
+  private applySeparation(
+    self: PlaneState,
+    target: PlaneState | null,
+    situation: BotSituation | undefined,
+    aim: Vector3,
+  ): boolean {
+    const sep = this.difficulty.separationRangeM;
+    if (sep <= 0 || !situation) return false;
+    scratchSepAvoid.set(0, 0, 0);
+    let urgency = 0;
+    for (const other of situation.traffic) {
+      if (other === self || other.life !== 'alive') continue;
+      const pos = nearestToroidalImage(other.position, self.position, scratchSepPos);
+      scratchSepRel.subVectors(pos, self.position);
+      const d = scratchSepRel.length();
+      if (d < 1e-3) continue;
+      scratchSepVel.subVectors(other.velocity, self.velocity);
+      const vv = scratchSepVel.lengthSq();
+      let tCpa = vv > 1e-6 ? -scratchSepRel.dot(scratchSepVel) / vv : 0;
+      tCpa = clamp(tCpa, 0, SEPARATION_HORIZON_S);
+      const isTarget = other === target;
+      // bańka twarda (bieżący dystans) — dla celu jedyne kryterium (patrz nagłówek)
+      const bubbleM = isTarget ? sep * 1.2 : sep;
+      let u: number;
+      if (d < bubbleM) {
+        u = 1 - d / bubbleM;
+        scratchSepRel.divideScalar(d); // od intruza TERAZ
+      } else if (!isTarget) {
+        scratchSepRel.addScaledVector(scratchSepVel, tCpa); // pozycja względna przy CPA
+        const dCpa = scratchSepRel.length();
+        if (dCpa >= sep || dCpa < 1e-3) continue;
+        // pilność rośnie, im ciaśniejsze minięcie i im bliżej w czasie
+        u = (1 - dCpa / sep) * (0.35 + 0.65 * (1 - tCpa / SEPARATION_HORIZON_S));
+        scratchSepRel.divideScalar(dCpa);
+      } else {
+        continue;
+      }
+      scratchSepAvoid.addScaledVector(scratchSepRel, -u); // odpychanie
+      if (u > urgency) urgency = u;
+    }
+    if (urgency <= 0) return false;
+    // tylko składowa ⊥ do aim: unik odchyla kurs, nie „hamuje" celu nosa; unik dokładnie
+    // na wprost (składowa ⊥ znika) → w górę (od ziemi, override ziemi i tak pilnuje)
+    const along = scratchSepAvoid.dot(aim);
+    scratchSepAvoid.addScaledVector(aim, -along);
+    if (scratchSepAvoid.lengthSq() < 1e-8) scratchSepAvoid.copy(scratchSelfUp);
+    scratchSepAvoid.normalize();
+    aim.addScaledVector(scratchSepAvoid, SEPARATION_GAIN * urgency).normalize();
+    return urgency > SEPARATION_HOLD_FIRE_U;
+  }
+
+  /**
+   * Prędkość bojowa per samolot (rollAuthorityMinFrac>0): w walce MANEWROWEJ (duży kąt do
+   * celu) przy zdrewniałych lotkach (autorytet = maxRoll(IAS)/szczyt krzywej poniżej progu)
+   * zejdź z gazu — wróć do reżimu sterowności. Wyprowadzone z rollRateCurve, bez nowych
+   * parametrów samolotu: Zero zwalnia z „betonu" >400 km/h, Spit/Bf prawie nieodczuwalne
+   * (ich zapaść zaczyna się dużo wyżej). Pościg prosty (mały kąt) = pełny gaz.
+   */
+  private applyManeuverThrottle(self: PlaneState, plane: PlaneConfig, throttle: number): number {
+    const minAuth = this.difficulty.rollAuthorityMinFrac;
+    if (minAuth <= 0) return throttle;
+    if (this.geom.attackerOffBoresightRad < MANEUVER_ANGLE_RAD) return throttle;
+    const peak = peakRollRateRadS(plane);
+    if (peak <= 1e-6) return throttle;
+    const authority = maxRollRateRadS(self.iasMs, plane) / peak;
+    return authority < minAuth ? Math.min(throttle, MANEUVER_THROTTLE) : throttle;
+  }
+
+  /**
+   * WEP asa (useWep>0): dopalacz ZAWSZE, gdy silnik na pełnym gazie — bez dyscypliny
+   * cieplnej (decyzja usera 2026-07-12: as lata na WEP bez limitu, a boty są immune na
+   * obrażenia z przegrzania — decyzja 2026-06-30, stepOverheatDamage pomija isBot).
+   * W patrolu gaz przelotowy (0.85) < 1 → WEP naturalnie zgaszony (jak bramka serwera).
+   */
+  private updateWep(throttle: number): boolean {
+    return this.difficulty.useWep > 0 && throttle >= 1;
   }
 
   /** Ogień: nos w stożku wokół PRAWDZIWEGO wyprzedzenia (bez szumu) i w zasięgu. */

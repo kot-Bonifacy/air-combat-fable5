@@ -68,6 +68,7 @@ import {
   updateFire,
   updateLifecycle,
   validatePlaneState,
+  WEP_MIN_THROTTLE,
   wrapToArena,
   isCriticalDamage,
   zoneLevels,
@@ -401,6 +402,9 @@ export class GameRoom {
   private readonly botManager = new BotManager();
   /** Scratch listy celów bota (żywe stany innych uczestników) — zero alokacji per decyzja. */
   private readonly botTargetScratch: PlaneState[] = [];
+  /** Ruch dla separacji asa: wszyscy INNI żywi, TAKŻE sojusznicy (osobny bufor, bo
+   *  botTargetScratch filtruje frakcję). */
+  private readonly botTrafficScratch: PlaneState[] = [];
   /** Scratch listy żywych, nietykalnych encji do testu kolizji (faza 15) — zero alokacji per tick. */
   private readonly collisionScratch: ServerPlayer[] = [];
 
@@ -1419,9 +1423,16 @@ export class GameRoom {
           player.demands,
           dtS * BOT_THINK_INTERVAL,
           critical,
+          this.collectBotTraffic(player),
         );
       }
-      state.throttle = this.botManager.controlOf(player.id).throttle;
+      const control = this.botManager.controlOf(player.id);
+      state.throttle = control.throttle;
+      // WEP bota (poziom „as"): ta sama bramka co input gracza (piloted-plane.ts) — pełny gaz
+      // + samolot z WEP; Zero (wepBoostFrac=0) zostaje no-opem. wepActive nie jedzie w
+      // snapshocie (jak u graczy), więc czysto serwerowe.
+      state.wepActive =
+        control.wep && state.throttle >= WEP_MIN_THROTTLE && player.plane.wepBoostFrac > 0;
       pilotStep(player.sim, player.plane, player.demands, dtS);
       wrapToArena(state.position, scratchBotWrap);
       validatePlaneState(state, `serwer ${this.code}: bot ${String(player.id)}`);
@@ -1455,6 +1466,17 @@ export class GameRoom {
       this.botTargetScratch.push(p.sim.state);
     }
     return this.botTargetScratch;
+  }
+
+  /** Żywe stany WSZYSTKICH innych (też sojuszników) — separacja antykolizyjna asa
+   *  (dwóch botów w pościgu za tym samym celem nie może się „skleić skrzydłami"). */
+  private collectBotTraffic(self: ServerPlayer): readonly PlaneState[] {
+    this.botTrafficScratch.length = 0;
+    for (const p of this.players.values()) {
+      if (p === self || p.sim.state.life !== 'alive') continue;
+      this.botTrafficScratch.push(p.sim.state);
+    }
+    return this.botTrafficScratch;
   }
 
   /** Krok kontroli ognia: spust z inputu (gracz) albo z decyzji AI (bot); rewind lag-comp, event MUZZLE. */

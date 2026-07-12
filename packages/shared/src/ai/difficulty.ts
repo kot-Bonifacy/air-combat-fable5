@@ -60,7 +60,10 @@ export interface BotTuning {
   hitReactionDurationS: number;
 }
 
-/** Degradacja per poziom trudności (SI). */
+/** Degradacja per poziom trudności (SI). Pola „asa" (poziom `as`, 2026-07-12) są knobami
+ *  liczbowymi z konwencją 0 = zachowanie wyłączone / użyj wspólnego tuning — dzięki temu
+ *  niższe poziomy pozostają BITOWO identyczne z dotychczasowymi (decyzja usera: antykolizja
+ *  i cała świadomość sytuacyjna TYLKO na b.trudnym). */
 export interface BotDifficulty {
   /** Stała czasowa opóźnienia reakcji / wodzenia celownika [s]. */
   reactionTimeS: number;
@@ -75,13 +78,66 @@ export interface BotDifficulty {
   /** Stożek otwarcia ognia [rad]: nos musi być w nim względem rozwiązania wyprzedzenia. */
   fireConeRad: number;
   /** Opóźnienie zrywu obronnego po otrzymaniu trafienia [s]; 0 = poziom nie reaguje na ostrzał
-   *  (tylko „trudny" jink-uje po trafieniu — niższe poziomy lecą prosto). */
+   *  (tylko „trudny"+ jink-uje po trafieniu — niższe poziomy lecą prosto). */
   hitReactionDelayS: number;
+  /** Bańka separacji od KAŻDEGO samolotu (też sojusznika) [m]; 0 = brak antykolizji.
+   *  Bot przewiduje punkt największego zbliżenia (CPA) i odchyla kurs — leczy „sklejanie
+   *  się skrzydłami" dwóch botów goniących ten sam cel. */
+  separationRangeM: number;
+  /** Dystans, poniżej którego przy geometrii czołowej bot robi boczny offset zamiast celować
+   *  w przeciwnika [m]; 0 = gra w cykora jak dotąd (unikanie czołówek — tylko as). */
+  headOnAvoidRangeM: number;
+  /** Zasięg skanu zagrożeń z tylnej półsfery po WSZYSTKICH wrogach (nie tylko bieżącym celu)
+   *  [m]; 0 = bot widzi zagrożenie wyłącznie od swojego celu (jak dotąd). */
+  checkSixRangeM: number;
+  /** WEP bota: >0 = dopalacz ZAWSZE przy pełnym gazie (decyzja usera 2026-07-12 — as lata
+   *  na WEP bez limitu; boty są immune na obrażenia z przegrzania, decyzja 2026-06-30);
+   *  0 = bot nigdy nie włącza WEP. */
+  useWep: number;
+  /** Minimalny autorytet lotek (maxRoll(IAS)/szczyt krzywej), poniżej którego bot w walce
+   *  MANEWROWEJ redukuje gaz (prędkość bojowa per samolot — Zero zwalnia z „betonu",
+   *  Spit/Bf prawie nieodczuwalne); 0 = pełny gaz zawsze. */
+  rollAuthorityMinFrac: number;
+  /** Nieprzewidywalność obrony 0..1: losowe okresy/amplitudy jinku + rewers (nożyce) przy
+   *  przestrzeleniu wroga; 0 = stary regularny sinus. */
+  evadeVariety01: number;
+  /** Override tuning.detectRangeM [m]; 0 = wspólny. As: 1000 m — wróg dalej → patrol,
+   *  czyli lot do strefy (priorytet zajmowania terenu, decyzja usera 2026-07-12). */
+  detectRangeM: number;
+  /** Override tuning.disengageRangeM [m]; 0 = wspólny (histereza > detect). */
+  disengageRangeM: number;
+  /** Override tuning.lowEnergyIasMs [m/s]; 0 = wspólny (as wyżej ceni energię). */
+  lowEnergyIasMs: number;
+  /** Override tuning.recoveredEnergyIasMs [m/s]; 0 = wspólny. */
+  recoveredEnergyIasMs: number;
 }
 
-export type DifficultyLevel = 'latwy' | 'normalny' | 'trudny';
+export type DifficultyLevel = 'latwy' | 'normalny' | 'trudny' | 'as';
 
-export const DIFFICULTY_LEVELS: readonly DifficultyLevel[] = ['latwy', 'normalny', 'trudny'];
+export const DIFFICULTY_LEVELS: readonly DifficultyLevel[] = ['latwy', 'normalny', 'trudny', 'as'];
+
+/**
+ * Wspólny tuning z nałożonymi per-poziomowymi override'ami (pola > 0). FSM czyta wyłącznie
+ * BotTuning, więc poziomowe progi wykrycia/energii wchodzą tą ścieżką bez zmian w fsm.ts.
+ * Bez override'ów zwraca oryginał (zero alokacji dla łatwy/normalny/trudny).
+ */
+export function effectiveTuning(tuning: BotTuning, d: BotDifficulty): BotTuning {
+  if (
+    d.detectRangeM <= 0 &&
+    d.disengageRangeM <= 0 &&
+    d.lowEnergyIasMs <= 0 &&
+    d.recoveredEnergyIasMs <= 0
+  ) {
+    return tuning;
+  }
+  return {
+    ...tuning,
+    detectRangeM: d.detectRangeM > 0 ? d.detectRangeM : tuning.detectRangeM,
+    disengageRangeM: d.disengageRangeM > 0 ? d.disengageRangeM : tuning.disengageRangeM,
+    lowEnergyIasMs: d.lowEnergyIasMs > 0 ? d.lowEnergyIasMs : tuning.lowEnergyIasMs,
+    recoveredEnergyIasMs: d.recoveredEnergyIasMs > 0 ? d.recoveredEnergyIasMs : tuning.recoveredEnergyIasMs,
+  };
+}
 
 export interface BotConfig {
   tuning: BotTuning;
@@ -123,6 +179,17 @@ const LEVEL_RANGES: Record<string, readonly [min: number, max: number]> = {
   fireRangeM: [100, 1000],
   fireConeDeg: [0.5, 20],
   hitReactionDelayS: [0, 3],
+  // knoby „asa" — wszystkie z konwencją 0 = wyłączone / użyj tuning
+  separationRangeM: [0, 500],
+  headOnAvoidRangeM: [0, 2000],
+  checkSixRangeM: [0, 3000],
+  useWep: [0, 1],
+  rollAuthorityMinFrac: [0, 1],
+  evadeVariety01: [0, 1],
+  detectRangeM: [0, 10000],
+  disengageRangeM: [0, 12000],
+  lowEnergyIasKmh: [0, 500],
+  recoveredEnergyIasKmh: [0, 700],
 };
 
 function num(obj: Record<string, unknown>, key: string, prefix: string, problems: string[]): number {
@@ -225,6 +292,16 @@ export function loadBotConfig(raw: unknown, source = 'difficulty.json'): BotConf
       fireRangeM: num(l, 'fireRangeM', prefix, problems),
       fireConeRad: num(l, 'fireConeDeg', prefix, problems) * DEG_TO_RAD,
       hitReactionDelayS: optNum(l, 'hitReactionDelayS', prefix, problems, 0),
+      separationRangeM: optNum(l, 'separationRangeM', prefix, problems, 0),
+      headOnAvoidRangeM: optNum(l, 'headOnAvoidRangeM', prefix, problems, 0),
+      checkSixRangeM: optNum(l, 'checkSixRangeM', prefix, problems, 0),
+      useWep: optNum(l, 'useWep', prefix, problems, 0),
+      rollAuthorityMinFrac: optNum(l, 'rollAuthorityMinFrac', prefix, problems, 0),
+      evadeVariety01: optNum(l, 'evadeVariety01', prefix, problems, 0),
+      detectRangeM: optNum(l, 'detectRangeM', prefix, problems, 0),
+      disengageRangeM: optNum(l, 'disengageRangeM', prefix, problems, 0),
+      lowEnergyIasMs: optNum(l, 'lowEnergyIasKmh', prefix, problems, 0) * KMH_TO_MS,
+      recoveredEnergyIasMs: optNum(l, 'recoveredEnergyIasKmh', prefix, problems, 0) * KMH_TO_MS,
     };
   }
 

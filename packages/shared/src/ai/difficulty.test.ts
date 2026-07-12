@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AiConfigError } from '../errors';
-import { BOT_CONFIG, DIFFICULTY_LEVELS, loadBotConfig } from './difficulty';
+import { BOT_CONFIG, DIFFICULTY_LEVELS, effectiveTuning, loadBotConfig } from './difficulty';
 
 function validTuning(): Record<string, unknown> {
   return {
@@ -36,7 +36,7 @@ function validLevel(): Record<string, unknown> {
 function validRaw(): Record<string, unknown> {
   return {
     tuning: validTuning(),
-    levels: { latwy: validLevel(), normalny: validLevel(), trudny: validLevel() },
+    levels: { latwy: validLevel(), normalny: validLevel(), trudny: validLevel(), as: validLevel() },
   };
 }
 
@@ -79,5 +79,57 @@ describe('loadBotConfig', () => {
     const bad = validRaw();
     delete (bad['levels'] as Record<string, unknown>)['trudny'];
     expect(() => loadBotConfig(bad)).toThrow(AiConfigError);
+  });
+
+  it('poziom bez knobów asa dostaje 0 (wyłączone) — zgodność wstecz', () => {
+    const cfg = loadBotConfig(validRaw());
+    expect(cfg.levels.normalny.separationRangeM).toBe(0);
+    expect(cfg.levels.normalny.checkSixRangeM).toBe(0);
+    expect(cfg.levels.normalny.useWep).toBe(0);
+    expect(cfg.levels.normalny.detectRangeM).toBe(0);
+  });
+
+  it('BOT_CONFIG: tylko „as" ma włączone zachowania asa; as strzelecko lepszy od trudnego', () => {
+    for (const lvl of ['latwy', 'normalny', 'trudny'] as const) {
+      expect(BOT_CONFIG.levels[lvl].separationRangeM).toBe(0);
+      expect(BOT_CONFIG.levels[lvl].headOnAvoidRangeM).toBe(0);
+      expect(BOT_CONFIG.levels[lvl].checkSixRangeM).toBe(0);
+      expect(BOT_CONFIG.levels[lvl].useWep).toBe(0);
+      expect(BOT_CONFIG.levels[lvl].evadeVariety01).toBe(0);
+    }
+    const as = BOT_CONFIG.levels.as;
+    expect(as.separationRangeM).toBeGreaterThan(0);
+    expect(as.headOnAvoidRangeM).toBeGreaterThan(0);
+    expect(as.checkSixRangeM).toBeGreaterThan(0);
+    expect(as.useWep).toBeGreaterThan(0);
+    expect(as.rollAuthorityMinFrac).toBeGreaterThan(0);
+    expect(as.aimErrorRad).toBeLessThan(BOT_CONFIG.levels.trudny.aimErrorRad);
+    expect(as.reactionTimeS).toBeLessThan(BOT_CONFIG.levels.trudny.reactionTimeS);
+    // priorytet strefy (user 2026-07-12): wróg dalej niż 1000 m → patrol = lot do strefy
+    expect(as.detectRangeM).toBe(1000);
+    expect(as.disengageRangeM).toBeGreaterThan(as.detectRangeM); // histereza
+  });
+
+  it('odrzuca knob asa poza zakresem sanity', () => {
+    const bad = validRaw();
+    (bad['levels'] as { as: Record<string, unknown> }).as['useWep'] = 1.5;
+    expect(() => loadBotConfig(bad)).toThrow(AiConfigError);
+  });
+});
+
+describe('effectiveTuning', () => {
+  it('bez override zwraca oryginał (ta sama referencja — zero alokacji)', () => {
+    expect(effectiveTuning(BOT_CONFIG.tuning, BOT_CONFIG.levels.trudny)).toBe(BOT_CONFIG.tuning);
+  });
+
+  it('as nadpisuje progi wykrycia i energii, resztę tuning zostawia', () => {
+    const eff = effectiveTuning(BOT_CONFIG.tuning, BOT_CONFIG.levels.as);
+    expect(eff).not.toBe(BOT_CONFIG.tuning);
+    expect(eff.detectRangeM).toBe(BOT_CONFIG.levels.as.detectRangeM);
+    expect(eff.disengageRangeM).toBe(BOT_CONFIG.levels.as.disengageRangeM);
+    expect(eff.lowEnergyIasMs).toBeCloseTo(BOT_CONFIG.levels.as.lowEnergyIasMs, 9);
+    expect(eff.recoveredEnergyIasMs).toBeCloseTo(BOT_CONFIG.levels.as.recoveredEnergyIasMs, 9);
+    expect(eff.threatRangeM).toBe(BOT_CONFIG.tuning.threatRangeM);
+    expect(eff.cruiseThrottle).toBe(BOT_CONFIG.tuning.cruiseThrottle);
   });
 });

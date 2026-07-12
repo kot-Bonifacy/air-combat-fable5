@@ -14,6 +14,7 @@ function p(over: Partial<BotPerception> = {}): BotPerception {
     aspectRad: 0,
     iasMs: 120,
     criticalDamage: false,
+    rearThreat: false,
     ...over,
   };
 }
@@ -55,6 +56,15 @@ describe('przejścia FSM', () => {
     expect(nextBotState('engage', threat(), t)).toBe('evade');
     expect(nextBotState('patrol', threat(), t)).toBe('evade');
     expect(nextBotState('extend', threat(), t)).toBe('evade');
+  });
+
+  it('rearThreat (check-six asa) → evade, choć BIEŻĄCY cel nie zagraża', () => {
+    // percepcja celu ofensywna (cel przede mną, na szóstej) — zagrożenie zgłasza skan innego wroga
+    const six = p({ rearThreat: true });
+    expect(isThreatened(six, t)).toBe(false); // predykat celu nadal spokojny
+    expect(nextBotState('engage', six, t)).toBe('evade');
+    expect(nextBotState('patrol', six, t)).toBe('evade');
+    expect(nextBotState('extend', six, t)).toBe('evade');
   });
 
   it('krytyczne uszkodzenia → extend (ucieczka) z każdego stanu, mimo dobrej pozycji', () => {

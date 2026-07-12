@@ -74,6 +74,8 @@ const BOT_NAMES_SET = new Set(BOT_NAMES);
 export interface BotControl {
   throttle: number;
   fire: boolean;
+  /** Zamiar WEP (poziom „as"): pokój bramkuje jak input gracza (pełny gaz + wepBoostFrac>0). */
+  wep: boolean;
 }
 
 interface BotRuntime {
@@ -81,7 +83,7 @@ interface BotRuntime {
   readonly control: BotControl;
 }
 
-const NO_CONTROL: BotControl = { throttle: BOT_CONFIG.tuning.cruiseThrottle, fire: false };
+const NO_CONTROL: BotControl = { throttle: BOT_CONFIG.tuning.cruiseThrottle, fire: false, wep: false };
 
 export class BotManager {
   private readonly runtimes = new Map<number, BotRuntime>();
@@ -120,7 +122,10 @@ export class BotManager {
   /** Tworzy kontroler AI dla istniejącej już encji pokoju. */
   add(id: number, difficulty: DifficultyLevel, seed: number): void {
     const bot = new Bot(BOT_CONFIG.tuning, BOT_CONFIG.levels[difficulty], seed, PATROL_WAYPOINTS);
-    this.runtimes.set(id, { bot, control: { throttle: BOT_CONFIG.tuning.cruiseThrottle, fire: false } });
+    this.runtimes.set(id, {
+      bot,
+      control: { throttle: BOT_CONFIG.tuning.cruiseThrottle, fire: false, wep: false },
+    });
   }
 
   remove(id: number): void {
@@ -133,7 +138,10 @@ export class BotManager {
   setDifficulty(id: number, difficulty: DifficultyLevel, seed: number): void {
     if (!this.runtimes.has(id)) return;
     const bot = new Bot(BOT_CONFIG.tuning, BOT_CONFIG.levels[difficulty], seed, PATROL_WAYPOINTS);
-    this.runtimes.set(id, { bot, control: { throttle: BOT_CONFIG.tuning.cruiseThrottle, fire: false } });
+    this.runtimes.set(id, {
+      bot,
+      control: { throttle: BOT_CONFIG.tuning.cruiseThrottle, fire: false, wep: false },
+    });
   }
 
   /** Po (re)spawnie: zeruje filtry kontrolera i celownik na bieżący nos, gasi spust. */
@@ -143,6 +151,7 @@ export class BotManager {
     rt.bot.reset(state);
     rt.control.throttle = BOT_CONFIG.tuning.cruiseThrottle;
     rt.control.fire = false;
+    rt.control.wep = false;
   }
 
   /** Bieżące sterowanie (powtarzane między decyzjami). Brak kontrolera → neutralne. */
@@ -158,7 +167,9 @@ export class BotManager {
   /**
    * Jedna DECYZJA bota (wołać co BOT_THINK_INTERVAL ticków): geometria + FSM + sterowanie
    * + degradacja + unikanie ziemi → wypełnia `demands` (do pilotStep) i zapamiętuje
-   * throttle/fire. `candidates` = żywe stany INNYCH uczestników (FFA: każdy poza tym botem).
+   * throttle/fire/wep. `candidates` = żywe stany WROGÓW (FFA: każdy poza tym botem).
+   * `traffic` (poziom „as", 2026-07-12) = żywe stany WSZYSTKICH innych, też sojuszników —
+   * separacja antykolizyjna; pusta lista/undefined = bez separacji (stare wywołania testów).
    * `dtS` to czas, który UPŁYNĄŁ od ostatniej decyzji (= fixedDt × interwał), żeby filtry
    * czasowe (reakcja, szum, jink) szły zgodnie z realnym tempem decyzji. `criticalDamage` (faza 22
    * cz.3) sygnalizuje krytyczne uszkodzenia — bot przerywa walkę i ucieka.
@@ -172,6 +183,7 @@ export class BotManager {
     demands: PilotDemands,
     dtS: number,
     criticalDamage = false,
+    traffic: readonly PlaneState[] = candidates,
   ): void {
     const rt = this.runtimes.get(id);
     if (!rt) return;
@@ -184,8 +196,18 @@ export class BotManager {
       GROUND_LOOKAHEAD_M,
     );
     const target = selectNearestTarget(self.position, candidates, SPOT_RANGE_M);
-    const out = rt.bot.update(self, plane, target, { surfaceHeightM: surf }, dtS, demands, criticalDamage);
+    const out = rt.bot.update(
+      self,
+      plane,
+      target,
+      { surfaceHeightM: surf },
+      dtS,
+      demands,
+      criticalDamage,
+      { enemies: candidates, traffic },
+    );
     rt.control.throttle = out.throttle;
     rt.control.fire = out.fire;
+    rt.control.wep = out.wep;
   }
 }

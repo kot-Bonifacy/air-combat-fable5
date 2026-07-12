@@ -208,6 +208,32 @@ describe('serwer — boty jako encje pokoju (faza 12)', () => {
   });
 });
 
+describe('serwer — bot „as" na WEP (2026-07-12)', () => {
+  /** Bot goni gracza 600 m przed sobą (engage = pełny gaz). As zgłasza WEP → stepBot
+   *  ustawia state.wepActive tą samą bramką co input gracza; trudny nie zna WEP. */
+  function wepInChase(difficulty: 'as' | 'trudny'): boolean {
+    const room = new GameRoom('ABCD');
+    const human = addHuman(room);
+    const botId = room.addBot(difficulty, 'spitfire'); // Spitfire: wepBoostFrac > 0
+    room.start();
+    const bot = room.snapshotEntities().find((e) => e.id === botId)!.state;
+    bot.position.set(0, 3000, 0);
+    bot.orientation.identity(); // nos +Z — prosto na cel
+    bot.velocity.set(0, 0, 130);
+    bot.iasMs = 130;
+    for (let i = 0; i < 30; i++) {
+      repose(room, human, [0, 3000, 600]); // cel ucieka ogonem do bota (pościg, nie czołówka)
+      room.step(FIXED_DT_S);
+    }
+    return bot.wepActive;
+  }
+
+  it('as w pościgu jedzie na WEP (wepActive), trudny nigdy', () => {
+    expect(wepInChase('as')).toBe(true);
+    expect(wepInChase('trudny')).toBe(false);
+  });
+});
+
 describe('serwer — wydajność botów (faza-12.md: 1 gracz + 7 botów < 50% budżetu ticku)', () => {
   it('1 gracz + 7 botów: 10 s symulacji mieści się w budżecie czasu ticku', () => {
     const room = new GameRoom('ABCD');

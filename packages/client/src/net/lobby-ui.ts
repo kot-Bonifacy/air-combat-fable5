@@ -26,6 +26,7 @@ const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   latwy: 'łatwy',
   normalny: 'normalny',
   trudny: 'trudny',
+  as: 'as', // b.trudny — najlepszy pilot (nazwa „as" wybrana przez usera 2026-07-12)
 };
 
 /** Wartość sentinel selektora modelu nowego bota = „Losowy" (host nie wymusza typu → serwer losuje
@@ -188,8 +189,6 @@ export class LobbyUI {
     this.entry = el('div', 'lobby-screen lobby-entry');
     const title = el('div', 'lobby-title');
     title.textContent = 'AIR COMBAT — DOGFIGHT';
-    const sub = el('div', 'lobby-sub');
-    sub.textContent = 'Spitfire Mk II vs Bf 109 E — multiplayer';
 
     const nickRow = el('div', 'lobby-row');
     const nickLabel = el('label', 'lobby-label');
@@ -230,7 +229,6 @@ export class LobbyUI {
 
     this.entry.append(
       title,
-      sub,
       nickRow,
       this.openGameBox,
       createBtn,
@@ -288,7 +286,7 @@ export class LobbyUI {
     this.waitModeSelect = selectEl(
       'lobby-select lobby-select-mode',
       MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-      'team', // domyślnie drużynowy (życzenie usera 2026-06-22); i tak nadpisywany view.mode
+      'ffa', // domyślnie FFA (życzenie usera 2026-07-12); i tak nadpisywany view.mode dla hosta
     );
     const settingsBotLabel = el('label', 'lobby-label');
     settingsBotLabel.textContent = 'Boty';

@@ -29,6 +29,10 @@ export interface BotPerception {
   /** Krytyczne uszkodzenia (faza 22 cz.3): bot przerywa walkę i ucieka (silnik/ogień/skrzydło).
    *  Liczone przez serwer ze stanu uszkodzeń (boty są serwerowe — bez predykcji klienta). */
   criticalDamage: boolean;
+  /** Zagrożenie z tylnej półsfery od INNEGO wroga niż bieżący cel (skan check-six asa,
+   *  poziom `as` 2026-07-12). isThreatened widzi tylko cel — to pole domyka ślepą plamę
+   *  „wróg wchodzi mi na ogon, gdy gonię kogoś innego". Niższe poziomy: zawsze false. */
+  rearThreat: boolean;
 }
 
 /** Czy cel jest na moim ogonie (zagrożenie wymuszające evade). */
@@ -57,7 +61,9 @@ export function nextBotState(
   t: BotTuning,
 ): BotStateName {
   if (!p.hasTarget) return 'patrol';
-  if (isThreatened(p, t)) return 'evade';
+  // rearThreat (as): zagrożenie od wroga innego niż cel jest równie pilne jak od celu —
+  // ta sama gałąź evade (sterowanie w bot.ts zrywa od pozycji NAJGROŹNIEJSZEGO wroga)
+  if (isThreatened(p, t) || p.rearThreat) return 'evade';
   // krytyczne uszkodzenia (faza 22 cz.3): przerwij walkę i uciekaj — oddal się od wroga i zniżaj
   // (extend), zamiast dalej atakować. Po evade (gdy ktoś siedzi na ogonie), bo ostry break ratuje
   // skuteczniej; gdy nikt nie zagraża — extend wyprowadza z walki. Nadrzędne nad histerezą stanów
