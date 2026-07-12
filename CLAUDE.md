@@ -94,6 +94,19 @@ nietkniętych poziomów), FSM rearThreat, loader+effectiveTuning, serwerowy WEP 
 **NIEZACOMMITOWANE** (razem z sesją „WEP odczuwalny" wyżej). ⏳ user: playtest asa (czołówki? sklejanie się?
 ogon? WEP-przewaga zbyt brutalna?) + deploy v10.
 
+**Nick obserwowanego + horyzont Sperry F3 2026-07-12 (2 zgłoszenia usera, 780 testów zielonych, BEZ
+protokołu — v10, czysto klienckie):** (1) alert obserwatora pokazuje „OBSERWUJESZ: <nick>"
+(`currentSpectateId()`+`playerName` w pętli renderu `online-main.ts`). (2) Sztuczny horyzont = epokowy
+instrument: SVG „Sperry F3 artificial horizon" (Wikimedia, **CC BY-SA 4.0**, Flappiefh) rozcięty skryptem
+na `assets/hud/horizon-face.svg` (statyczna obudowa: bezel/skala banku/wskaźnik/szkło; w korpusie
+`path4475` wycięty otwór tarczy maską — w oryginale zasłaniała go karta) i `horizon-card.svg` (ruchoma
+karta: półkola+drabinka pitch+DIVE/CLIMB, dołożone wielkie prostokąty tła, żeby obrót/pitch nie odsłaniał
+krawędzi). Decyzje usera: gotowy asset CC (nie ręczny SVG), jeden styl dla wszystkich, powiększony
+(instrument 180 px, okno tarczy 112 px; geometria w komentarzu CSS `index.html`). `hud.ts` BEZ zmian (ten
+sam transform na `#horizon-disc`, teraz `<img>`); atrybucja LICENSES.md + lobby (ShareAlike obejmuje
+pochodne SVG, nie kod gry). Weryfikacja rasteryzacją sharp (poziom + bank 30°+pitch). **NIEZACOMMITOWANE**
+(razem z „WEP odczuwalny" i botami „as"). ⏳ user: weryfikacja wzrokowa horyzontu w grze + nick obserwatora.
+
 | #     | Temat                                                                 | Stan / uwaga |
 | ----- | --------------------------------------------------------------------- | ------------ |
 | 0–6   | Fundament: monorepo, fizyka lotu, świat, broń, bot AI                 | ✅ grywalny dogfight SP |

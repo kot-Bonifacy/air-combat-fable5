@@ -102,41 +102,40 @@
         color: #fa3;
         text-shadow: 0 0 8px rgba(255, 170, 50, 0.7);
       }
-      /* sztuczny horyzont (faza 14) */
+      /* sztuczny horyzont — replika Sperry F3 (SVG Wikimedia CC BY-SA 4.0, Flappiefh):
+         ruchoma karta (horizon-card) pod statyczną obudową (horizon-face). Geometria
+         instrumentu: viewBox 230.22×225.54, oś tarczy (115.11, 115.11), promień 71.91;
+         wszystkie px poniżej = te jednostki × skala 0.78185 (szerokość 180 px). */
       #horizon {
         position: fixed;
         right: 24px;
         bottom: 24px;
-        width: 110px;
-        height: 110px;
-        border-radius: 50%;
-        overflow: hidden;
-        border: 2px solid rgba(200, 220, 240, 0.5);
+        width: 180px;
+        height: 176px;
         pointer-events: none;
         display: none;
       }
-      #horizon-disc {
+      #horizon-window {
         position: absolute;
-        left: -55px;
-        top: -55px;
-        width: 220px;
-        height: 220px;
-        background: linear-gradient(
-          to bottom,
-          #2a5d8f 0%,
-          #2a5d8f 50%,
-          #6b4a2b 50%,
-          #6b4a2b 100%
-        );
+        left: 33.8px;
+        top: 33.8px;
+        width: 112.4px;
+        height: 112.4px;
+        border-radius: 50%;
+        overflow: hidden;
       }
-      #horizon::after {
-        content: '';
+      #horizon-disc {
+        /* karta 400 jednostek (312.7 px), środek w środku okna tarczy */
         position: absolute;
-        left: 15px;
-        right: 15px;
-        top: 50%;
-        height: 0;
-        border-top: 2px solid rgba(255, 240, 120, 0.95);
+        left: -100.1px;
+        top: -100.1px;
+        width: 312.7px;
+        height: 312.7px;
+      }
+      #horizon-face {
+        position: absolute;
+        inset: 0;
+        width: 100%;
       }
       /* HUD modułowych uszkodzeń: sylwetka samolotu + wskaźniki (faza 22 cz.4) */
       #damage-hud {
@@ -335,7 +334,10 @@
     <div id="nose-marker">+</div>
     <div id="stall-warning"></div>
     <div id="arena-alert"></div>
-    <div id="horizon"><div id="horizon-disc"></div></div>
+    <div id="horizon">
+      <div id="horizon-window"><img id="horizon-disc" src="/hud/horizon-card.svg" alt="" /></div>
+      <img id="horizon-face" src="/hud/horizon-face.svg" alt="" />
+    </div>
     <div id="hit-marker">✕</div>
     <div id="kill-feed"></div>
     <div id="damage-hud"></div>

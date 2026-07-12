@@ -1398,9 +1398,9 @@ function deathLabel(cause: KillCause | null, module: string | null = null): stri
 
 // --- lobby UI + sieć ---
 const lobby = new LobbyUI({
-  // „Załóż własną grę": pokój domyślnie DRUŻYNOWY (życzenie usera 2026-06-22) — host i tak może
-  // zmienić tryb/boty/poziom/samolot w poczekalni (jeden prosty ekran wejściowy)
-  onCreateRoom: () => withConnection((c) => c.createRoom(0, undefined, 'team')),
+  // „Załóż własną grę": pokój domyślnie FFA (życzenie usera 2026-07-12 — FFA jest popularniejszy) —
+  // host i tak może zmienić tryb/boty/poziom/samolot w poczekalni (jeden prosty ekran wejściowy)
+  onCreateRoom: () => withConnection((c) => c.createRoom(0, undefined, 'ffa')),
   onJoinRoom: (code) => withConnection((c) => c.joinRoom(code)),
   onStartMatch: () => net?.startMatch(),
   onLeaveRoom: () => {
@@ -2332,7 +2332,10 @@ function updateHudOverlays(): void {
   // alert pełnoekranowy: obserwator / wrak (środek czysty — sterowanie + nakładka) / zestrzelony
   // (P1: brak respawnu — overlay daje obserwatora/wyjście) > ostrzeżenie o granicy (tylko żywy gracz)
   if (playerDeath === 'spectating') {
-    alertEl.textContent = spectatableCount() > 1 ? 'OBSERWUJESZ   [LPM] zmień samolot' : 'OBSERWUJESZ';
+    // nick obserwowanego (zgł. usera 2026-07-12: przy przełączaniu nie było widać kogo się ogląda)
+    const specId = currentSpectateId();
+    const who = specId !== null ? `OBSERWUJESZ: ${playerName(specId)}` : 'OBSERWUJESZ';
+    alertEl.textContent = spectatableCount() > 1 ? `${who}   [LPM] zmień samolot` : who;
     alertEl.className = 'crash';
     alertEl.style.opacity = '1';
   } else if (wreck) {

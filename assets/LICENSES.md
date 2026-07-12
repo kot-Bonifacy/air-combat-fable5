@@ -85,3 +85,16 @@ wejściowym lobby (wymóg CC-BY przy publicznym deployu).
 
 Atrybucje CC-BY audio należy pokazać też na ekranie wejściowym lobby (jak modele) — do dopięcia
 przy najbliższej zmianie UI lobby (na razie udokumentowane tu).
+
+**`hud/horizon-face.svg` + `hud/horizon-card.svg`** — sztuczny horyzont HUD (replika Sperry F3,
+rozcięta na warstwę statyczną obudowy i ruchomą kartę; sesja 2026-07-12):
+
+> This work is a derivative of "Sperry F3 artificial horizon"
+> (https://commons.wikimedia.org/wiki/File:Sperry_F3_artificial_horizon.svg)
+> by Flappiefh, licensed under CC BY-SA 4.0
+> (https://creativecommons.org/licenses/by-sa/4.0/).
+> Modifications: split into static face and movable card layers, oversized sky/ground
+> background added to the card. The derived SVGs are likewise CC BY-SA 4.0.
+
+Atrybucja widoczna też na ekranie wejściowym lobby (wymóg BY przy publicznym deployu);
+ShareAlike obejmuje pochodne PLIKI SVG (są pod tą samą licencją), nie kod gry.

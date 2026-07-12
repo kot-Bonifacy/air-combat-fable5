@@ -807,6 +807,9 @@ function attributionEl(): HTMLDivElement {
   wrap.append(link('Fight2FlyPhoto', 'https://freesound.org/people/Fight2FlyPhoto/'));
   wrap.append(document.createTextNode(', '));
   wrap.append(link('juskiddink', 'https://freesound.org/people/juskiddink/'));
+  wrap.append(document.createTextNode('. Sztuczny horyzont: „Sperry F3 artificial horizon" — '));
+  wrap.append(link('Flappiefh', 'https://commons.wikimedia.org/wiki/File:Sperry_F3_artificial_horizon.svg'));
+  wrap.append(document.createTextNode(' (Wikimedia Commons, CC BY-SA 4.0, zmodyfikowany)'));
   return wrap;
 }
 
