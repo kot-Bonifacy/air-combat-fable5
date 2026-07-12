@@ -10,7 +10,7 @@
   "clMax": 1.85,
   "clAlphaPerRad": 5.0,
   "enginePowerW": 977000,
-  "wepBoostFrac": 0.12,
+  "wepBoostFrac": 0.24,
   "fullThrottleHeightM": 3400,
   "powerCurve": [
     [0, 0.79],
@@ -31,7 +31,7 @@
     "wepTimeToRedlineS": 300,
     "coolTimeS": 200,
     "militaryEqHeat": 0.75,
-    "wepHeatMul": 1.7,
+    "wepHeatMul": 1.4,
     "speedCoolingK": 0.35,
     "speedCoolingRefKmh": 350,
     "overheatDamagePerS": 2.5,

@@ -14,6 +14,10 @@ const ENGINE_RATE_FULL = 1.34; // przy pełnym gazie
 const ENGINE_GAIN_IDLE = 0.3;
 const ENGINE_GAIN_FULL = 0.92;
 const ENGINE_TAU_S = 0.18; // wygładzanie zmian obrotów (bez „zipper noise")
+// WEP (dopalacz, fizyka v2 R2): słyszalne sprzężenie włączenia — silnik „przewija się" ponad 100 %.
+// Bez tego pętla gra identycznie jak na 100 % gazu (WEP przy pełnym gazie → zero różnicy dźwięku, zgł. usera).
+const ENGINE_WEP_RATE_BOOST = 0.12; // wyższy ton pętli na WEP (obroty/śmigło ponad 100 %)
+const ENGINE_WEP_GAIN_BOOST = 1.12; // i nieco głośniej (napór dopalacza)
 // Per-model wzmocnienie głośności silnika — wyrównuje percepcyjną energię różnych nagrań źródłowych.
 // Sample Spitfire'a to STAŁY run silnika tłokowego (CC-BY 614788, Piper engine test) — wybrany za płaską
 // obwiednię. Historia (user 2026-06-24): „P51 supercharger" 110736 = PRZELOT → „przelatujący samolot z
@@ -111,13 +115,19 @@ export class EngineVoice {
     this.gainMul = ENGINE_GAIN_MUL[plane];
   }
 
-  /** `active` = żywy samolot z pracującym silnikiem (paliwo). Martwy/wrak → wyciszenie. */
-  update(dtS: number, throttle: number, speedMs: number, active: boolean): void {
+  /** `active` = żywy samolot z pracującym silnikiem (paliwo). Martwy/wrak → wyciszenie.
+   *  `wep` = dopalacz aktywny (tylko własny samolot — WEP nie jedzie w snapshocie, obcy grają bez boostu). */
+  update(dtS: number, throttle: number, speedMs: number, active: boolean, wep = false): void {
     if (active) this.loop.start();
     // RPM-proxy: głównie gaz + drobny wkład prędkości (śmigło „rozkręcone" w nurkowaniu)
     const rpm = Math.min(1, Math.max(0, 0.1 + 0.82 * throttle + 0.0006 * speedMs));
-    const targetRate = ENGINE_RATE_IDLE + (ENGINE_RATE_FULL - ENGINE_RATE_IDLE) * rpm;
-    const targetGain = active ? (ENGINE_GAIN_IDLE + (ENGINE_GAIN_FULL - ENGINE_GAIN_IDLE) * throttle) * this.gainMul : 0;
+    // WEP przewija ton wyżej i podbija głośność — słyszalny „kop" dopalacza przy pełnym gazie
+    const wepRateBoost = wep ? ENGINE_WEP_RATE_BOOST : 0;
+    const wepGainMul = wep ? ENGINE_WEP_GAIN_BOOST : 1;
+    const targetRate = ENGINE_RATE_IDLE + (ENGINE_RATE_FULL - ENGINE_RATE_IDLE) * rpm + wepRateBoost;
+    const targetGain = active
+      ? (ENGINE_GAIN_IDLE + (ENGINE_GAIN_FULL - ENGINE_GAIN_IDLE) * throttle) * this.gainMul * wepGainMul
+      : 0;
     const k = smoothK(dtS, ENGINE_TAU_S);
     this.rate += (targetRate - this.rate) * k;
     this.gain += (targetGain - this.gain) * k;

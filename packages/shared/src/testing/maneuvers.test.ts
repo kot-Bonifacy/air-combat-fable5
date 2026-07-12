@@ -184,6 +184,7 @@ describe.each(TARGETS)('złote testy osiągów — $label', (t) => {
 describe('przeciągnięcie z klapami (§6.4 / §5.1)', () => {
   const fullFlap = (p: PlaneConfig): PlaneConfig => {
     const last = p.flaps.positions[p.flaps.positions.length - 1];
+    if (!last) throw new Error(`${p.name}: brak pozycji klap`); // noUncheckedIndexedAccess: pusty zestaw niemożliwy (loader wymaga ≥1)
     return { ...p, clMax: p.clMax + last.clMaxAdd };
   };
 

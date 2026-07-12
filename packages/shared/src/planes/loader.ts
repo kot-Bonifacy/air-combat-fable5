@@ -410,7 +410,8 @@ const NUMERIC_RANGES: Record<NumericKey, readonly [min: number, max: number]> = 
   clMax: [0.5, 5],
   clAlphaPerRad: [1, 10],
   enginePowerW: [10_000, 100_000_000],
-  wepBoostFrac: [0, 0.5], // 0 = brak WEP (Zero); myśliwiec z boostem ~0.1–0.15 (+12 lb vs +9 lb)
+  wepBoostFrac: [0, 0.5], // 0 = brak WEP (Zero — Sakae bez overboostu); historycznie ~0.1–0.15 (+12 vs +9 lb),
+  // ale gameplayowo podniesione do ~0.22–0.24 (2026-07-12), by boost był ODCZUWALNY (+~37 km/h ≈ +8% Vmax; zgł. usera)
   fullThrottleHeightM: [0, 20_000],
   propEfficiency: [0.1, 1],
   staticThrustN: [100, 10_000_000],

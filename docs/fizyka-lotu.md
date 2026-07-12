@@ -78,13 +78,28 @@ Każda siła ma własną funkcję `(state, plane) => Vector3` i własną strzał
     buffet/przeciągnięciu): nośna siedzi na Cl_max, ale strugi się odrywają i opór skacze.
     Liczony z `clRequired` (nieobciętego), nadwyżka nasycana do Cl_max (skrzydło w pełni
     oderwane → Cd plateau + strażnik NaN przy q→0).
+  - `Cd_ctrl = ctrlDragK.aileron · δa + ctrlDragK.rudder · δr` — **opór manewrowy sterów**
+    (v2 R1, §6.1 rekalibracji): wychylenie lotek/steru kosztuje energię. `δa = |roll po
+    kopercie| / szczyt krzywej rolla` (REALNE wychylenie — sztywnienie lotek samo redukuje
+    δa przy dużej IAS, więc Zero „betonem lotek" nie płaci podwójnie), `δr` znormalizowane
+    jak w `keyboardDemands`. Rząd: pełna lotka ≈ +15–25 % Cd0 (3 beczki z 400 km/h zjadają
+    ~40–60 km/h IAS). Dodawany do biegunowej w `dragForce(..., cdExtra)`; `pilotStep` liczy
+    `ctrlCd` z `rollClamped`, nie z `angularRates.roll` (tam siedzi wing-drop/damage bias).
 - `D = q · S · Cd` przeciwnie do `v̂`.
 - Opcjonalnie (faza 3, jeśli nurkowania będą „za bezpieczne"): narost Cd0 powyżej
   ~0.65 Ma (uproszczone ściśliwości) — daje historyczny limit prędkości nurkowania.
 
 ### 5.3 Ciąg
-- Moc silnika: `P(h) = P0` do wysokości pełnej mocy sprężarki `h_fth`, powyżej `P0 · ρ(h)/ρ(h_fth)`.
+- Moc silnika: `P(h) = P0` do wysokości pełnej mocy sprężarki `h_fth`, powyżej `P0 · ρ(h)/ρ(h_fth)`
+  (prosty model — FALLBACK, gdy JSON nie ma `powerCurve`).
+- **Krzywa mocy `powerCurve` (v2 R4, §6.6):** odcinkowa `[[hM, frac]…]` (interpolacja liniowa,
+  jak `rollRateCurve`) zastępuje prosty model tam, gdzie istnieje: `P(h) = P0 · frac(h)`. Rozprzęga
+  Vmax SL od Vmax na wysokości (prosty model sprzęgał oba jednym knobem `h_fth` → „hojne SL").
+  Kalibracja per silnik: niższy `frac` przy SL, szczyt przy wysokości krytycznej, stroma zapaść
+  wyżej. `P0` = moc **bojowa** (przelotowa); WEP dokłada osobno (§13.2).
 - `T = min(T_static, η · P(h) · throttle / max(V, V_eps))` — clamp statyczny usuwa osobliwość przy V→0.
+  `η` (sprawność śmigła) STAŁE 0,8 — brak modelu spadku η z wysokością to udokumentowane
+  ograniczenie point-mass (D1): czas do 6000 m optymistyczny dla Spit/Zero (§6.6 rekalibracji).
 - Kierunek: `getForward(orientation)`.
 
 ### 5.4 Grawitacja
@@ -281,3 +296,53 @@ Morgan & Morris BA 1640). Kolumna Bf 109 E-3 do rewizji źródłowej w fazie 14.
 3. Nagraj 30 s rejestratorem → wykresy: co dokładnie się dzieje z V/h/n w momencie problemu?
 4. Odtwórz problem jako test w harness (zadany stan początkowy + input) → debuguj bez renderera.
 5. Dopiero potem zmieniaj parametry — pojedynczo, z notatką w memory.
+
+## 13. Rozszerzenia realistyczne v2 (rekalibracja R1–R4)
+
+Formuły nowych członów fizyki dodanych w rekalibracji „duch War Thunder RB" (pełny plan,
+cele liczbowe i decyzje: **`docs/fizyka-v2-rekalibracja.md`** — dokument NADRZĘDNY §6). Wszystkie
+knoby w JSON (niezmiennik nr 3), liczone w `shared` (klient predykuje, serwer autorytatywny).
+Człony translacji (opór sterów §5.2, krzywa mocy §5.3) opisane przy odpowiednich siłach.
+
+### 13.1 Autorytet steru wysokości vs IAS (R1, §6.2 rekal.)
+- Krzywa `pitchAuthorityCurve(IAS)` (jak `rollRateCurve`) → `frac ∈ (0,1]` skalujący ŻĄDANE n
+  **przed** kopertą (6.1), G-LOC (6.6) i maszyną przeciągnięcia (6.5): `nCapHi = max(1, n_max·frac)`,
+  `nCapLo = min(−1, n_min·frac)`, `n_demand ← clamp(n_demand, nCapLo, nCapHi)`.
+- Efekt WT: przy 650–700 km/h ster fizycznie nie wyrwie 8 G, tylko np. 3–5 G — promień wyrwania
+  rośnie, over-pull przy dużej IAS NIE sięga nawet buffetu. Cap @650 km/h: Spit ~5,3 G > Bf 3,8 > Zero 2,1.
+- Strażniki `max(1,·)`/`min(−1,·)` gwarantują lot poziomy (normalny i odwrócony) przy każdym IAS.
+
+### 13.2 WEP / boost (R2, §6.3 rekal.) — protokół v10
+- Input binarny (bit `wep` w bajcie flag INPUT). `P_eff = P_mil · (1 + wepBoostFrac)` tylko przy
+  gazie ≥ `WEP_MIN_THROTTLE` (0,99) i `wepBoostFrac > 0`. `state.wepActive` = per-tick echo inputu
+  (bez akumulatora → reconcile-safe). Zero: `wepBoostFrac = 0` (Sakae 12 bez overboostu).
+- Limit czasowy przez ISTNIEJĄCĄ termikę (nie osobny timer): `militaryEqHeat < 1` (100 % mocy
+  bojowej OSIADA pod czerwoną linią = lot bez limitu), `wepHeatMul` wypycha `heatEq` ponad 1;
+  `τ` grzania wyprowadzana z `wepTimeToRedlineS` (Spit 5 min / Bf 1 min Notleistung).
+
+### 13.3 Vne / flutter (R2, §6.2 rekal.) — cause `'structure'`
+- Powyżej `vneKmh` (IAS) narasta obrażenie strukturalne stref skrzydeł
+  `flutterWingDamageHp ∝ max(0, IAS/Vne − 1) · flutterDamagePerS · dt`. **Serwer autorytatywnie**
+  (jak przegrzanie — tylko ludzie); oba skrzydła w 0 HP → `onStructureKill` (bez kredytu). Skutek
+  jedzie poziomami stref w snapshocie v8 → klient predykuje spójnie. `vneKmh`: Spit 720 / Bf 750 /
+  Zero **630** (kanoniczna kruchość). HUD: `vneWarning` (pierwszeństwo nad „lotki sztywne”) + buffet.
+
+### 13.4 Klapy (R3, §6.4 rekal.)
+- Pozycja klap = INPUT (2 bity w bajcie flag, rezerwa v10 → bez bumpu). `state.flapIndex` = echo
+  inputu (reconcile-safe). Aero ADDYTYWNIE do biegunowej: `FlapPosition{clMaxAdd, cd0Add, ripIasKmh}`
+  per pozycja (0 = oba 0, walidator pilnuje), dokładane w `effectivePlaneConfig`. Klawisz F cyklicznie.
+- **Urwanie = trwałe, wywodzone z POZIOMU uszkodzenia skrzydła** (`FLAP_DISABLE_WING_LEVEL = 2`) —
+  nie osobny ukryty stan (fałszywie zatrzasnąłby się przy replayu), lecz `flapsAvailable`/
+  `effectiveFlapIndex` z poziomów stref (te same liczby w snapshocie v8). Obrażenia urwania aplikuje
+  serwer (`stepFlapRipDamage`) — wysunięte klapy > `ripIasKmh` biją w oba skrzydła; poziom 2 →
+  `effectiveFlapIndex → 0`, obrażenia ustają (SAM się ogranicza). HUD: „klapy <nazwa>” / czerwone „URWANE”.
+
+### 13.5 Szczątkowe efekty śmigła (R3, §6.5 rekal.)
+- `factor = throttle · max(0, 1 − IAS/fadeKmh)²`; `biasYaw = yawBiasMaxRadS · factor`,
+  `biasRoll = rollBiasMaxRadS · factor` dodawane do `angularRates` PO koordynacji zakrętu, TYLKO
+  gdy `applyPropEffect = true` (gracz obie strony sieci; boty i harness FALSE → kotwice złote nietknięte).
+- Zanik KWADRATOWY do zera powyżej `fadeKmh` (200 km/h) → w locie bojowym efekt = 0 (odstępstwo §3
+  pkt 1: brak ciągłego trymu). Znak = kierunek obrotu śmigła (Merlin/Sakae ujemny → nos w lewo,
+  DB 601 dodatni). **Instruktor NIE kontruje** — gracz musi sterem/lotką. Magnitudy (gaz 1,0,
+  R5 poziom-B): ~3,5°/s yaw na szczycie pętli (~130 km/h, kontrowalne sterem 10°/s), > ster tylko
+  przy „wiszeniu na śmigle” (<50 km/h) = realistyczne departure.

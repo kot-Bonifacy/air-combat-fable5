@@ -43,6 +43,11 @@ export interface HudData {
   engineTempC: number;
   /** WEP (dopalacz, fizyka v2 R2) aktywny — HUD dopisuje znacznik „WEP" przy wierszu gazu. */
   wepActive: boolean;
+  /** Czy samolot MA WEP (Zero/Sakae: brak). Gdy false i gracz PRÓBUJE WEP → wyszarzone „bez WEP". */
+  wepCapable: boolean;
+  /** Czy gracz PRÓBUJE włączyć WEP (trzyma L.Shift na pełnym gazie). Dla samolotu bez WEP pokazuje „bez WEP"
+   *  TYLKO w tej chwili (nie stale przy 100% gazu) — uczy, że nie warto trzymać Shifta (zgł. usera). */
+  wepRequested: boolean;
   /** Etykieta pozycji klap (fizyka v2 R3): nazwa pozycji („pełne"/„bojowe") gdy wysunięte, „URWANE"
    *  gdy urwane od przeciążenia; undefined = schowane (wiersz „klapy" ukryty). */
   flapsLabel?: string;
@@ -204,6 +209,15 @@ export class Hud {
     const tempLine = hudRow('temp.', data.engineTempC.toFixed(0), '°C') + engineTempWarning(data.engineHeat01);
     const tempColor = engineTempColor(data.engineHeat01);
     const tempHtml = tempColor ? `<span style="color:${tempColor}">${escHtml(tempLine)}</span>` : escHtml(tempLine);
+    // wiersz gazu z markerem WEP: aktywny WEP na bursztynowo (pop = „dopalacz włączony"), a gdy samolot
+    // NIE ma WEP, a gracz PRÓBUJE go włączyć (trzyma L.Shift) — wyszarzone „bez WEP" TYLKO w tej chwili
+    // (nie stale przy 100% gazu), żeby gracz zrozumiał, że nie warto trzymać Shifta (Zero; zgł. usera)
+    const throttleBase = hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%');
+    const throttleHtml = data.wepActive
+      ? escHtml(throttleBase) + '<span style="color:#ffd24a">   WEP</span>'
+      : !data.wepCapable && data.wepRequested
+        ? escHtml(throttleBase) + '<span style="color:#6a7a86">   bez WEP</span>'
+        : escHtml(throttleBase);
     // wiersz klap (R3) — tylko gdy wysunięte lub urwane; „URWANE" na czerwono (utrata mechanizacji)
     const flapsTorn = data.flapsLabel === 'URWANE';
     const flapsHtml =
@@ -221,7 +235,7 @@ export class Hud {
       escHtml(hudRow('TAS', data.tasKmh.toFixed(0), 'km/h')),
       escHtml(hudRow('alt', data.altM.toFixed(0), 'm')),
       escHtml(hudRow('wznosz.', varioValue(data.verticalSpeedMs), 'm/s')),
-      escHtml(hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%') + (data.wepActive ? '   WEP' : '')),
+      throttleHtml,
       ...(flapsHtml !== null ? [flapsHtml] : []),
       tempHtml,
       escHtml(hudRow('paliwo', (data.fuel01 * 100).toFixed(0), '%') + fuelWarning(data.fuel01)),

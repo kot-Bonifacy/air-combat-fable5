@@ -2099,6 +2099,12 @@ function updateHud(frameDtS: number): void {
     engineTempC: engineDisplayTempC(localAlive ? s.engineHeatFrac : 0, localPlane.engineThermal),
     // WEP aktywny (dopalacz, fizyka v2 R2): wskaźnik „WEP" + ostrzeżenie o grzaniu; tylko w locie
     wepActive: localAlive && s.wepActive,
+    // czy samolot MA WEP (Zero/Sakae: wepBoostFrac=0 → brak). HUD pokazuje wyszarzone „bez WEP", ale tylko
+    // gdy gracz PRÓBUJE WEP (poniżej), żeby L.Shift nie sugerował dopalacza tam, gdzie go nie ma (zgł. usera)
+    wepCapable: localPlane.wepBoostFrac > 0,
+    // surowy sygnał „gracz trzyma L.Shift na pełnym gazie" (intencja WEP, niezależna od wepBoostFrac) —
+    // dla Zera steruje chwilowym „bez WEP" (znika po puszczeniu Shifta → gracz uczy się, że nie warto trzymać)
+    wepRequested: localAlive && keyboard.wepHeld,
     // klapy (fizyka v2 R3): nazwa pozycji / „URWANE"; undefined = schowane (wiersz ukryty)
     flapsLabel,
     // poziom ostrzeżenia Vne (0/1/2): zbliżanie → ostrzeżenie, przekroczenie → alarm „FLATTER — ZWOLNIJ"
@@ -2578,7 +2584,9 @@ renderer.setAnimationLoop(() => {
           const ea = ensureEntityAudio(id, plane, id === localId ? undefined : m.object);
           // paliwo gasi silnik tylko lokalnie (zdalnych nie ma w snapshocie — grają, póki żyją)
           const engineOn = id === localId ? predictor.sim.state.fuelFrac > 0.001 : true;
-          ea.engine.update(frameDtS, aThrottle, aSpeed, engineOn);
+          // WEP słyszalny tylko dla własnego samolotu (bit WEP nie jest w snapshocie obcych)
+          const wepOn = id === localId && predictor.sim.state.wepActive;
+          ea.engine.update(frameDtS, aThrottle, aSpeed, engineOn, wepOn);
           ea.gun.update(frameDtS, m.object.position);
         } else {
           disposeEntityAudio(id);

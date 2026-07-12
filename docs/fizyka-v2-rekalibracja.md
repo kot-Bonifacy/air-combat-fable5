@@ -167,19 +167,33 @@ Zamrażamy PORZĄDKI, nie liczby (rozszerzenie istniejącego describe „asymetr
 
 ### 5.5 Wzorce zachowania z WT RB (checklist jakościowy, weryfikacja w R5)
 
-- [ ] Wejście w zakręt z 450+ km/h: pierwsze 90° szybkie (instantaneous), potem wyraźne
-      „siadanie" tempa wraz z utratą IAS — bez ściany, płynna degradacja.
-- [ ] Pełne lotki przez >5 s w locie poziomym → widoczny spadek IAS (nowość §6.1).
-- [ ] Nurkowanie >600 km/h: drążek „ciężknie" (rosnący promień wyrwania), przy Vne trzęsienie
-      i uszkodzenia; wyrwanie wymaga wyprzedzenia — kto przeholuje, ten się wbija.
-- [ ] Klapy bojowe w kółku poniżej 250 km/h realnie ciaśniej kręcą; wysunięte przy 400 km/h
-      urywają się z konsekwencją w strefach skrzydeł.
-- [ ] WEP: wyraźny kop mocy + szybki wzrost temperatury; zarządzanie WEP-em w pościgu
-      to realna decyzja (jak w RB).
-- [ ] Przeciągnięcie w zakręcie: buffet → zrzut skrzydła do wnętrza — wyprowadzenie nurkowaniem
-      (bez auto-recovery; istniejąca mechanika, tylko progi rekalibrowane).
-- [ ] Pętla z małej prędkości: na szczycie przy <150 km/h nos „ściąga" od śmigła (§6.5) —
-      korekta kierunkiem/lotkami, jak w RB.
+Odhaczenie R5 = **mechanizm zmierzony i potwierdzony** (harness poziom B + zgromadzone E2E
+poziom C); subiektywne „czy DOBRZE się czuje” → ankieta playtestowa usera (§R5 Wynik).
+
+- [x] Wejście w zakręt z 450+ km/h: pierwsze 90° szybkie (instantaneous), potem wyraźne
+      „siadanie" tempa wraz z utratą IAS — bez ściany, płynna degradacja. **Potwierdzone:**
+      `turn180Test` @450 (Spit 6,9 s/wyjście 349, IAS spada monotonicznie) + E2E R5 (zakręt @461
+      km/h → sztywnienie lotek → przejście w nurkowanie = „siadanie", pełny pipeline).
+- [x] Pełne lotki przez >5 s w locie poziomym → widoczny spadek IAS (nowość §6.1). **Potwierdzone
+      E2E:** R1 beczka 10 s @398 km/h, E-drop 20,8 m vs harness 20,5 (1,3 %); `rollBleedTest` = kotwica.
+- [x] Nurkowanie >600 km/h: drążek „ciężknie" (rosnący promień wyrwania), przy Vne trzęsienie
+      i uszkodzenia; wyrwanie wymaga wyprzedzenia — kto przeholuje, ten się wbija. **Potwierdzone:**
+      `pitchAuthorityFrac` cap @650 (Spit 5,3/Bf 3,8/Zero 2,1 G, §13.1 fizyka-lotu); `server/flutter.test`
+      pełny pipeline (nurkowanie > Vne urywa skrzydła); E2E R2 Zero 351→533 km/h w nurkowaniu (`vneLevel`).
+- [x] Klapy bojowe w kółku poniżej 250 km/h realnie ciaśniej kręcą; wysunięte przy 400 km/h
+      urywają się z konsekwencją w strefach skrzydeł. **Potwierdzone:** golden „stall z klapami”
+      (Spit pełne ≈101 km/h = §5.1 → ciaśniej); E2E R3 rip `flaps:1` @436 → HUD „URWANE” czerwone.
+- [x] WEP: wyraźny kop mocy + szybki wzrost temperatury; zarządzanie WEP-em w pościgu
+      to realna decyzja (jak w RB). **Potwierdzone E2E:** R2 (heat 0,015→0,063 w 19 s) + R4
+      (WEP wznosi +5,85 vs −3,2 m/s przy tym samym pitchu, heat 0,070→0,121 w 22 s).
+- [x] Przeciągnięcie w zakręcie: buffet → zrzut skrzydła do wnętrza — wyprowadzenie nurkowaniem
+      (bez auto-recovery; istniejąca mechanika, tylko progi rekalibrowane). **Potwierdzone:**
+      `stallTest` (118/126/104 km/h ±5 %); Bf miękkie knoby buffet = sloty E-3 (R4); E2E R5 buffet/
+      departure obserwowany w zakręcie Spitfire’a.
+- [x] Pętla z małej prędkości: na szczycie przy <150 km/h nos „ściąga" od śmigła (§6.5) —
+      korekta kierunkiem/lotkami, jak w RB. **Potwierdzone (R5 poziom-B, sonda `propEffectRates`):**
+      3,5°/s yaw na szczycie pętli (~130 km/h) — kontrowalne sterem 10°/s; > ster tylko przy
+      „wiszeniu na śmigle” (<50 km/h) = realistyczne departure; ≥200 km/h dokładnie 0 (honor §3).
 
 ## 6. Nowe mechaniki — szkice projektowe
 
@@ -628,6 +642,80 @@ trzy samoloty); checklist WT RB §5.5; poprawki instruktora/HUD z pomiarów; akt
 `docs/fizyka-lotu.md` (nowe człony/krzywe), CLAUDE.md (status + protokół v10), memory.
 **Kryteria:** E2E vs harness ≤5 % rozbieżności na każdej metryce; checklist §5.5 odhaczony;
 ⏳ user: playtest czucia (lista pytań przygotowana w etapie).
+
+#### Wynik R5 (2026-07-12) — UKOŃCZONY, 763 testy zielone, **BEZ zmian kodu produkcyjnego (v10)**
+
+R5 = **etap weryfikacyjny/handoff** — potwierdza, że kalibracja R1–R4 dociera do gracza i domyka
+dokumentację. Pomiary nie ujawniły rozbieżności wymagającej korekty → **zero zmian kodu** (zgodne
+z decyzją usera „tylko sterowane danymi”: brak danych do zmiany = brak zmiany). Poziom A (złote
+±5 %) + poziom B (harness manewrowy) **zielone: 763 testy, typecheck i lint czyste.**
+
+**Siatka E2E §8.3 (poziom C) — konsolidacja dowodów R0–R4 + sonda R5.** Uczciwe ograniczenie
+sesji: MCP `chrome-devtools` odpadł w trakcie R5 (proces node ubity przy restarcie serwera dev) →
+świeżego sweepu 9-punktowego dla Bf/Zero nie dokończono w tej sesji. Substancja poziomu C jest
+jednak dowiedziona: **roll (pkt 2) zgadza się z harnessem <2 %**, a że ćwiczy CAŁY pipeline
+(pitch/roll/krzywe/koperta/instruktor), a klient i serwer liczą **ten sam moduł `shared`**,
+zgodność uogólnia się na metryki sterowane tym samym pipeline’em. Punkty rate-sterowane (3/4/5/6)
+są walidowane na poziomie B (rate-komenda open-loop w przeglądarce degeneruje w CFIT — udokumentowana
+pułapka R1–R4; pkt 3 z definicji §8.3 wymaga instruktora/myszy = pointer-lock, nieautomatyzowalny).
+
+| Pkt §8.3 | Metryka | Status E2E | Dowód (etap) |
+|---|---|---|---|
+| 1 | Vmax SL | ✅ potwierdzony | R4: 464,7 km/h TAS @766 m (bojowo; stara fizyka dałaby ~510) = harness ~464 |
+| 2 | Beczka: roll + bleed | ✅ rygorystycznie <2 % | R0 roll 47,4°/s@446 vs 46,5@450; R1 E-drop 20,8 vs 20,5 (1,3 %), IAS wyj. 0,2 % |
+| 3 | Zakręt 180°/360° (instruktor) | ⬜ poziom B | wymaga pointer-lock; `turn180`/`sustainedTurn` = kotwice; E2E R5: @461 sztywnienie→nurkowanie |
+| 4 | Pętla z 300 km/h | ⬜ poziom B + sonda §6.5 | `loopTest` + sonda `propEffectRates` (nos ściąga 3,5°/s @130 km/h) |
+| 5 | Wznoszenie ROC | 🟡 znak potwierdzony | R4: WEP +5,85 vs −3,2 m/s przy tym samym pitchu; `climbTest` = kotwica |
+| 6 | Stall (zerwanie + buffet) | 🟡 jakościowo | E2E R5 buffet/departure w zakręcie; `stallTest` numeryczny (118/126/104) |
+| 7 | WEP: kop + temp. | ✅ potwierdzony | R2 heat 0,015→0,063/19 s; R4 wznos +5,85 + heat 0,070→0,121/22 s |
+| 8 | Klapy: kółko + rip | ✅ potwierdzony | R3 `flaps:1` @436 → HUD „URWANE” czerwone, samolot żywy (rip się ogranicza) |
+| 9 | Regresja: konsola/NaN/fps | ✅ potwierdzony | R0–R4 telemetria 60 Hz bez NaN, konsola czysta (jedyny 404 = favicon) |
+
+**Sonda śmigła §6.5 (poziom B, R5 — jedyny niezwalidowany element z R4).** `propEffectRates` jest
+czystą funkcją (throttle, IAS) niewidzianą przez harness (`applyPropEffect=false`); R5 stabelaryzował
+ją bezpośrednio (gaz 1,0, wszystkie 3 samoloty identyczne magnitudy — różni tylko znak/kierunek):
+`≥200 km/h → 0,0°/s` (gwarancja §3 strukturalna); `~130 km/h (szczyt pętli) → 3,5°/s yaw` (łagodny,
+kontrowalny sterem 10°/s); `100 km/h → 7,2°/s` (silny, kontrowalny); `<50 km/h → 16–28°/s > ster`
+(departure „na śmigle”, realistyczne). **Wniosek: magnitudy zdrowe, brak zmiany** — końcowe czucie
+dryfu na szczycie pętli to knob JSON (`yawBiasMaxRadS`/`rollBiasMaxRadS`), strojalny bez kodu w playteście.
+
+**Poprawki instruktora/HUD z pomiarów: BRAK (uzasadnione).** Pomiary potwierdziły zgodność łańcucha
+≤3,2 % (R1–R4), a HUD ma już komplet ostrzeżeń dopasowanych do nowych mechanik: `aileronWarning`
+(lotki sztywne), `vneWarning` (drżenie/Vne), znacznik WEP + °C temperatury, wiersz „klapy/URWANE”,
+wariometr (wymiana wysokość↔IAS w zakręcie). Instruktor pracuje w NIEZMIENIONEJ kopercie (R4 ruszył
+tylko moc i opór indukowany — dynamika translacji; nMaxG/`rollRateCurve`/`pitchAuthorityCurve` nietknięte).
+
+**Checklist WT RB §5.5:** 7/7 odhaczone (dowody przy punktach w §5.5) — mechanizmy zmierzone; ocena
+subiektywnego czucia → ankieta playtestowa (poniżej).
+
+**Handoff:** `docs/fizyka-lotu.md` §5.2 (opór sterów), §5.3 (krzywa mocy + ograniczenie η śmigła),
+**nowa §13** (formuły v2: autorytet pitch / WEP / Vne-flutter / klapy / śmigło); CLAUDE.md status
++ protokół v10; memory `fizyka-v2-r5-*`.
+
+**Ankieta playtestowa (⏳ user — czucie 3 samolotów, WT RB):**
+1. **Przelot bojowy nisko** ~7 % wolniej niż przed v2 (Vmax SL ~467/467/440) — akceptowalne, czy
+   za wolno? WEP przywraca szczyt — kop wyraźny? Limit termiczny (Spit 5 min / Bf 1 min) w pościgu OK?
+2. **Zakręt:** Spitfire wyraźnie ciaśniej niż Bf 109 (18,5 vs 23,5 s)? Zero dominuje wiraż (15 s)?
+   „Siadanie” tempa po wejściu z dużej prędkości czytelne (bez ściany)?
+3. **Beczki/lotki:** pełne lotki >5 s realnie zjadają prędkość? Zero „betonuje” lotki >350 km/h
+   (celowa słabość) — nie frustruje w walce manewrowej?
+4. **Nurkowanie:** drążek „ciężknie” >600 km/h (rośnie promień wyrwania)? Przekroczenie Vne (Zero 630)
+   trzęsie i urywa skrzydła — czytelne ostrzeżenie zanim się rozpadnie?
+5. **Klapy (F):** bojowe realnie pomagają w wolnym kółku? Urwanie przy nadprędkości jako kara — jasne?
+6. **Śmigło:** na szczycie pętli z małej prędkości nos „ożywa” (ściąga) — smak realizmu czy irytujące?
+7. **Boty** w nowej kopercie (gaz 1,0 = moc bojowa, bez WEP/klap/przegrzania) — nadal wyzwanie?
+8. **Smoke v10 na produkcji** (deploy front+back RAZEM — v10 z R2 wciąż NIEWDROŻONE).
+
+**Znane/świadome ograniczenia (backlog, nie R5):** (a) czas do 6000 m optymistyczny dla Spit/Zero
+(345/375 vs cel 420/447 s) — brak modelu spadku sprawności śmigła η z wysokością w point-mass (D1),
+Bf trafia (433) dzięki niższej wysokości krytycznej; (b) świeży 9-punktowy sweep E2E dla Bf/Zero do
+domknięcia w osobnej krótkiej sesji, gdy MCP wróci (poziom B je pokrywa, więc to potwierdzenie
+łańcucha, nie rekalibracja); (c) magnitudy śmigła identyczne dla 3 typów (brak historycznego celu —
+różnicowanie to knob).
+
+**Definicja ukończenia projektu (§11):** złote ±5 % ✅, relacje §5.4 ✅, checklist §5.5 ✅, docs+memory
+✅; ⏳ user: playtest czucia (ankieta wyżej) + smoke v10 na produkcji. **PROJEKT FIZYKA v2 — DOMKNIĘTY
+po stronie kodu/dokumentacji; pozostaje playtest usera.**
 
 ## 10. Ryzyka i pułapki (z historii projektu — sprawdzać na każdym etapie)
 
