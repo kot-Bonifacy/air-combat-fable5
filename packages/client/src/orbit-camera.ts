@@ -31,6 +31,16 @@ export class OrbitCamera {
     dom.addEventListener('pointerdown', (event) => {
       if (!this.enabled) return;
       this.dragging = true;
+      // Pointer lock na czas przeciągania: bez niego kursor dojeżdża do krawędzi
+      // ekranu i movementX gaśnie — kamery nie dało się kręcić w kółko w jedną stronę.
+      if (document.pointerLockElement !== dom) {
+        // lock może zostać odrzucony (np. za szybko po Esc) — wtedy drag działa do krawędzi ekranu
+        try {
+          void dom.requestPointerLock();
+        } catch {
+          // przeglądarka odmówiła — ignorujemy
+        }
+      }
       // setPointerCapture rzuca DOMException, gdy pointer jest w stanie locked
       // (po pointer lock z celownika myszy) — bez przechwycenia obsłużymy ruch
       try {

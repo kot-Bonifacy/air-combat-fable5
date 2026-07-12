@@ -340,6 +340,12 @@ resize();
 const keyboard = new KeyboardInput(window);
 const mouseAim = new MouseAim(renderer.domElement);
 renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+// PPM w trakcie meczu nie może wysuwać menu kontekstowego także NAD nakładkami HUD (osobne elementy
+// DOM nad canvasem — listener z canvasa ich nie łapie). Poza grą (lobby/wyniki/pola tekstowe) menu
+// przeglądarki zostaje nietknięte.
+window.addEventListener('contextmenu', (event) => {
+  if (phase === 'playing' && !isEditingText()) event.preventDefault();
+});
 
 // spust (faza 11): LPM przy aktywnej myszy albo Spacja. Pierwsze kliknięcie wchodzi
 // w pointer lock i NIE strzela (triggerHeld bramkuje LPM na mouseAim.locked) — jak offline.
@@ -422,6 +428,15 @@ function setOrbitCamera(active: boolean): void {
   cameraMode = active ? 'orbitalna' : 'pościgowa';
   orbit.enabled = active; // w pościgowej OrbitCamera ignoruje mysz (patrz klasa)
   updateMouseAimEnabled();
+  // Wejście w orbitalną też więzi kursor (keydown Alta = gest użytkownika) — bez tego kursor byłby
+  // wolny do pierwszego przeciągnięcia i mógłby wyjechać na UI przeglądarki.
+  if (active && !document.pointerLockElement) {
+    try {
+      void renderer.domElement.requestPointerLock();
+    } catch {
+      // lock odrzucony (np. tuż po Esc) — przejmie go pointerdown w OrbitCamera
+    }
+  }
   // powrót do sterowania myszą: przejmij ją od razu (puszczenie Alta to gest) — bez tego kursor
   // Windows zostawał widoczny aż do kliknięcia. Pomiń, gdy menu pauzy zwolniło kursor.
   if (!active && !pauseMenuOpen) mouseAim.requestLock();
@@ -529,7 +544,11 @@ function updateMouseAimEnabled(): void {
   // elementy DOM z własnym kursorem, więc pozostają klikalne. Kursor wraca po śmierci/pauzie (UI/wrak).
   const hideCursor = phase === 'playing' && playerDeath === 'none' && !pauseMenuOpen;
   renderer.domElement.style.cursor = hideCursor ? 'none' : '';
-  if (!wantEnabled && document.pointerLockElement) document.exitPointerLock();
+  // Pointer lock trzymamy przez CAŁY aktywny lot — w OBU trybach kamery (życzenie usera 2026-07-12:
+  // kursor nie może wyjeżdżać na zakładki/UI przeglądarki). Zwalniamy dopiero, gdy kursor ma być
+  // widoczny (menu pauzy / śmierć / lobby) — nakładki potrzebują klikalnego kursora. W orbitalnej
+  // mouseAim jest disabled, więc ruch pod lockiem nie ładuje się do celownika (bramka w mouse-aim).
+  if (!hideCursor && document.pointerLockElement) document.exitPointerLock();
 }
 
 // --- stan sieci/lobby ---
@@ -1998,7 +2017,10 @@ function sendInputTick(dtS: number): void {
   else scratchNose.set(0, 0, 1);
 
   const hasKeyboard = pitchUp !== 0 || rollRight !== 0 || yawRight !== 0;
-  if (!scriptActive && mouseAim.locked && !hasKeyboard) {
+  // `enabled` obok `locked`: pointer lock trwa też w kamerze orbitalnej (uwięzienie kursora), ale mysz
+  // NIE steruje wtedy lotem — bez tej bramki advance() liczyłby aim z bazy ORBITALNEJ kamery i skręcał
+  // samolot podczas rozglądania się.
+  if (!scriptActive && mouseAim.locked && mouseAim.enabled && !hasKeyboard) {
     // aim = punkt świata „pod celownikiem" (War Thunder): kotwica w świecie, nos dolatuje i STAJE.
     // advance wchłania ruch myszy i przelicza aimDir (celownik osiada do środka, gdy nos dosięgnie celu).
     mouseAim.advance(camera);
@@ -2307,7 +2329,9 @@ function updateHudOverlays(): void {
   // celownik myszy — tylko żywy gracz z aktywną myszą (wrak strzela Spacją, bez celownika myszy).
   // Model osiadający (War Thunder): pozycja = RZUT aimDir (świat) na bieżącą kamerę, więc celownik
   // wraca do środka, gdy nos dolatuje do celu. Bez okręgu granicy (życzenie usera — sam clamp został).
-  const showReticle = mouseAim.locked && localAlive;
+  // `enabled` obok `locked`: w kamerze orbitalnej lock trwa (uwięzienie kursora), ale mysz nie celuje
+  // — celownik ma zniknąć (rysowany z rzutu na orbitalną kamerę „dziwnie się zachowywał").
+  const showReticle = mouseAim.locked && mouseAim.enabled && localAlive;
   if (showReticle) {
     const rp = mouseAim.reticlePixel(camera, w, h);
     reticleEl.style.display = 'block';
@@ -2319,7 +2343,7 @@ function updateHudOverlays(): void {
   // znacznik nosa: żywy gracz z myszą ORAZ spadający wrak (celuje nosem, ogień Spacją) — jak SP.
   // Wrak rysujemy z własnej pozy (predictor), nie z obserwowanej.
   getForward(s.orientation, scratchFwd);
-  const showNose = wreck || (mouseAim.locked && localAlive);
+  const showNose = wreck || (mouseAim.locked && mouseAim.enabled && localAlive);
   const nosePos = showNose ? projectDirToScreen(scratchFwd, predictor.renderPosition, camera, w, h) : null;
   if (nosePos) {
     noseMarkerEl.style.display = 'block';

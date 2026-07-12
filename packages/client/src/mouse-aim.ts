@@ -93,7 +93,10 @@ export class MouseAim {
       this.locked = document.pointerLockElement === this.dom;
     });
     document.addEventListener('mousemove', (event) => {
-      if (!this.locked) return;
+      // `enabled` też: w kamerze orbitalnej OrbitCamera trzyma pointer lock na TYM SAMYM elemencie
+      // (obrót bez krawędzi ekranu) — bez tej bramki ruch orbity ładowałby się do celownika
+      // i po puszczeniu Alta samolot szarpałby do „zamiecionego" celu.
+      if (!this.locked || !this.enabled) return;
       // ruch tylko zbieramy — wchłonie go advance() z bieżącą kamerą (offset→aimDir w świecie)
       this.pendingDx += event.movementX * this.aimSensitivityScale;
       this.pendingDy += event.movementY * this.aimSensitivityScale;
