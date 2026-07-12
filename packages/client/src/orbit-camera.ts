@@ -1,7 +1,5 @@
 import { PerspectiveCamera, Vector3 } from 'three';
 
-const MIN_PITCH_RAD = -1.4;
-const MAX_PITCH_RAD = 1.4;
 const MIN_DISTANCE_M = 8;
 const MAX_DISTANCE_M = 150;
 
@@ -60,10 +58,10 @@ export class OrbitCamera {
     dom.addEventListener('pointermove', (event) => {
       if (!this.enabled || !this.dragging) return;
       this.yawRad -= event.movementX * 0.005;
-      this.pitchRad = Math.min(
-        MAX_PITCH_RAD,
-        Math.max(MIN_PITCH_RAD, this.pitchRad + event.movementY * 0.005),
-      );
+      // pitch BEZ clampu (życzenie usera): pełny obrót 360° w pionie, przez zenit/nadir —
+      // update() prowadzi wektor „góry" kamery po stycznej orbity, więc nie ma przeskoku
+      // na biegunach. Zawijanie mod 2π tylko trzyma kąt w ryzach numerycznie.
+      this.pitchRad = (this.pitchRad + event.movementY * 0.005) % (Math.PI * 2);
     });
     dom.addEventListener(
       'wheel',
@@ -81,12 +79,14 @@ export class OrbitCamera {
 
   update(targetPos: Vector3): void {
     const cosP = Math.cos(this.pitchRad);
-    this.offset.set(
-      Math.sin(this.yawRad) * cosP,
-      Math.sin(this.pitchRad),
-      Math.cos(this.yawRad) * cosP,
-    );
+    const sinP = Math.sin(this.pitchRad);
+    this.offset.set(Math.sin(this.yawRad) * cosP, sinP, Math.cos(this.yawRad) * cosP);
     this.camera.position.copy(targetPos).addScaledVector(this.offset, this.distanceM);
+    // „Góra" kamery = styczna orbity w kierunku rosnącego pitcha (d offset/d pitch) zamiast
+    // światowego (0,1,0): dzięki temu przejście przez zenit/nadir jest ciągłe (pełne 360° w pionie),
+    // a lookAt nie robi nagłego odwrócenia kadru na biegunie. ChaseCamera i tak nadpisuje camera.up
+    // co klatkę, więc nie kolidujemy z trybem pościgowym.
+    this.camera.up.set(-Math.sin(this.yawRad) * sinP, cosP, -Math.cos(this.yawRad) * sinP);
     this.camera.lookAt(targetPos);
   }
 }
