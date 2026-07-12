@@ -59,7 +59,7 @@ WŁASNY samolot (`predictor.sim.state.wepActive`; WEP nie jedzie w snapshocie ob
 uczy, że nie warto trzymać).
 **Pre-existing bug (NIE mój):** `maneuvers.test.ts:187` TS18048 `'last' possibly undefined` istniał na
 czystym HEAD `c58dc36` (cache tsc go maskował) → naprawiony guardem. Knoby strojalne bez kodu.
-**NIEZACOMMITOWANE.** ⏳ user: playtest czucia WEP (prędkość „nieco"? dźwięk? igła temp.?) + deploy v10.
+**Zacommitowane `8fe9cc3`.** ⏳ user: playtest czucia WEP (prędkość „nieco"? dźwięk? igła temp.?) + deploy v10.
 
 **Nowy poziom botów „as" (b.trudny) 2026-07-12 (życzenie usera, 780 testów zielonych, BEZ protokołu — v10,
 addytywne JSON lobby, deploy front+back RAZEM):** klucz `'as'` DOPISANY NA KOŃCU `DIFFICULTY_LEVELS`
@@ -91,7 +91,7 @@ celuje w strefę (PATROL_WAYPOINTS); progi energii 230/360 km/h (wyżej ceni ene
 ale ludzki" (decyzja usera): reakcja 0,1 s / błąd 0,3° / maxG 9 (G-LOC i tak ogranicza sustained) /
 `hitReactionDelayS` 0,35. Testy: `bot-ace.test.ts` (10, każdy zestawia asa z „trudnym" jako kontrolą
 nietkniętych poziomów), FSM rearThreat, loader+effectiveTuning, serwerowy WEP w pełnym `room.step`.
-**NIEZACOMMITOWANE** (razem z sesją „WEP odczuwalny" wyżej). ⏳ user: playtest asa (czołówki? sklejanie się?
+**Zacommitowane `b018edf`.** ⏳ user: playtest asa (czołówki? sklejanie się?
 ogon? WEP-przewaga zbyt brutalna?) + deploy v10.
 
 **Nick obserwowanego + horyzont Sperry F3 2026-07-12 (2 zgłoszenia usera, 780 testów zielonych, BEZ
