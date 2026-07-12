@@ -26,9 +26,16 @@ const ENGINE_WEP_GAIN_BOOST = 1.12; // i nieco głośniej (napór dopalacza)
 // dopasowane do poprzedniego → mnożnik 1,65 utrzymuje
 // głośność na zaakceptowanym poziomie (master 0,7, czysto). Szczegóły/alternatywy w assets/LICENSES.md.
 // zero: gwiazdowiec (idle P-47 R-2800, CC-BY 142900 — rodzina dwurzędowych radialnych jak Sakae);
-// pętla 4,0 s z RMS wyrównanym do sampla Bf 109 przy tworzeniu pliku → startowo mnożnik 1,0
+// pętla 4,0 s z RMS wyrównanym do sampla Bf 109 przy tworzeniu pliku → mnożnik 1,0
 // (percepcyjna głośność ≠ RMS — strojenie uchem jak przy Spitfire).
-const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.65, bf109: 1.0, zero: 1.0 };
+// bf109: 1,0→0,8 (zgł. usera 2026-07-12: „na start głośniejszy niż inne") — sampel DB 601 (autentyczny
+// run-up) ma percepcyjnie więcej energii nisko-średniej niż RMS-równy mu Zero, więc mimo RMS grał głośniej.
+const ENGINE_GAIN_MUL: Record<PlaneType, number> = { spitfire: 1.65, bf109: 0.8, zero: 1.0 };
+// Per-model mnożnik tonu pętli (playbackRate) — koryguje reżim obrotów NAGRANIA źródłowego, nie fizykę.
+// zero: sampel to IDLE gwiazdowca (R-2800) → cała pętla brzmi nisko-obrotowo, więc nawet 100 % gazu
+// „czuło się" jak ~70 % (zgł. usera 2026-07-12). Mnożnik 1,12 przesuwa krzywą w górę: ton dzisiejszego
+// 100 % wypada teraz ~72 % gazu, a pełny gaz przewija wyraźnie wyżej (proxy wyższych obrotów silnika).
+const ENGINE_RATE_MUL: Record<PlaneType, number> = { spitfire: 1.0, bf109: 1.0, zero: 1.12 };
 
 const GUN_RATE_303 = 1.12; // Spitfire: 8× .303 — lekki, szybki grzechot (wyżej)
 const GUN_RATE_MG17 = 0.94; // Bf 109: MG 17 — cięższy ton (niżej)
@@ -107,12 +114,14 @@ class LoopVoice {
 export class EngineVoice {
   private readonly loop: LoopVoice;
   private readonly gainMul: number;
+  private readonly rateMul: number;
   private rate = ENGINE_RATE_IDLE;
   private gain = 0;
 
   constructor(am: AudioManager, buffer: AudioBuffer | undefined, plane: PlaneType, host?: Object3D) {
     this.loop = new LoopVoice(am, buffer, host);
     this.gainMul = ENGINE_GAIN_MUL[plane];
+    this.rateMul = ENGINE_RATE_MUL[plane];
   }
 
   /** `active` = żywy samolot z pracującym silnikiem (paliwo). Martwy/wrak → wyciszenie.
@@ -124,7 +133,8 @@ export class EngineVoice {
     // WEP przewija ton wyżej i podbija głośność — słyszalny „kop" dopalacza przy pełnym gazie
     const wepRateBoost = wep ? ENGINE_WEP_RATE_BOOST : 0;
     const wepGainMul = wep ? ENGINE_WEP_GAIN_BOOST : 1;
-    const targetRate = ENGINE_RATE_IDLE + (ENGINE_RATE_FULL - ENGINE_RATE_IDLE) * rpm + wepRateBoost;
+    const targetRate =
+      (ENGINE_RATE_IDLE + (ENGINE_RATE_FULL - ENGINE_RATE_IDLE) * rpm) * this.rateMul + wepRateBoost;
     const targetGain = active
       ? (ENGINE_GAIN_IDLE + (ENGINE_GAIN_FULL - ENGINE_GAIN_IDLE) * throttle) * this.gainMul * wepGainMul
       : 0;

@@ -44,10 +44,10 @@ const PLANE_INFO: Record<PlaneType, PlaneTypeInfo> = {
     config: SPITFIRE_MK2,
     label: 'Spitfire',
     fullName: 'Spitfire Mk IIa',
-    trait: 'Zwrotny',
+    trait: 'Wszechstronny',
     traitIcon: '⟳',
     weapons: '8× .303 (7,7 mm)',
-    blurb: 'Duże skrzydło — ciasny zakręt, król wirażówki.',
+    blurb: 'Zrównoważony i wytrzymały — dobry zakręt, szybki, pewny w nurkowaniu; lotki pracują też przy dużej prędkości.',
   },
   bf109: {
     config: BF109_E,
