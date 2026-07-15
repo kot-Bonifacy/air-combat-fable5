@@ -1,7 +1,5 @@
 # air-combat-fable5
 
-https://dogfight.tatanga.eu/
-
 Multiplayerowa gra walk powietrznych z okresu Bitwy o Anglię — klient w przeglądarce
 (TypeScript + Three.js + Vite), autorytatywny serwer Node.js (WebSocket). Fizyka simcade.
 
