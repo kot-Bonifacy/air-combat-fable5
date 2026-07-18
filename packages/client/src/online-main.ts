@@ -1841,6 +1841,13 @@ function toggleResultsVisible(): void {
 }
 
 function onRoomJoined(msg: RoomJoinedMessage): void {
+  // Utrwal token AKTYWNEGO połączenia jako token reconnectu: jesteśmy w pokoju, więc ten token
+  // wskazuje NASZ slot. Kluczowe dla F5 — bez tego powstawał „duch gracza": po nieudanym wznowieniu
+  // onWelcome świadomie NIE zapisuje świeżego tokenu (żeby nie zatruć), ale gdy potem założymy/dołączymy
+  // pokój na tym połączeniu, slot dostaje token, którego NIE ma w localStorage → F5 wznawia starym,
+  // nieaktualnym tokenem → pudło → nowy gracz w lobby, a stary slot wisi jako duplikat. Zapis tutaj
+  // domyka desync (na udanym wznowieniu token jest ten sam — zapis idempotentny).
+  if (net?.sessionToken) saveToken(net.sessionToken);
   roomView = {
     code: msg.code,
     state: msg.state,

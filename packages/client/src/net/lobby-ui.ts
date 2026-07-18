@@ -125,6 +125,9 @@ export interface WaitingView {
 }
 
 const NICK_STORAGE_KEY = 'air-combat:nick';
+/** Domyślny nick nowego gracza — pole jest nim WSTĘPNIE WYPEŁNIONE (nie tylko placeholder), żeby
+ *  zawsze startować z czytelną nazwą. Zgodny z serwerowym NICK_FALLBACK ('Pilot'). */
+const DEFAULT_NICK = 'Pilot';
 /** Przełącznik strzałek off-screen wskazujących inne samoloty (pomoc dla początkujących, domyślnie
  *  WYŁĄCZONA — 2026-07-18). Czysto klienckie (per gracz), zapis w localStorage, bez wpływu na protokół. */
 const OFFSCREEN_ARROWS_STORAGE_KEY = 'air-combat:offscreen-arrows';
@@ -197,7 +200,7 @@ export class LobbyUI {
     this.nickInput = document.createElement('input');
     this.nickInput.className = 'lobby-input';
     this.nickInput.maxLength = MAX_NICK_LENGTH;
-    this.nickInput.placeholder = 'Pilot';
+    this.nickInput.placeholder = DEFAULT_NICK;
     this.nickInput.value = loadNick();
     this.nickInput.addEventListener('change', () => saveNick(this.nickInput.value));
     nickRow.append(nickLabel, this.nickInput);
@@ -502,7 +505,19 @@ export class LobbyUI {
     // typ samolotu przy nicku (faza 19b: widać, kto czym leci — niezależnie od drużyny)
     const plane = el('span', 'lobby-player-plane');
     plane.textContent = planeLabelOf(p.planeType);
-    row.append(tag, name, plane);
+    row.append(tag, name);
+
+    // człowiek w oknie reconnectu: „(rozłączony)" przy nicku + wyszarzenie wiersza — od razu widać, że
+    // to nie żywy uczestnik (slot znika po wygaśnięciu okna 60 s; fix „ducha gracza"). Pomijamy wskaźnik
+    // gotowości i kontrolki hosta (nie dotyczą rozłączonego; nie może być hostem — reassignHost go pomija).
+    if (p.disconnected) {
+      row.classList.add('is-disconnected');
+      const dc = el('span', 'lobby-player-disconnected');
+      dc.textContent = '(rozłączony)';
+      row.append(dc, plane);
+      return row;
+    }
+    row.append(plane);
 
     const isHost = view.youId === view.hostId;
     const inWaiting = view.state === 'waiting';
@@ -680,7 +695,9 @@ export class LobbyUI {
     const emptyTeam = isTeam && teamSizes.some((n) => n === 0);
     this.startBtn.style.display = isHost && !matchInProgress ? '' : 'none';
     this.startBtn.disabled = emptyTeam;
-    const others = view.players.filter((p) => !p.isBot && p.id !== view.hostId);
+    // rozłączeni (w oknie reconnectu) nie liczą się do gotowości — nigdy nie klikną „Gotów", więc
+    // inaczej zawyżaliby mianownik „X/Y gotowych" przez do 60 s (i tak znikną po wygaśnięciu okna)
+    const others = view.players.filter((p) => !p.isBot && !p.disconnected && p.id !== view.hostId);
     const readyCount = others.filter((p) => p.ready).length;
     this.startBtn.textContent = emptyTeam
       ? 'Start — obsadź obie drużyny'
@@ -764,9 +781,9 @@ export class LobbyUI {
 
 function loadNick(): string {
   try {
-    return localStorage.getItem(NICK_STORAGE_KEY) ?? '';
+    return localStorage.getItem(NICK_STORAGE_KEY) || DEFAULT_NICK;
   } catch {
-    return '';
+    return DEFAULT_NICK;
   }
 }
 
@@ -971,6 +988,8 @@ const LOBBY_CSS = `
 .lobby-team-a .lobby-team-head { color: #7cc0ff; }
 .lobby-team-b { border-top-color: #ff8c42; }
 .lobby-team-b .lobby-team-head { color: #ffac72; }
+.lobby-player-row.is-disconnected { opacity: 0.5; }
+.lobby-player-disconnected { font-size: 12px; font-style: italic; color: #c98a8a; }
 .lobby-player-ready { width: 20px; text-align: center; font-size: 13px; }
 .lobby-player-ready.is-ready { color: #6ee08a; }
 .lobby-player-ready.is-waiting { color: #c9a14a; }

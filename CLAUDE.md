@@ -42,6 +42,29 @@ komplet ostrzeżeń]; `docs/fizyka-lotu.md` §5.2/§5.3/**nowa §13** [formuły 
 w „Wynik R5"; **PROJEKT FIZYKA v2 domknięty po stronie kodu/docs — pozostaje playtest usera + smoke v10 na
 produkcji**). ⏳ user: playtest czucia 3 samolotów (ankieta 8 pkt w „Wynik R5") + deploy front+back RAZEM (v10).
 
+**RF1 — fix „ducha gracza" 2026-07-18 (zgłoszenie usera, 784 testy zielone, protokół v10 NIEZMIENIONY —
+addytywne pole JSON rosteru; deploy front+back RAZEM):** duch = gracz rozłączony/po F5 wisiał w poczekalni.
+**Repro chrome-devtools — DWIE warstwy przyczyny z `refaktoring.md §3.1`, OBIE potwierdzone:** (1) **ŹRÓDŁO
+= desync tokenu w kliencie:** po nieudanym wznowieniu `onWelcome` świadomie nie zapisuje świeżego tokenu
+(anty-zatrucie), ale `createRoom`/`joinRoom` też go nie zapisywał → slot dostawał `net.sessionToken`, którego
+NIE ma w localStorage → F5 wznawiał starym, nieaktualnym tokenem → log `gracz w lobby` (nie `reconnect gracza`)
+→ nowy gracz + stary slot wisi = duplikat. (2) **WZMACNIACZ:** `server/src/lobby.ts maintain()` wołał
+`pruneExpiredReconnects` TYLKO przy `connectedCount === 0` → w pokoju z choć jednym połączonym graczem slot
+rozłączonego nigdy nie wygasał (empirycznie >113 s mimo okna 60 s) i przy starcie meczu dostawał
+samolot-autopilot. Pomysł usera „kasuj starego po wejściu" ODRZUCONY (nick nie jest kluczem; dedup po tokenie
+robi już `reconnectByToken`; właściwie — nie tworzyć duplikatu). **Decyzje usera (AskUserQuestion):** (1)
+usuwać wygasły slot WSZĘDZIE, też w trakcie meczu (samolot-widmo znika); (2) w oknie 60 s oznaczać
+rozłączonego „(rozłączony)". Zmiany: **`online-main.ts onRoomJoined` → `saveToken(net.sessionToken)` (FIX
+ŹRÓDŁA — F5 wraca do swojego slotu, duch nie powstaje)**; `maintain` prune **ZAWSZE** + `pruneExpiredReconnects`
+zwraca tokeny usuniętych → czyszczenie `sessions` (siatka bezpieczeństwa); addytywne `RoomPlayer.disconnected?`
+(`roomPlayers()` dla człowieka bez `member`) → `lobby-ui.ts` wiersz wyszarzony + „(rozłączony)" + wykluczony
+z licznika „X/Y gotowych". Prune w 'playing' bezpieczny (`checkElimination` czyta `players` świeżo;
+`rebuildSnapshotSources`+`broadcastRoomUpdate`). Testy +2. **Weryfikacja E2E:** (a) F5 przed fixem `gracz w
+lobby` → po fixie `reconnect gracza` (log) i wraca do własnego pokoju, jeden wpis; (b) rozłączony →
+„(rozłączony)" w oknie → po >60 s znika z rosteru, choć host wciąż połączony. **NIEZACOMMITOWANE.** To zakres
+BŁĘDOWY etapu RF1 (podział plików §4 = osobne etapy); szczegóły „Wynik RF1" w `docs/refaktoring.md`.
+⏳ user: smoke na produkcji.
+
 **Ciepły silnik na starcie + weryfikacja „przejęcia kontroli" 2026-07-18 (2 zgłoszenia usera, 782 testy
 zielone, BEZ protokołu — v10, shared/serwer/klient + test):** (1) **Ciepły silnik na starcie** (życzenie
 usera „wyższa temperatura, zbliżona do długiego lotu"): spawn ustawiał `engineHeatFrac = 0` (zimny, ~40 °C).

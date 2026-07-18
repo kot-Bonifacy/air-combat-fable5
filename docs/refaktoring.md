@@ -384,7 +384,7 @@ Zauważone przy rozpoznaniu 2026-07-15; do decyzji usera osobno:
 | Etap | Temat | Stan |
 | --- | --- | --- |
 | RF0 | Siatka bezpieczeństwa + baseline | ⬜ |
-| RF1 | Duch gracza (cykl życia slotów) | ⬜ |
+| RF1 | Duch gracza (cykl życia slotów) | ✅ (fix bugu; podział plików = później) |
 | RF2 | Komunikat obserwatora + menedżer alertów | ⬜ |
 | RF3 | Klient: sesja i sieć | ⬜ |
 | RF4 | Klient: pętla gry i efekty | ⬜ |
@@ -397,3 +397,67 @@ Zauważone przy rozpoznaniu 2026-07-15; do decyzji usera osobno:
 | RF11 | Spójność i domknięcie | ⬜ |
 
 Sekcje „Wynik RFn" dopisywane pod spodem po każdej sesji (wzorem `docs/fizyka-v2-rekalibracja.md`).
+
+---
+
+## Wynik RF1 (2026-07-18) — sesja punktowa (sam fix bugu, BEZ podziału plików)
+
+Zrealizowano zakres błędowy etapu RF1 (duch gracza). Podział monolitów z §4 pozostaje na osobne etapy —
+to była sesja naprawcza na życzenie usera, nie pełny etap refaktoringu.
+
+**Reprodukcja (chrome-devtools, dev) — potwierdzone OBIE warstwy z §3.1:**
+
+1. **Zalążek (przyczyna źródłowa) — POTWIERDZONY: desync tokenu w kliencie.** Log serwera pokazał różnicę:
+   czysty F5 tuż po `createRoom` daje `rozłączony → reconnect gracza` (wznawia slot ✅), ale F5 po sekwencji
+   „nieudane wznowienie → utworzenie/dołączenie pokoju" daje `rozłączony → gracz w lobby` (BRAK wznowienia →
+   duch). Mechanizm: po nieudanym resumie `onWelcome` świadomie NIE zapisuje świeżego tokenu (żeby nie zatruć
+   — fix z 2026-06-26), ale gdy potem gracz założy/dołączy pokój na TYM połączeniu, slot dostaje token
+   połączenia (`net.sessionToken`), którego **nie ma w localStorage**. F5 wznawia STARYM, nieaktualnym tokenem
+   → `tryReconnect` = null → nowy gracz w lobby, a stary slot wisi jako duplikat = duch. (Wcześniejsza teza
+   „resume zawsze działa" była błędna — działa tylko przy zsynchronizowanym tokenie.)
+2. **Wzmacniacz — POTWIERDZONY: `lobby.maintain()` prune tylko przy `connectedCount === 0`.** Empirycznie: gracz
+   rozłączony (zamknięta karta) w pokoju z drugim POŁĄCZONYM graczem wisiał w rosterze **>113 s**, mimo okna
+   60 s — bo drugi gracz trzymał `connectedCount ≥ 1`. Taki duch przy starcie meczu dostawał samolot na
+   autopilocie (feature 2026-06-25), nieodróżnialny od żywego.
+
+Fix zalążka usuwa ducha U ŹRÓDŁA (F5 wraca do własnego slotu, duplikat nie powstaje); fix wzmacniacza to
+siatka bezpieczeństwa (każdy osierocony slot — genuine leave, zerwanie sieci, edge — znika po 60 s). Pomysł
+usera „kasuj starego przy wejściu" świadomie ODRZUCONY (gorszy: nick nie jest kluczem tożsamości; dedup po
+tokenie już robi `reconnectByToken`, a właściwe rozwiązanie to nie tworzyć duplikatu).
+
+**Decyzje usera (AskUserQuestion 2026-07-18):** (1) po wygaśnięciu okna 60 s usuwać slot WSZĘDZIE, także
+w trakcie meczu (samolot-widmo znika, przestaje liczyć się do eliminacji) — spójne z pierwotną intencją
+okna; (2) w oknie 60 s oznaczać rozłączonego w rosterze jako „(rozłączony)".
+
+**Zmiany:**
+- **`client/src/online-main.ts` `onRoomJoined` (FIX ŹRÓDŁA):** `if (net?.sessionToken) saveToken(net.sessionToken)`
+  na wejściu do pokoju — token AKTYWNEGO połączenia (wskazujący NASZ slot) trafia do localStorage. Domyka
+  desync: na udanym wznowieniu to ten sam token (idempotentne), a po utworzeniu/dołączeniu pokoju z
+  „lobbowym" tokenem — zapisujemy właściwy, więc F5 wznawia slot zamiast tworzyć ducha.
+- **`server/src/lobby.ts` `maintain`:** `pruneExpiredReconnects` wołane **ZAWSZE** (skreślony warunek
+  `connectedCount === 0`). Okno `RECONNECT_WINDOW_MS` (60 s) egzekwowane niezależnie od zajętości pokoju.
+- **`server/src/game-room.ts` `pruneExpiredReconnects`:** zwraca teraz **tokeny usuniętych sesji**
+  (`string[]`) zamiast liczby — `maintain` czyści po nich mapę `sessions` (koniec drobnego wycieku
+  token→pokój przy prune w zajętym pokoju). Bezpieczeństwo prune w trakcie meczu zweryfikowane: `checkElimination`
+  czyta `players` świeżo co tick, a metoda woła `rebuildSnapshotSources()`+`broadcastRoomUpdate()` — usunięcie
+  encji jest równoważne wyjściu gracza.
+- **`server/src/game-room.ts` `roomPlayers()` + `RoomPlayer` (shared):** addytywne pole `disconnected?: boolean`
+  (obecne tylko dla człowieka z `member === null`; boty/połączeni — brak). BEZ bumpu protokołu binarnego
+  (roster to JSON).
+- **`client/src/net/lobby-ui.ts` `buildPlayerRow`:** rozłączony człowiek → wiersz wyszarzony (`is-disconnected`,
+  opacity 0.5) + kursywa „(rozłączony)" zamiast wskaźnika gotowości/kontrolek. CSS w tym samym pliku.
+- **Testy (+2, łącznie 784 zielone):** `game-room.test.ts` — prune w pokoju z połączonym graczem + marker
+  `disconnected` w rosterze (oraz istniejący test zaktualizowany na zwracane tokeny); `lobby.test.ts` — pełna
+  ścieżka `maintain` czyści ducha w zajętym pokoju i sprząta sesję (token nie wskrzesza slotu).
+
+**Weryfikacja E2E (chrome-devtools):** (a) **Wzmacniacz:** dwa konteksty (OTHER host + LEAVER). LEAVER
+zamyka kartę → w oknie „LEAVER (rozłączony)" (wyszarzony) → po >60 s **znika z rosteru**, choć OTHER wciąż
+połączony. (b) **Źródło:** odtworzono desync (localStorage token nieaktualny wobec slotu) — F5 dawał
+`gracz w lobby` (log) + ekran wejściowy z własnym pokojem jako „obcym"; po fixie token przy `createRoom`
+zmienia się na token slotu (zweryfikowane odczytem localStorage), a F5 daje `reconnect gracza` (log) i wraca
+prosto do poczekalni własnego pokoju, jeden wpis. typecheck/784 testy/lint/build zielone. Konsola czysta
+(jedyny błąd = pre-existing `favicon.ico` 404, §8).
+
+**DEPLOY: front + back RAZEM** (semantyka rosteru: serwer wysyła `disconnected`, klient je renderuje;
+protokół binarny v10 NIEZMIENIONY — pole addytywne JSON). **NIEZACOMMITOWANE.** ⏳ user: smoke na produkcji
+(znajomy zamyka kartę/traci sieć w pokoju → po ~60 s znika, nie wisi jako duch; w oknie widać „(rozłączony)").

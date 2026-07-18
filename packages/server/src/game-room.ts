@@ -470,6 +470,8 @@ export class GameRoom {
       ready: p.ready,
       // poziom bota tylko dla botów (lobby slotowe RTS): host edytuje go per slot w poczekalni
       ...(p.isBot ? { botDifficulty: p.botDifficulty } : {}),
+      // człowiek w oknie reconnectu (rozłączony) — poczekalnia oznacza go „(rozłączony)"; obecne tylko gdy true
+      ...(!p.isBot && p.member === null ? { disconnected: true } : {}),
     }));
   }
 
@@ -1049,21 +1051,23 @@ export class GameRoom {
     this.broadcastRoomUpdate();
   }
 
-  /** Zwalnia sloty graczy, których okno reconnectu wygasło. Zwraca liczbę usuniętych. */
-  pruneExpiredReconnects(nowMs: number, windowMs: number): number {
-    let removed = 0;
+  /** Zwalnia sloty graczy, których okno reconnectu wygasło. Zwraca tokeny sesji usuniętych graczy —
+   *  lobby czyści po nich mapę sesji (`sessions`). Wołane co tick z `lobby.maintain` ZAWSZE (także w
+   *  pokoju z innymi połączonymi graczami), inaczej slot rozłączonego wisiałby wiecznie = „duch gracza". */
+  pruneExpiredReconnects(nowMs: number, windowMs: number): string[] {
+    const removedTokens: string[] = [];
     for (const player of [...this.players.values()]) {
       if (player.member === null && player.disconnectedAtMs !== null && nowMs - player.disconnectedAtMs >= windowMs) {
         this.players.delete(player.id);
         if (this.hostId === player.id) this.reassignHost();
-        removed++;
+        if (player.sessionToken) removedTokens.push(player.sessionToken); // boty mają '' — pomijamy
       }
     }
-    if (removed > 0) {
+    if (removedTokens.length > 0) {
       this.rebuildSnapshotSources();
       this.broadcastRoomUpdate();
     }
-    return removed;
+    return removedTokens;
   }
 
   private reassignHost(): void {

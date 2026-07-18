@@ -806,6 +806,11 @@ export interface RoomPlayer {
    *  bot może mieć inny poziom (np. 1 trudny + 5 łatwych). Obecne TYLKO dla botów (isBot=true);
    *  dla ludzi nieobecne/ignorowane. Pole addytywne JSON — bez bumpu protokołu. */
   botDifficulty?: DifficultyLevel;
+  /** Człowiek w oknie reconnectu (rozłączony, slot trzymany ≤ RECONNECT_WINDOW_MS): poczekalnia
+   *  pokazuje go jako „(rozłączony)"/wyszarzonego zamiast udawać obecnego; slot znika po wygaśnięciu
+   *  okna. Obecne TYLKO gdy true (człowiek bez połączenia); boty i połączeni gracze — nieobecne.
+   *  Pole addytywne JSON — bez bumpu protokołu. */
+  disconnected?: boolean;
 }
 
 // --- klient → serwer ---

@@ -157,9 +157,11 @@ export class Lobby {
    */
   maintain(nowMs: number): void {
     for (const [code, room] of this.rooms) {
-      if (room.connectedCount === 0) {
-        room.pruneExpiredReconnects(nowMs, RECONNECT_WINDOW_MS);
-      }
+      // Egzekwuj okno reconnectu ZAWSZE — także w pokoju z połączonymi graczami. Wcześniej prune biegł
+      // tylko przy connectedCount===0, więc gdy w pokoju siedział choć jeden połączony gracz, slot
+      // rozłączonego (member===null) NIGDY nie wygasał: „duch gracza" wisiał w rosterze i przy starcie
+      // meczu dostawał samolot na autopilocie. Teraz slot żyje dokładnie RECONNECT_WINDOW_MS i znika.
+      for (const token of room.pruneExpiredReconnects(nowMs, RECONNECT_WINDOW_MS)) this.sessions.delete(token);
       // pokój żyje, dopóki jest w nim choć jeden człowiek (połączony lub w oknie reconnectu);
       // sam-boty nie utrzymują pokoju (inaczej wyciek: boty latałyby po wyjściu wszystkich ludzi)
       if (room.humanCount === 0) {

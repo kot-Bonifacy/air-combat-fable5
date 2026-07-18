@@ -267,13 +267,30 @@ describe('GameRoom — maszyna stanów lobby', () => {
     expect(room.reconnectByToken('tok-x', fresh)?.id).toBe(id); // slot wciąż żyje przy fresh
   });
 
-  it('pruneExpiredReconnects zwalnia slot po wygaśnięciu okna', () => {
+  it('pruneExpiredReconnects zwalnia slot po wygaśnięciu okna i zwraca jego token', () => {
     const room = new GameRoom('ABCD');
     const id = room.addPlayer('as', 'tok-x', null);
     room.detachMember(id, 1000);
-    expect(room.pruneExpiredReconnects(1000 + 59_000, 60_000)).toBe(0); // jeszcze w oknie
+    expect(room.pruneExpiredReconnects(1000 + 59_000, 60_000)).toEqual([]); // jeszcze w oknie
     expect(room.playerCount).toBe(1);
-    expect(room.pruneExpiredReconnects(1000 + 61_000, 60_000)).toBe(1); // okno minęło
+    expect(room.pruneExpiredReconnects(1000 + 61_000, 60_000)).toEqual(['tok-x']); // okno minęło → token do sprzątnięcia sesji
     expect(room.playerCount).toBe(0);
+  });
+
+  it('pruneExpiredReconnects działa też w pokoju z innym POŁĄCZONYM graczem (fix „ducha gracza")', () => {
+    // regresja: rozłączony gracz w zajętym pokoju musi wygasnąć po oknie, nie wisieć wiecznie
+    const room = new GameRoom('ABCD');
+    const member = { sendControl() {}, sendSnapshotBytes() {} };
+    const host = room.addPlayer('host', 'tok-h', member); // zostaje POŁĄCZONY (connectedCount≥1)
+    const leaver = room.addPlayer('leaver', 'tok-l', member);
+    room.detachMember(leaver, 1000); // rozłączenie — slot trzymany na reconnect
+    expect(room.connectedCount).toBe(1); // host wciąż połączony → wcześniej blokował prune
+    expect(room.pruneExpiredReconnects(1000 + 61_000, 60_000)).toEqual(['tok-l']);
+    expect(room.playerCount).toBe(1); // został tylko host
+    expect(room.hostId).toBe(host);
+    // marker rostera: rozłączony w oknie jest oznaczony, połączony host — nie
+    room.detachMember(host, 2000);
+    const roster = room.roomPlayers();
+    expect(roster.find((p) => p.id === host)?.disconnected).toBe(true);
   });
 });

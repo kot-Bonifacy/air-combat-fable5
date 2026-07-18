@@ -56,6 +56,23 @@ describe('Lobby — rejestr pokoi', () => {
     expect(lobby.roomCount).toBe(0);
   });
 
+  it('maintain sprząta wygasły slot także w pokoju z POŁĄCZONYM graczem (fix „ducha gracza")', () => {
+    const lobby = new Lobby();
+    let now = 1000;
+    const { room, playerId: hostId } = lobby.createRoom('host', 'tok-host', member());
+    const join = lobby.joinRoom(room.code, 'leaver', 'tok-leaver', member());
+    if (!join.ok) throw new Error('join nie powiódł się');
+    room.detachMember(join.playerId, now); // leaver się rozłącza (slot trzymany na reconnect)
+    lobby.maintain(now); // wciąż w oknie — slot zostaje, mimo że host jest połączony
+    expect(room.playerCount).toBe(2);
+    now += RECONNECT_WINDOW_MS + 1;
+    lobby.maintain(now); // okno minęło → duch znika, CHOĆ host wciąż połączony (wcześniej blokował prune)
+    expect(room.playerCount).toBe(1);
+    expect(lobby.roomCount).toBe(1); // pokój żyje dalej (host)
+    expect(room.hostId).toBe(hostId);
+    expect(lobby.tryReconnect('tok-leaver', member())).toBeNull(); // sesja ducha sprzątnięta — token nie wskrzesza slotu
+  });
+
   it('brak wycieku pokoi: 100 cykli utwórz→rozłącz→wygaśnięcie', () => {
     const lobby = new Lobby();
     let now = 1000;
