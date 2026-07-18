@@ -18,9 +18,6 @@ import {
   type RoomSummary,
 } from '@air-combat/shared';
 
-/** Maks. botów do dołożenia = pojemność pokoju − 1 slot na hosta (zgodnie z serwerem). */
-const MAX_BOTS = MAX_PLAYERS_PER_ROOM - 1;
-
 /** Etykiety poziomów trudności dla UI (klucze JSON są bez polskich znaków). */
 const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   latwy: 'łatwy',
@@ -176,11 +173,6 @@ export class LobbyUI {
   private readonly settingsRow: HTMLDivElement;
   private readonly settingsSummary: HTMLDivElement;
   private readonly waitModeSelect: HTMLSelectElement;
-  /** Kontener globalnych botów (liczba + poziom) — widoczny TYLKO w FFA; w trybie drużynowym boty są
-   *  per slot (lobby slotowe RTS 2026-06-26), więc globalne selektory są chowane. */
-  private readonly ffaBotsBox: HTMLSpanElement;
-  private readonly waitBotsSelect: HTMLSelectElement;
-  private readonly waitDiffSelect: HTMLSelectElement;
   // czat poczekalni: log wiadomości + pole wpisywania (treść renderowana przez textContent — XSS)
   private readonly chatLogEl: HTMLDivElement;
   private readonly chatInput: HTMLInputElement;
@@ -308,33 +300,17 @@ export class LobbyUI {
 
     // --- ustawienia pokoju w poczekalni (host steruje, reszta widzi podsumowanie) ---
     // Bez osobnego pełnowymiarowego podpisu — selektor trybu jest samoopisowy, a rolę hosta
-    // tłumaczy podpowiedź na dole. Wiersz ląduje obok selektora drużyny (controlsRow).
+    // tłumaczy podpowiedź na dole. Wiersz ląduje obok selektora drużyny (controlsRow). Boty są
+    // per slot w OBU trybach (dodaj/usuń w rosterze), więc tu został już TYLKO wybór trybu — bez
+    // globalnego licznika/poziomu (spójność FFA↔drużynowy: wybór modelu bota w „+ dodaj bota").
     this.settingsRow = el('div', 'lobby-row lobby-bot-row lobby-settings-row');
     this.waitModeSelect = selectEl(
       'lobby-select lobby-select-mode',
       MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
       'ffa', // domyślnie FFA (życzenie usera 2026-07-12); i tak nadpisywany view.mode dla hosta
     );
-    const settingsBotLabel = el('label', 'lobby-label');
-    settingsBotLabel.textContent = 'Boty';
-    this.waitBotsSelect = selectEl(
-      'lobby-select lobby-select-bots',
-      Array.from({ length: MAX_BOTS + 1 }, (_, i) => ({ value: String(i), label: String(i) })),
-      '0',
-    );
-    this.waitDiffSelect = selectEl(
-      'lobby-select',
-      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: DIFFICULTY_LABELS[lvl] })),
-      'normalny',
-    );
-    // globalne selektory botów (FFA): liczba + poziom. W trybie drużynowym chowane (boty per slot).
-    this.ffaBotsBox = document.createElement('span');
-    this.ffaBotsBox.className = 'lobby-ffa-bots';
-    this.ffaBotsBox.append(settingsBotLabel, this.waitBotsSelect, this.waitDiffSelect);
-    for (const sel of [this.waitModeSelect, this.waitBotsSelect, this.waitDiffSelect]) {
-      sel.addEventListener('change', () => this.emitSettings());
-    }
-    this.settingsRow.append(this.waitModeSelect, this.ffaBotsBox);
+    this.waitModeSelect.addEventListener('change', () => this.emitSettings());
+    this.settingsRow.append(this.waitModeSelect);
     this.settingsSummary = el('div', 'lobby-sub lobby-settings-summary');
 
     // --- czat poczekalni ---
@@ -375,16 +351,21 @@ export class LobbyUI {
     actionRow.append(this.startBtn, this.readyBtn, leaveBtn);
 
     const panel = el('div', 'lobby-panel');
+    // Kolejność (stabilizacja poczekalni 2026-07-18): elementy, na które patrzy i którymi steruje gracz
+    // (kod, Twoja drużyna/ustawienia, Twój samolot, czat) NA GÓRZE, w stałych pozycjach. Rosnący z botami
+    // roster (płaska lista FFA / kolumny drużyn) PRZENIESIONY NIŻEJ — tuż nad podpowiedź i pasek akcji —
+    // aby dodawanie/usuwanie botów nie spychało niczego powyżej. W parze z zakotwiczeniem panelu u góry
+    // (.lobby-waiting justify-content:flex-start) i stałą szerokością kolumn (koniec skoku w bok/pionie).
     panel.append(
       wTitle,
       codeRow,
-      this.waitingPlayersEl,
-      this.teamsEl,
       this.controlsRow,
       this.settingsSummary,
       this.planeRow,
       this.hudOptionsRow,
       chatSection,
+      this.waitingPlayersEl,
+      this.teamsEl,
       this.waitingHintEl,
       actionRow,
     );
@@ -521,9 +502,10 @@ export class LobbyUI {
 
     const isHost = view.youId === view.hostId;
     const inWaiting = view.state === 'waiting';
-    if (p.isBot && view.mode === 'team' && isHost && inWaiting) {
-      // sloty RTS: host steruje botem (poziom per bot + przeniesienie do drugiej drużyny + usunięcie)
-      row.append(this.buildBotControls(p));
+    if (p.isBot && isHost && inWaiting) {
+      // sloty RTS: host steruje botem (poziom per bot + usunięcie; w trybie drużynowym też ⇄ przenieś
+      // do drugiej strony). Dla spójności FFA używa tych samych kontrolek — bez ⇄ (brak stron w FFA).
+      row.append(this.buildBotControls(p, view.mode === 'team'));
     } else {
       // wskaźnik gotowości (system „Gotów") — tylko dla ludzi poza hostem (host steruje startem)
       const ready = el('span', 'lobby-player-ready');
@@ -538,8 +520,9 @@ export class LobbyUI {
   }
 
   /** Kontrolki slotu bota dla HOSTA (lobby slotowe RTS 2026-06-26): poziom trudności per bot,
-   *  przeniesienie do drugiej drużyny i usunięcie. Wartości waliduje/klampuje serwer (niezm. nr 11). */
-  private buildBotControls(p: RoomPlayer): HTMLSpanElement {
+   *  przeniesienie do drugiej drużyny (`showMove` = tylko tryb drużynowy — w FFA nie ma stron)
+   *  i usunięcie. Wartości waliduje/klampuje serwer (niezm. nr 11). */
+  private buildBotControls(p: RoomPlayer, showMove: boolean): HTMLSpanElement {
     const box = document.createElement('span');
     box.className = 'lobby-bot-controls';
     // poziom trudności tego bota — zmiana wysyła editBot{difficulty}
@@ -551,23 +534,28 @@ export class LobbyUI {
     diff.addEventListener('change', () => {
       this.cb.onEditBot(p.id, { difficulty: diff.value as DifficultyLevel });
     });
-    // przenieś do drugiej drużyny (TEAM_COUNT=2 → naprzemiennie)
-    const otherTeam = (p.faction + 1) % TEAM_COUNT;
-    const move = button('⇄', 'lobby-btn lobby-btn-icon', () => this.cb.onEditBot(p.id, { team: otherTeam }));
-    move.title = `Przenieś do: ${teamLabel(otherTeam)}`;
+    box.append(diff);
+    // przenieś do drugiej drużyny (TEAM_COUNT=2 → naprzemiennie) — TYLKO tryb drużynowy
+    if (showMove) {
+      const otherTeam = (p.faction + 1) % TEAM_COUNT;
+      const move = button('⇄', 'lobby-btn lobby-btn-icon', () => this.cb.onEditBot(p.id, { team: otherTeam }));
+      move.title = `Przenieś do: ${teamLabel(otherTeam)}`;
+      box.append(move);
+    }
     // usuń bota
     const remove = button('✕', 'lobby-btn lobby-btn-icon lobby-btn-danger', () => this.cb.onRemoveBot(p.id));
     remove.title = 'Usuń bota';
-    box.append(diff, move, remove);
+    box.append(remove);
     return box;
   }
 
-  /** Kontrolki „+ dodaj bota" dla HOSTA (per drużyna, lobby slotowe RTS): selektory modelu samolotu
-   *  i poziomu trudności nowego bota + przycisk dodania. Wybór jest WSPÓLNY i zapamiętany
+  /** Kontrolki „+ dodaj bota" dla HOSTA (lobby slotowe RTS): selektory modelu samolotu i poziomu
+   *  trudności nowego bota + przycisk dodania. `team` = drużyna docelowa w trybie drużynowym, `null`
+   *  w FFA (bez strony) — ten sam widget w obu trybach (spójność). Wybór jest WSPÓLNY i zapamiętany
    *  (`pendingBot*`) — po dodaniu bota kolejny podpowiada się taki sam (życzenie usera 2026-06-27).
    *  „Losowy" model → onAddBot bez `plane` (serwer losuje typ z id). Selektory inicjalizowane bieżącym
-   *  zapamiętanym wyborem, bo updateWaiting przerysowuje kolumny przy każdym roomUpdate. */
-  private buildAddBotRow(faction: number, roomFull: boolean): HTMLDivElement {
+   *  zapamiętanym wyborem, bo updateWaiting przerysowuje roster przy każdym roomUpdate. */
+  private buildAddBotRow(team: number | null, roomFull: boolean): HTMLDivElement {
     const wrap = el('div', 'lobby-add-bot-box');
     const plane = selectEl(
       'lobby-select lobby-bot-diff',
@@ -591,7 +579,7 @@ export class LobbyUI {
     selectors.append(plane, diff);
     // brak modelu (Losowy) → onAddBot bez plane (undefined) → serwer losuje typ
     const add = button('+ dodaj bota', 'lobby-btn lobby-btn-small lobby-add-bot', () =>
-      this.cb.onAddBot(faction, this.pendingBotDifficulty, this.pendingBotPlane ?? undefined),
+      this.cb.onAddBot(team, this.pendingBotDifficulty, this.pendingBotPlane ?? undefined),
     );
     add.disabled = roomFull;
     if (roomFull) add.title = 'Pokój pełny';
@@ -640,7 +628,13 @@ export class LobbyUI {
         this.teamsEl.append(col);
       }
     } else {
+      // FFA: roster płaski. Host dostaje „+ dodaj bota" NAD listą (jak w kolumnie drużyny — lista rośnie
+      // w dół, przycisk zostaje na miejscu) + kontrolki per bot w wierszach (buildPlayerRow). Boty per slot
+      // także w FFA (addBot/removeBot) — spójnie z trybem drużynowym, z wyborem modelu każdego bota.
       this.waitingPlayersEl.replaceChildren();
+      if (isHost && !matchInProgress) {
+        this.waitingPlayersEl.append(this.buildAddBotRow(null, roomFull));
+      }
       for (const p of view.players) this.waitingPlayersEl.append(this.buildPlayerRow(p, view));
     }
 
@@ -664,19 +658,17 @@ export class LobbyUI {
     this.readyBtn.textContent = this.myReady ? '✔ Gotów — kliknij, by cofnąć' : '✔ Oznacz: jestem gotów';
     this.readyBtn.classList.toggle('is-ready', this.myReady);
 
-    // ustawienia pokoju: host edytuje (selektory), reszta widzi podsumowanie. Globalne boty TYLKO w FFA —
-    // w trybie drużynowym boty są per slot (lobby RTS), więc chowamy globalny licznik/poziom.
+    // ustawienia pokoju: host edytuje (selektor trybu), reszta widzi podsumowanie tekstowe. Boty są per
+    // slot w OBU trybach (dodawane/usuwane w rosterze), więc tu został już tylko wybór trybu.
     this.settingsRow.style.display = isHost && !matchInProgress ? '' : 'none';
     this.settingsSummary.style.display = !isHost && !matchInProgress ? '' : 'none';
-    this.ffaBotsBox.style.display = isTeam ? 'none' : '';
     if (isHost) {
       this.waitModeSelect.value = view.mode;
-      this.waitBotsSelect.value = String(view.botCount);
-      this.waitDiffSelect.value = view.difficulty;
     } else {
+      // poziom botów jest teraz per slot (nie globalny), więc nie podajemy pojedynczego poziomu — sama liczba
       this.settingsSummary.textContent = isTeam
         ? 'Tryb: Drużynowy'
-        : `Tryb: FFA  ·  Boty: ${String(view.botCount)} (${DIFFICULTY_LABELS[view.difficulty]})`;
+        : `Tryb: FFA  ·  Boty: ${String(view.botCount)}`;
     }
 
     // Start (host): licznik gotowości + BLOKADA przy pustej drużynie (decyzja usera: „pozwól, ale zablokuj
@@ -706,20 +698,12 @@ export class LobbyUI {
     this.waitingHintEl.style.display = hint ? '' : 'none';
   }
 
-  /** Host wysłał zmianę ustawień. FFA: tryb + globalna liczba/poziom botów. Drużynowy: SAM tryb —
-   *  boty są per slot (lobby RTS), więc nie dotykamy ich globalnym selektorem (uniknięcie przebudowy
-   *  rosteru, która skasowałaby przypisania drużyn/poziomy per bot). Serwer klampuje wartości. */
+  /** Host zmienił tryb meczu. Wysyłamy SAM tryb — boty są per slot w OBU trybach (addBot/removeBot),
+   *  więc nie dotykamy ich globalnym licznikiem (który przez setBots przebudowałby cały roster i
+   *  skasował modele/poziomy per bot oraz przypisania drużyn). Serwer klampuje wartość. */
   private emitSettings(): void {
     const mode: MatchMode = this.waitModeSelect.value === 'team' ? 'team' : 'ffa';
-    if (mode === 'team') {
-      this.cb.onUpdateRoom({ mode });
-    } else {
-      this.cb.onUpdateRoom({
-        mode,
-        bots: Number(this.waitBotsSelect.value) || 0,
-        difficulty: this.waitDiffSelect.value as DifficultyLevel,
-      });
-    }
+    this.cb.onUpdateRoom({ mode });
   }
 
   private trySendChat(): void {
@@ -903,6 +887,10 @@ const LOBBY_CSS = `
   /* tło poczekalni: grafika dogfight (assets/ serwowane pod /) */
   background: #070d15 center/cover no-repeat;
   background-image: linear-gradient(rgba(7,13,21,0.55), rgba(7,13,21,0.78)), url('/dogfight-splash.jpg');
+  /* zakotwiczenie panelu U GÓRY (stabilizacja 2026-07-18): centrowanie w pionie (.lobby-screen) re-centrowało
+     panel przy każdej zmianie wysokości (dodanie/usunięcie bota) → skok w pionie. Flex-start trzyma górę panelu
+     w miejscu, a rosnący (przeniesiony na dół) roster rozwija się w dół. Ekran wejściowy zostaje wyśrodkowany. */
+  justify-content: flex-start;
 }
 .lobby-title { font: 700 30px monospace; letter-spacing: 2px; color: #ffd24a; text-shadow: 0 2px 8px rgba(0,0,0,0.8); }
 .lobby-sub { color: #9fc4e6; }
@@ -922,7 +910,6 @@ const LOBBY_CSS = `
   border: 1px solid #345; border-radius: 6px; outline: none;
 }
 .lobby-select:focus { border-color: #6aa8da; }
-.lobby-select-bots { min-width: 56px; }
 .lobby-select-mode { min-width: 200px; }
 .lobby-btn {
   font: 600 15px/1 monospace; padding: 11px 22px; cursor: pointer;
@@ -947,7 +934,7 @@ const LOBBY_CSS = `
 .lobby-panel {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   padding: 22px 32px; border-radius: 12px; box-sizing: border-box;
-  max-height: calc(100vh - 28px); overflow-y: auto;
+  max-height: calc(100vh - 48px); overflow-y: auto;
   background: rgba(7,13,21,0.72); border: 1px solid #2a3f54;
   box-shadow: 0 10px 40px rgba(0,0,0,0.5);
 }
@@ -958,14 +945,19 @@ const LOBBY_CSS = `
   padding: 0 6px; text-shadow: 0 2px 8px rgba(0,0,0,0.9);
 }
 .lobby-players { display: flex; flex-direction: column; gap: 4px; min-width: 240px; }
-.lobby-player-row { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: rgba(12,22,34,0.8); border-radius: 5px; }
+/* flex-wrap: wiersz bota w trybie drużynowym mieści kontrolki hosta (poziom/⇄/✕) w DRUGIEJ linii zamiast
+   rozpychać kolumnę wszerz (stabilizacja 2026-07-18) — patrz .lobby-bot-controls (flex-basis:100%). */
+.lobby-player-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; row-gap: 4px; padding: 5px 10px; background: rgba(12,22,34,0.8); border-radius: 5px; }
 .lobby-player-tag { width: 44px; font-size: 12px; font-weight: 700; color: #ffd24a; }
 .lobby-player-name { color: #eaf3ff; }
 .lobby-player-plane { margin-left: auto; padding-left: 12px; font-size: 12px; color: #9fc4e6; }
 /* kolumny drużyn (tryb drużynowy): dwie strony obok siebie, każda z własnym kolorem (2026-06-25) */
 .lobby-teams { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
 .lobby-team-col {
-  display: flex; flex-direction: column; gap: 6px; min-width: 220px;
+  /* STAŁA szerokość (stabilizacja 2026-07-18): wcześniej min-width pozwalał kolumnie urosnąć z ~245 do
+     ~436 px, gdy dochodził pierwszy bot z kontrolkami hosta → skok w bok i re-centrowanie panelu. Teraz
+     obie kolumny mają zawsze tę samą szerokość (pusta = pełna), więc obszar drużyn ma stałą szerokość. */
+  display: flex; flex-direction: column; gap: 6px; width: 300px; flex: 0 0 300px; box-sizing: border-box;
   padding: 10px 12px; border-radius: 8px;
   background: rgba(12,22,34,0.7); border: 1px solid #2a3f54; border-top: 3px solid #5a7a96;
 }
@@ -1017,7 +1009,9 @@ const LOBBY_CSS = `
 .lobby-btn-wait { opacity: 0.85; }
 .lobby-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 /* lobby slotowe RTS: kontrolki bota po stronie hosta (poziom per bot + przenieś + usuń) */
-.lobby-bot-controls { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; padding-left: 8px; }
+/* kontrolki bota w OSOBNEJ (drugiej) linii wiersza — flex-basis:100% wymusza zawinięcie w wrapującym
+   .lobby-player-row, dzięki czemu mieszczą się w stałej szerokości kolumny bez rozpychania jej wszerz. */
+.lobby-bot-controls { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 100%; justify-content: flex-end; }
 .lobby-bot-diff { font-size: 12px; padding: 3px 6px; min-width: auto; }
 .lobby-btn-icon { min-width: auto; padding: 4px 8px; font-size: 13px; line-height: 1; }
 .lobby-btn-danger { border-color: #8c4a4a; color: #ffb0b0; }
@@ -1027,7 +1021,6 @@ const LOBBY_CSS = `
 .lobby-add-bot-selectors { display: flex; gap: 4px; }
 .lobby-add-bot-selectors .lobby-select { flex: 1 1 0; min-width: 0; }
 .lobby-add-bot { margin: 0; align-self: stretch; }
-.lobby-ffa-bots { display: inline-flex; align-items: center; gap: 8px; }
 .lobby-settings-row { flex-wrap: wrap; justify-content: center; }
 .lobby-settings-summary { font-size: 13px; color: #cde; }
 .lobby-hint { font-size: 13px; text-align: center; max-width: 42em; }
