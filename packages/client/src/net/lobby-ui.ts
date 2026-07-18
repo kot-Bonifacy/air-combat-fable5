@@ -352,10 +352,14 @@ export class LobbyUI {
 
     const panel = el('div', 'lobby-panel');
     // Kolejność (stabilizacja poczekalni 2026-07-18): elementy, na które patrzy i którymi steruje gracz
-    // (kod, Twoja drużyna/ustawienia, Twój samolot, czat) NA GÓRZE, w stałych pozycjach. Rosnący z botami
-    // roster (płaska lista FFA / kolumny drużyn) PRZENIESIONY NIŻEJ — tuż nad podpowiedź i pasek akcji —
-    // aby dodawanie/usuwanie botów nie spychało niczego powyżej. W parze z zakotwiczeniem panelu u góry
+    // (kod, Twoja drużyna/ustawienia, Twój samolot, czat, pasek akcji) NA GÓRZE, w stałych pozycjach.
+    // Rosnący z botami roster (płaska lista FFA / kolumny drużyn) jest OSTATNI, więc dodawanie/usuwanie
+    // botów rozwija się tylko w dół i nie spycha niczego powyżej. W parze z zakotwiczeniem panelu u góry
     // (.lobby-waiting justify-content:flex-start) i stałą szerokością kolumn (koniec skoku w bok/pionie).
+    // Pasek akcji (Start/Gotów/Wyjdź) + podpowiedź TUŻ POD CZATEM, NAD rosterem (2026-07-18, zgłoszenie
+    // usera „łatwo przegapić" — wcześniej były pod długim rosterem i wypadały poza ekran). Dzięki temu
+    // Start/Wyjdź są zawsze w widocznej, stałej pozycji. Roster (płaska lista FFA / kolumny drużyn) zostaje
+    // OSTATNI, więc dodawanie/usuwanie botów nadal rozwija się tylko w dół i nie rusza niczego powyżej.
     panel.append(
       wTitle,
       codeRow,
@@ -364,10 +368,10 @@ export class LobbyUI {
       this.planeRow,
       this.hudOptionsRow,
       chatSection,
-      this.waitingPlayersEl,
-      this.teamsEl,
       this.waitingHintEl,
       actionRow,
+      this.waitingPlayersEl,
+      this.teamsEl,
     );
     this.waiting.append(panel);
 
