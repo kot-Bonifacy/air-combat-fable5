@@ -42,6 +42,37 @@ komplet ostrzeżeń]; `docs/fizyka-lotu.md` §5.2/§5.3/**nowa §13** [formuły 
 w „Wynik R5"; **PROJEKT FIZYKA v2 domknięty po stronie kodu/docs — pozostaje playtest usera + smoke v10 na
 produkcji**). ⏳ user: playtest czucia 3 samolotów (ankieta 8 pkt w „Wynik R5") + deploy front+back RAZEM (v10).
 
+**Ciepły silnik na starcie + weryfikacja „przejęcia kontroli" 2026-07-18 (2 zgłoszenia usera, 782 testy
+zielone, BEZ protokołu — v10, shared/serwer/klient + test):** (1) **Ciepły silnik na starcie** (życzenie
+usera „wyższa temperatura, zbliżona do długiego lotu"): spawn ustawiał `engineHeatFrac = 0` (zimny, ~40 °C).
+Teraz startuje w **temperaturze RÓWNOWAGI gazu przelotowego** — nowy shared `engineHeatEquilibrium(throttle,
+iasMs, plane)` = `militaryEqHeat·gaz²/chłodzenie(IAS)` (bez WEP; `stepEngineHeat` reużywa tę formułę ×wepMul,
+DRY). **Decyzja usera (AskUserQuestion):** kotwica = **gaz przelotowy 0.8** (= `SPAWN_THROTTLE`), NIE pełna
+moc 1.0 → wskaźnik ~44 % (Spit ~76 °C / Bf ~74 °C / Zero ~121 °C), zielony, daleko od progu „gorąco" (0.85).
+To **punkt stały modelu** (silnik startuje dokładnie tam, gdzie i tak by osiadł → zero transientu rozgrzewania).
+Liczone po OBU stronach: serwer `game-room.spawn` (`SPAWN_THROTTLE`, `plane.spawnSpeedMs`); klient `prediction.reconcile`
+przy świeżym ŻYWYM życiu (`!continues && serverAlive` → `engineHeatEquilibrium(state.throttle, state.iasMs,
+plane)`; przejście do wraku/śmierci → 0, i tak niewidoczne). Heat NIE jedzie w snapshocie (jak dotąd) →
+protokół v10 bez zmian; deploy front+back razem tylko dla spójności WSKAŹNIKA (nie handshake). Zaktualizowany
+test `overheat.test.ts` (respawn = ciepły, nie zimny) + 2 nowe w `engine-heat.test.ts` (punkt stały + zbieżność
+z zimna). Golden/harness fizyki NIETKNIĘTE (używają `createPlaneState`, nie serwerowego spawnu). (2)
+**Weryfikacja zgłoszenia „‹tatang/tatangas› przejął kontrolę nad twoim samolotem"** (relacja od znajomego
+usera): przeszukany cały kod — **taki komunikat NIE istnieje, i nie ma mechanizmu przejęcia cudzego samolotu**.
+Input steruje tylko własną encją; jedyne „przejęcie" to `reconnectByToken` = odzyskanie WŁASNEGO slotu tokenem
+(sekret w localStorage ofiary). Rozłączony samolot leci na autopilocie, nie pod kontrolą człowieka. **Wniosek
+(potwierdza hipotezę nr 1 z `refaktoring.md §3.2`):** to natywny dymek przeglądarki o pointer locku
+(„dogfight.**tatanga**.eu kontroluje teraz kursor") — „tatanga" to DOMENA, nie nick; „kontroluje kursor"
+sparafrazowane jako „przejął samolot" (myszą się steruje). Realny błąd na marginesie: „duch gracza" po F5
+(`refaktoring.md §3.1`, plan RF1) — może tworzyć dublet nicku, ale też NIE daje kontroli nad cudzym samolotem.
+(3) **Skala temperatury Zera** (zgłoszenie usera „redline 230 °C dziwnie wysokie"): weryfikacja wykazała, że
+230 °C **jest realistyczne** — to CHT (temperatura głowicy) gwiazdowca Sakae, inna wielkość niż temp. cieczy
+Merlin/DB 601 (limity CHT gwiazdowców WWII: R-2800 232 °C ciągła / 260 °C max 1 h). `redlineTempC`/`coldTempC`
+to WYŁĄCZNIE kotwice skali HUD (zero wpływu na fizykę — progi po `engineHeatFrac`). Decyzja usera
+(AskUserQuestion): zachować realny CHT, poprawić za niski dolny anchor → `a6m2-zero.json` **coldTempC 40→100,
+redlineTempC 230→250** (spawn wskaźnika ~163 °C; oba na górnej granicy sanity loadera [-40,100]/[60,250],
+przechodzą — granice domknięte). Fizyka/golden nietknięte. **NIEZACOMMITOWANE.** ⏳ user: playtest (silnik
+ciepły na starcie — wskaźnik ~44 %; Zero ~163 °C / redline 250 °C?).
+
 **WEP odczuwalny — sztuczne podkręcenie + fix HUD Zera 2026-07-12 (zgłoszenie usera, 763 testy zielone,
 BEZ protokołu — v10, czysto shared/JSON + klient):** user: WEP nic nie robi — Zero bez napisu „WEP", brak
 różnicy w dźwięku, brak wzrostu prędkości i szybszego grzania. Diagnoza sondą: boost 10–12% dawał tylko

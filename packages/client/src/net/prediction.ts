@@ -7,6 +7,7 @@ import {
   airDensityKgM3,
   createPilotDemands,
   createSimPlane,
+  engineHeatEquilibrium,
   nearestToroidalImage,
   stepPilotedPlane,
   stepWreckPiloted,
@@ -153,7 +154,8 @@ export class Predictor {
     const state = this.sim.state;
     // temperatura silnika NIE jest w snapshocie (jak stall/G-LOC): trzymamy ją sprzed reconcile, bo
     // replay niepotwierdzonych inputów (niżej) „dopalałby" ją wielokrotnie co snapshot (błąd paliwa
-    // sprzed v7). predict() advances ją raz na tick = zegar ścienny; zmiana fazy → zimny silnik (0).
+    // sprzed v7). predict() advances ją raz na tick = zegar ścienny; zmiana fazy → świeże życie startuje
+    // od temperatury równowagi gazu przelotowego (ciepły silnik, jak serwer w spawn()), nie od zera.
     const heatBefore = state.engineHeatFrac;
     const firstState = !this.hasServer;
     // faza życia PRZED przyjęciem autorytetu (decyduje, czy predykcja ma ciągłość)
@@ -232,8 +234,14 @@ export class Predictor {
     this.hasServer = true;
 
     // temperatura silnika: replay jej nie dotyka (patrz heatBefore) — przy ciągłości fazy zostaje
-    // sprzed reconcile, przy zmianie (spawn/zestrzelenie/respawn) zimny silnik jak na serwerze.
-    state.engineHeatFrac = continues ? heatBefore : 0;
+    // sprzed reconcile; przy zmianie fazy świeże ŻYWE życie startuje od równowagi gazu przelotowego
+    // (ciepły silnik, mirror serwerowego spawn: SPAWN_THROTTLE odbity w server.throttle, IAS z prędkości),
+    // a przejście do wraku/śmierci (nie-żywe) → 0 (i tak niewidoczne — HUD pokazuje temp. tylko żywym).
+    state.engineHeatFrac = continues
+      ? heatBefore
+      : serverAlive
+        ? engineHeatEquilibrium(state.throttle, state.iasMs, this.plane)
+        : 0;
 
     // korekta = rozjazd predykcji: stary predykowany-najnowszy vs nowy (po acku + replay).
     // Mierzalna i wygładzana przy ciągłości fazy (żywy lub wrak); metryki Fazy 9 liczymy

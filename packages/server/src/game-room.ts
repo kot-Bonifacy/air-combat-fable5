@@ -42,6 +42,7 @@ import {
   firstZoneHit,
   flutterWingDamageHp,
   effectiveFlapIndex,
+  engineHeatEquilibrium,
   flapRipWingDamageHp,
   nearestZoneToPoint,
   getForward,
@@ -1955,7 +1956,10 @@ export class GameRoom {
     state.angularRates.yaw = 0;
     state.throttle = SPAWN_THROTTLE;
     state.fuelFrac = 1; // nowe życie = pełny bak
-    state.engineHeatFrac = 0; // zimny silnik na świeżym życiu
+    // ciepły silnik na starcie (życzenie usera): stan ustalony gazu przelotowego zamiast zimnego (0) —
+    // start w temperaturze „po długim locie", bez fazy rozgrzewania. Klient liczy to samo w reconcile
+    // (świeże życie), więc wskaźnik HUD i model serwera startują z identycznej wartości.
+    state.engineHeatFrac = engineHeatEquilibrium(SPAWN_THROTTLE, player.plane.spawnSpeedMs, player.plane);
     state.wepActive = false; // dopalacz wyłączony na starcie (włącza go input pilota)
     state.flapIndex = 0; // klapy schowane na starcie (wysuwa je input pilota)
     state.iasMs = player.plane.spawnSpeedMs;

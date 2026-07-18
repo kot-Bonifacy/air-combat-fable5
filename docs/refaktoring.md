@@ -62,11 +62,20 @@ reprodukcji (dwa konteksty przeglądarki, wspólny localStorage).
 w rodzaju „…‹nick› kontroluje kursor w trybie obserwatora". **Taki tekst NIE istnieje w kodzie gry**
 (zweryfikowane grep-em 2026-07-15). User nie pamięta dokładnej postaci/miejsca.
 
+**Aktualizacja 2026-07-18 (nowe zgłoszenie usera → hipoteza nr 1 praktycznie potwierdzona):** znajomy
+usera zrelacjonował komunikat „**‹tatang/tatangas› przejął kontrolę nad twoim samolotem**". Ponowny grep
+całego kodu: takiego napisu NADAL nie ma, a input steruje wyłącznie własną encją (jedyne „przejęcie" to
+`reconnectByToken` = odzyskanie WŁASNEGO slotu tokenem-sekretem z localStorage; rozłączony leci autopilotem).
+Kluczowe: „**tatanga**" = domena `dogfight.tatanga.eu`, którą przeglądarka wpisuje w dymek pointer-locka —
+NIE nick gracza. „kontroluje kursor" → sparafrazowane jako „przejął samolot" (myszą się lata). To domyka
+diagnozę na rzecz hipotezy nr 1.
+
 **Hipotezy (kolejność prawdopodobieństwa):**
 1. **Natywny dymek przeglądarki o pointer locku** („dogfight.tatanga.eu kontroluje teraz kursor" —
    Chrome pokazuje go przy KAŻDYM ponownym przejęciu kursora). Od commitu `cc0c887` lock trwa cały
    lot i jest wznawiany po Esc/menu/utracie fokusu → dymek może wyskakiwać w trakcie walki i zbiegać
-   się czasowo z byciem obserwowanym (korelacja pozorna). „Nick" w relacji = adres strony.
+   się czasowo z byciem obserwowanym (korelacja pozorna). „Nick" w relacji = adres strony. **← zgłoszenie
+   2026-07-18 z dosłownym „tatanga" mocno to potwierdza.**
 2. Alert gry `OBSERWUJESZ: ‹nick›` renderowany na złym kliencie — wymagałby `playerDeath==='spectating'`
    u żywego gracza (podejrzane ścieżki: respawn/reconnect nie zeruje stanu obserwatora).
 3. Efekt uboczny ducha z §3.1 (dwa byty o tym samym nicku mieszają stany).

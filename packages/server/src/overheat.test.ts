@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIXED_DT_S, OVERHEAT_FAILURE_TIME_S, type InputFrame } from '@air-combat/shared';
+import { ENGINE_HEAT_WARN, FIXED_DT_S, OVERHEAT_FAILURE_TIME_S, type InputFrame } from '@air-combat/shared';
 import { GameRoom } from './game-room';
 
 // Przegrzanie silnika po stronie serwera (autorytatywnie): temperatura ponad czerwoną linią aplikuje
@@ -90,7 +90,7 @@ describe('przegrzanie silnika — obrażenia strefy silnika', () => {
     expect(room.zoneHpOf(t, 'engine')).toBe(engine0); // brak obrażeń
   });
 
-  it('(re)spawn zeruje temperaturę silnika', () => {
+  it('(re)spawn ustawia ciepłą temperaturę przelotową (reset z przegrzania, ale nie zimny)', () => {
     const room = new GameRoom('ABCD');
     const t = add(room, 'T');
     room.start();
@@ -100,7 +100,11 @@ describe('przegrzanie silnika — obrażenia strefy silnika', () => {
     expect(room.engineHeatOf(t)).toBeGreaterThan(1);
     room.abortMatch();
     room.start();
-    expect(room.engineHeatOf(t)).toBe(0); // zimny silnik na nowym życiu
+    // ciepły silnik na starcie (2026-07-18): równowaga gazu przelotowego zamiast zera — zresetowany
+    // z przegrzania (1.6), ale ciepły (>0) i bezpiecznie poniżej progu „gorąco" (WARN)
+    const heat = room.engineHeatOf(t);
+    expect(heat).toBeGreaterThan(0.2);
+    expect(heat).toBeLessThan(ENGINE_HEAT_WARN);
     expect(room.zoneLevelOf(t, 'engine')).toBe(0);
     expect(room.overheatAccumOf(t)).toBe(0); // licznik przegrzania też wyzerowany
   });

@@ -34,8 +34,8 @@
     "speedCoolingK": 0.4,
     "speedCoolingRefKmh": 300,
     "overheatDamagePerS": 2.5,
-    "coldTempC": 40,
-    "redlineTempC": 230
+    "coldTempC": 100,
+    "redlineTempC": 250
   },
   "nMaxG": 7,
   "nMinG": -3.5,

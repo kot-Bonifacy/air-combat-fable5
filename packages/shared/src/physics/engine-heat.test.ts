@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ENGINE_HEAT_REDLINE, ENGINE_HEAT_WARN, FIXED_DT_S, MS_TO_KMH } from '../constants';
 import { BF109_E, SPITFIRE_MK2 } from '../planes/loader';
-import { engineDisplayTempC, overheatDamageHp, stepEngineHeat } from './engine-heat';
+import { engineDisplayTempC, engineHeatEquilibrium, overheatDamageHp, stepEngineHeat } from './engine-heat';
 import { createPlaneState } from './state';
 
 // Model termiczny silnika (fizyka v2 R2): temperatura (engineHeatFrac) relaksuje do equilibrium
@@ -46,6 +46,40 @@ describe('engine-heat: WEP jako reżim przegrzewający (kalibracja do limitów h
     expect(bf).toBeGreaterThan(BF109_E.engineThermal.wepTimeToRedlineS - 3);
     expect(bf).toBeLessThan(BF109_E.engineThermal.wepTimeToRedlineS + 3);
     expect(BF109_E.engineThermal.wepTimeToRedlineS).toBe(60); // lock: ~1 min Notleistung
+  });
+});
+
+describe('engine-heat: equilibrium (ciepły silnik na starcie)', () => {
+  // spawn ustawia engineHeatFrac = engineHeatEquilibrium(gaz przelotowy, prędkość spawnu): silnik startuje
+  // w stanie ustalonym „po długim locie", nie zimny (0). Musi być punktem stałym modelu (żeby nie było
+  // transientu po spawnie) i bezpiecznie poniżej progu „gorąco".
+  const cruiseThrottle = 0.8; // = SPAWN_THROTTLE (serwer); tu literał, bo to stała serwerowa
+
+  it('engineHeatEquilibrium jest punktem STAŁYM modelu (bez WEP) — seed w równowadze się nie rusza', () => {
+    for (const plane of [SPITFIRE_MK2, BF109_E]) {
+      const eq = engineHeatEquilibrium(cruiseThrottle, plane.spawnSpeedMs, plane);
+      const s = createPlaneState();
+      s.throttle = cruiseThrottle;
+      s.wepActive = false;
+      s.iasMs = plane.spawnSpeedMs;
+      s.engineHeatFrac = eq;
+      for (let i = 0; i < 60 * 600; i++) stepEngineHeat(s, plane, FIXED_DT_S); // 10 min
+      expect(s.engineHeatFrac).toBeCloseTo(eq, 6); // trzyma się dokładnie na równowadze
+      expect(eq).toBeGreaterThan(0); // ciepły, nie zimny (istota zmiany)
+      expect(eq).toBeLessThan(ENGINE_HEAT_WARN); // bezpiecznie poniżej progu „gorąco"
+    }
+  });
+
+  it('zimny silnik na gazie przelotowym DOCHODZI do engineHeatEquilibrium (spawn wyprzedza rozgrzewanie)', () => {
+    const plane = SPITFIRE_MK2;
+    const eq = engineHeatEquilibrium(cruiseThrottle, plane.spawnSpeedMs, plane);
+    const s = createPlaneState();
+    s.throttle = cruiseThrottle;
+    s.wepActive = false;
+    s.iasMs = plane.spawnSpeedMs;
+    s.engineHeatFrac = 0; // start zimny
+    for (let i = 0; i < 60 * 1500; i++) stepEngineHeat(s, plane, FIXED_DT_S); // 25 min → asymptota
+    expect(s.engineHeatFrac).toBeCloseTo(eq, 3); // ta sama równowaga, którą spawn ustawia od razu
   });
 });
 

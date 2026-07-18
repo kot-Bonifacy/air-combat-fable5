@@ -44,15 +44,27 @@ function speedCoolFactor(iasMs: number, t: PlaneConfig['engineThermal']): number
 }
 
 /**
+ * Temperatura RÓWNOWAGI silnika (engineHeatFrac) dla danego gazu i opływu, BEZ WEP — stan ustalony,
+ * do którego relaksuje silnik po dłuższym locie w tym reżimie (militaryEqHeat·gaz²/chłodzenie(IAS)).
+ * Używana przy spawnie: „ciepły silnik na starcie" = start w stanie ustalonym gazu przelotowego zamiast
+ * zimnego (0), więc bez fazy rozgrzewania. Liczona po OBU stronach sieci (serwer w spawn(), klient w
+ * reconcile przy świeżym życiu) z tej samej formuły, żeby wskaźnik HUD i model serwera startowały
+ * z identycznej wartości. Czysta — zależy tylko od gazu, IAS i konfiguracji.
+ */
+export function engineHeatEquilibrium(throttle: number, iasMs: number, plane: PlaneConfig): number {
+  const t = plane.engineThermal;
+  return (t.militaryEqHeat * throttle * throttle) / speedCoolFactor(iasMs, t);
+}
+
+/**
  * Krok modelu termicznego silnika (mutuje `state.engineHeatFrac`). Wołany w `pilotStep` po obu stronach
  * sieci. Czyste poza odczytem `state.throttle`/`state.iasMs`/`state.wepActive` (bieżący tick) — wynik zależy
  * tylko od nich, dt i konfiguracji, więc klient i serwer liczą identycznie. Wrak (throttle=0) tylko stygnie.
  */
 export function stepEngineHeat(state: PlaneState, plane: PlaneConfig, dtS: number): void {
   const t = plane.engineThermal;
-  const wepMul = state.wepActive ? t.wepHeatMul : 1;
-  const heatEq =
-    (t.militaryEqHeat * wepMul * state.throttle * state.throttle) / speedCoolFactor(state.iasMs, t);
+  // equilibrium bez WEP (wspólna formuła z engineHeatEquilibrium) × mnożnik WEP (liniowo)
+  const heatEq = engineHeatEquilibrium(state.throttle, state.iasMs, plane) * (state.wepActive ? t.wepHeatMul : 1);
   // τ grzania wyprowadzona z nagłówkowego wepTimeToRedlineS: czas przejścia od ustalonej temperatury
   // BOJOWEJ (militaryEqHeat) do czerwonej linii (1) na WEP przy 100% gazu i prędkości referencyjnej.
   // eqWep = militaryEqHeat·wepHeatMul (equilibrium WEP); H(t)=eqWep+(mil−eqWep)e^(−t/τ)=1 → odwracamy.
