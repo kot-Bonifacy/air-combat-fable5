@@ -1,14 +1,17 @@
 import { PerspectiveCamera, Vector3 } from 'three';
 
 // Znacznik samolotu w HUD (faza-06.md krok 5; faza 7: wielu + sojusznicy):
-// na ekranie ramka nad celem z dystansem. Czysty DOM — pozycjonowany co klatkę
-// z projekcji pozycji świata na ekran. Paleta foe/friend odróżnia wroga
-// (czerwony) od sojusznika (zielony) — w trybie drużynowym oba kolory są na
-// ekranie naraz.
-// Decyzja usera 2026-06-25: BEZ strzałki przy krawędzi dla celu poza ekranem —
-// znacznik off-screen zbyt ułatwiał lot w kierunku wroga (zamiast zmuszać do
-// rozglądania się w swobodnej kamerze). Poza ekranem znacznik jest chowany.
+// na ekranie ramka nad celem z dystansem; poza ekranem OPCJONALNA strzałka przy
+// krawędzi wskazująca kierunek. Czysty DOM — pozycjonowany co klatkę z projekcji
+// pozycji świata na ekran. Paleta foe/friend odróżnia wroga (czerwony) od
+// sojusznika (zielony) — w trybie drużynowym oba kolory są na ekranie naraz.
+// Strzałka off-screen była USUNIĘTA 2026-06-25 (zbyt ułatwiała lot w kierunku
+// wroga zamiast zmuszać do rozglądania się w swobodnej kamerze). Przywrócona
+// 2026-07-18 jako OPCJONALNA pomoc dla początkujących (parametr `showOffscreen`,
+// przełącznik per gracz w poczekalni, domyślnie WYŁĄCZONY). Gdy `showOffscreen`
+// jest false, znacznik poza ekranem nadal jest chowany (zachowanie sprzed pomocy).
 
+const MARGIN_PX = 48;
 const scratchCs = new Vector3();
 const scratchNdc = new Vector3();
 
@@ -75,13 +78,17 @@ export class EnemyMarker {
     this.el.style.opacity = alpha >= 1 ? '' : alpha.toFixed(2);
   }
 
-  /** Pozycjonuje znacznik dla pozycji świata przeciwnika; `selfPos` do dystansu. */
+  /** Pozycjonuje znacznik dla pozycji świata przeciwnika; `selfPos` do dystansu.
+   *  `showOffscreen`: gdy cel jest poza ekranem, rysuj strzałkę przy krawędzi wskazującą jego kierunek
+   *  (opcjonalna pomoc dla początkujących, domyślnie wyłączona — 2026-07-18). Gdy false, znacznik poza
+   *  ekranem jest chowany (gracz sam wypatruje wroga w swobodnej kamerze). */
   update(
     enemyPos: Vector3,
     selfPos: Vector3,
     camera: PerspectiveCamera,
     widthPx: number,
     heightPx: number,
+    showOffscreen: boolean,
   ): void {
     // pozycja w przestrzeni kamery: z<0 = przed kamerą (three patrzy w −Z)
     scratchCs.copy(enemyPos).applyMatrix4(camera.matrixWorldInverse);
@@ -91,8 +98,8 @@ export class EnemyMarker {
     const onScreen =
       inFront && Math.abs(scratchNdc.x) <= 1 && Math.abs(scratchNdc.y) <= 1;
 
-    // Poza ekranem: brak znacznika (gracz musi sam odnaleźć wroga).
-    if (!onScreen) {
+    // Poza ekranem bez włączonej pomocy: brak znacznika (gracz musi sam odnaleźć wroga).
+    if (!onScreen && !showOffscreen) {
       this.hide();
       return;
     }
@@ -101,11 +108,38 @@ export class EnemyMarker {
     const distM = selfPos.distanceTo(enemyPos);
     this.label.textContent = `${distM < 1000 ? distM.toFixed(0) + ' m' : (distM / 1000).toFixed(1) + ' km'}`;
 
-    const x = (scratchNdc.x * 0.5 + 0.5) * widthPx;
-    const y = (-scratchNdc.y * 0.5 + 0.5) * heightPx;
-    this.el.style.left = `${x.toFixed(0)}px`;
-    this.el.style.top = `${y.toFixed(0)}px`;
-    this.arrow.textContent = '◎';
-    this.arrow.style.transform = 'none';
+    if (onScreen) {
+      const x = (scratchNdc.x * 0.5 + 0.5) * widthPx;
+      const y = (-scratchNdc.y * 0.5 + 0.5) * heightPx;
+      this.el.style.left = `${x.toFixed(0)}px`;
+      this.el.style.top = `${y.toFixed(0)}px`;
+      this.arrow.textContent = '◎';
+      this.arrow.style.transform = 'none';
+      return;
+    }
+
+    // poza ekranem (pomoc włączona): kierunek od środka; gdy za kamerą — odwróć
+    let dx = scratchNdc.x;
+    let dy = scratchNdc.y;
+    if (!inFront) {
+      dx = -dx;
+      dy = -dy;
+    }
+    if (dx === 0 && dy === 0) dy = -1;
+    // w pikselach oś Y jest w dół, NDC w górę → minus przy dy
+    const pdx = dx;
+    const pdy = -dy;
+    const cx = widthPx / 2;
+    const cy = heightPx / 2;
+    const halfW = cx - MARGIN_PX;
+    const halfH = cy - MARGIN_PX;
+    // skala, by (cx,cy)+s·(pdx,pdy) trafiło w prostokąt krawędzi
+    const sx = pdx !== 0 ? halfW / Math.abs(pdx) : Infinity;
+    const sy = pdy !== 0 ? halfH / Math.abs(pdy) : Infinity;
+    const s = Math.min(sx, sy);
+    this.el.style.left = `${(cx + pdx * s).toFixed(0)}px`;
+    this.el.style.top = `${(cy + pdy * s).toFixed(0)}px`;
+    this.arrow.textContent = '➤';
+    this.arrow.style.transform = `rotate(${Math.atan2(pdy, pdx).toFixed(3)}rad)`;
   }
 }

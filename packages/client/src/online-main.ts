@@ -78,7 +78,7 @@ import { NetClient, defaultServerUrl } from './net/net-client';
 import { SnapshotInterpolator, createInterpolatedState } from './net/interpolation';
 import { NetDebugOverlay } from './net/net-debug-overlay';
 import { Predictor } from './net/prediction';
-import { LobbyUI, type WaitingView } from './net/lobby-ui';
+import { LobbyUI, loadOffscreenArrows, type WaitingView } from './net/lobby-ui';
 import { ResultsOverlay, ScoreboardOverlay } from './net/match-ui';
 import type { NetConditionsPanel } from './net/net-conditions-panel';
 import { RosterOverlay, type RosterRow } from './roster-overlay';
@@ -907,6 +907,10 @@ const roster = new RosterOverlay();
 const zoneBar = new ZoneBar(document.body);
 // markery wrogów (DOM) — pula na maks. liczbę innych pilotów w pokoju
 const markers = Array.from({ length: MAX_PLAYERS_PER_ROOM - 1 }, () => new EnemyMarker(document.body));
+// osobista pomoc HUD (per gracz, localStorage — bez protokołu): strzałki przy krawędzi ekranu wskazujące
+// inne samoloty poza polem widzenia. Domyślnie WYŁĄCZONE; przełącznik w poczekalni (aktualizuje flagę na
+// żywo przez callback onToggleOffscreenArrows). Czyta tylko pętla renderu markerów.
+let showOffscreenArrows = loadOffscreenArrows();
 const hud = new Hud(hudEl, requireEl('stall-warning'), requireEl('horizon-disc'));
 // HUD modułowych uszkodzeń: sylwetka własnego samolotu (strefy + flagi pożaru/wycieku/pilota), v8
 const damageHud = new DamageHud(requireEl('damage-hud'));
@@ -1434,6 +1438,9 @@ const lobby = new LobbyUI({
   onRemoveBot: (botId) => net?.removeBot(botId), // host: usuń bota ze slotu
   onEditBot: (botId, opts) => net?.editBot(botId, opts), // host: przenieś bota / zmień jego poziom
   onSendChat: (text) => net?.sendChat(text), // czat poczekalni
+  onToggleOffscreenArrows: (enabled) => {
+    showOffscreenArrows = enabled;
+  }, // osobista pomoc HUD (per gracz, localStorage) — strzałki off-screen do innych samolotów
 });
 
 // --- nakładki pętli meczu (faza 13): scoreboard (Tab) + ekran wyników z rewanżem ---
@@ -2320,7 +2327,7 @@ function updateHudOverlays(): void {
     // drużynowy: czerwony wróg / zielony sojusznik (paleta foe/friend); FFA: unikatowy kolor per id
     if (matchMode === 'team') marker.setFoe(factionById.get(id) !== localFaction);
     else marker.setColorHex(entityColorHex(id, false));
-    marker.update(m.object.position, viewPos, camera, w, h);
+    marker.update(m.object.position, viewPos, camera, w, h, showOffscreenArrows);
     // cel schowany w chmurze → znacznik przygasa (faza 20: taktyczne krycie się)
     marker.setOpacity(1 - 0.8 * world.cloudCoverAt(m.object.position));
   }

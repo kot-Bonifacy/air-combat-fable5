@@ -108,6 +108,9 @@ export interface LobbyCallbacks {
   onEditBot(botId: number, opts: { team?: number; difficulty?: DifficultyLevel }): void;
   /** Wyślij wiadomość na czat pokoju (poczekalnia). */
   onSendChat(text: string): void;
+  /** Gracz przełącza osobistą pomoc HUD: strzałki przy krawędzi ekranu wskazujące inne samoloty poza
+   *  polem widzenia (dla początkujących; domyślnie wyłączone). Czysto klienckie — bez protokołu. */
+  onToggleOffscreenArrows(enabled: boolean): void;
 }
 
 export interface WaitingView {
@@ -125,6 +128,9 @@ export interface WaitingView {
 }
 
 const NICK_STORAGE_KEY = 'air-combat:nick';
+/** Przełącznik strzałek off-screen wskazujących inne samoloty (pomoc dla początkujących, domyślnie
+ *  WYŁĄCZONA — 2026-07-18). Czysto klienckie (per gracz), zapis w localStorage, bez wpływu na protokół. */
+const OFFSCREEN_ARROWS_STORAGE_KEY = 'air-combat:offscreen-arrows';
 
 export class LobbyUI {
   private readonly root: HTMLDivElement;
@@ -180,6 +186,9 @@ export class LobbyUI {
   private readonly chatInput: HTMLInputElement;
   /** Id lokalnego gracza (z WaitingView) — do podświetlenia własnych wiadomości czatu. */
   private localId: number | null = null;
+  // osobista pomoc HUD (per gracz, localStorage — bez protokołu): strzałki off-screen do innych samolotów
+  private readonly hudOptionsRow: HTMLDivElement;
+  private readonly offscreenArrowsCheckbox: HTMLInputElement;
 
   constructor(private readonly cb: LobbyCallbacks) {
     injectStyles();
@@ -273,6 +282,24 @@ export class LobbyUI {
     }
     this.planeRow.append(planeCaption, this.planeCardsEl);
 
+    // --- osobista pomoc HUD (per gracz, localStorage — bez protokołu): strzałki przy krawędzi ekranu
+    // wskazujące inne samoloty poza polem widzenia. Domyślnie WYŁĄCZONE (życzenie usera 2026-07-18:
+    // pomoc dla początkujących; weterani grają bez). Widoczne dla KAŻDEGO gracza, nie tylko hosta. ---
+    this.hudOptionsRow = el('div', 'lobby-row lobby-hud-options-row');
+    const arrowsLabel = el('label', 'lobby-checkbox');
+    this.offscreenArrowsCheckbox = document.createElement('input');
+    this.offscreenArrowsCheckbox.type = 'checkbox';
+    this.offscreenArrowsCheckbox.checked = loadOffscreenArrows();
+    this.offscreenArrowsCheckbox.addEventListener('change', () => {
+      const on = this.offscreenArrowsCheckbox.checked;
+      saveOffscreenArrows(on);
+      this.cb.onToggleOffscreenArrows(on);
+    });
+    const arrowsText = el('span', 'lobby-checkbox-text');
+    arrowsText.textContent = 'Strzałki wskazujące inne samoloty poza ekranem (dla początkujących)';
+    arrowsLabel.append(this.offscreenArrowsCheckbox, arrowsText);
+    this.hudOptionsRow.append(arrowsLabel);
+
     // gotowość (system „Gotów" 2026-06-26): przycisk dla nie-hosta — trafia do paska akcji obok „Wyjdź"
     // (host widzi tam Start; oba są rozłączne), więc nie zajmuje osobnego pełnego wiersza.
     this.readyBtn = button('✔ Gotów', 'lobby-btn lobby-btn-ready', () => {
@@ -356,6 +383,7 @@ export class LobbyUI {
       this.controlsRow,
       this.settingsSummary,
       this.planeRow,
+      this.hudOptionsRow,
       chatSection,
       this.waitingHintEl,
       actionRow,
@@ -762,6 +790,25 @@ function saveNick(raw: string): void {
   }
 }
 
+/** Odczyt osobistego przełącznika strzałek off-screen (pomoc dla początkujących). Domyślnie FALSE —
+ *  funkcja ma być domyślnie wyłączona (życzenie usera 2026-07-18). Eksport: `online-main` czyta wartość
+ *  startową do pętli renderu (przełącznik żyje po stronie klienta, bez protokołu). */
+export function loadOffscreenArrows(): boolean {
+  try {
+    return localStorage.getItem(OFFSCREEN_ARROWS_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveOffscreenArrows(enabled: boolean): void {
+  try {
+    localStorage.setItem(OFFSCREEN_ARROWS_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    /* localStorage niedostępny (tryb prywatny) — pomiń */
+  }
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -957,6 +1004,11 @@ const LOBBY_CSS = `
   color: #9fc4e6; text-transform: uppercase;
 }
 .lobby-plane-card.selected .lobby-plane-pick { color: #ffb060; }
+/* osobista pomoc HUD (per gracz): przełącznik strzałek off-screen — widoczny dla każdego, domyślnie off */
+.lobby-hud-options-row { justify-content: center; }
+.lobby-checkbox { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.lobby-checkbox input { width: 16px; height: 16px; cursor: pointer; accent-color: #4a90d0; }
+.lobby-checkbox-text { font-size: 13px; color: #cde; }
 /* gotowość — przycisk dla nie-hosta (w pasku akcji obok „Wyjdź"); po potwierdzeniu zielony */
 .lobby-btn-ready { background: rgba(40,60,80,0.92); border-color: #4a6c8c; }
 .lobby-btn-ready.is-ready { background: #2f7d46; border-color: #46a35f; color: #fff; }
