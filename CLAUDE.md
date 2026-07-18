@@ -61,9 +61,11 @@ zwraca tokeny usuniętych → czyszczenie `sessions` (siatka bezpieczeństwa); a
 z licznika „X/Y gotowych". Prune w 'playing' bezpieczny (`checkElimination` czyta `players` świeżo;
 `rebuildSnapshotSources`+`broadcastRoomUpdate`). Testy +2. **Weryfikacja E2E:** (a) F5 przed fixem `gracz w
 lobby` → po fixie `reconnect gracza` (log) i wraca do własnego pokoju, jeden wpis; (b) rozłączony →
-„(rozłączony)" w oknie → po >60 s znika z rosteru, choć host wciąż połączony. **NIEZACOMMITOWANE.** To zakres
+„(rozłączony)" w oknie → po >60 s znika z rosteru, choć host wciąż połączony. Przy okazji (życzenie usera):
+**domyślny nick — pole wstępnie wypełnione „Pilot"** (`DEFAULT_NICK` w `lobby-ui.ts`, zgodny z serwerowym
+`NICK_FALLBACK`) zamiast pustego z samym placeholderem. **Zacommitowane `0ca3fb2` + push.** To zakres
 BŁĘDOWY etapu RF1 (podział plików §4 = osobne etapy); szczegóły „Wynik RF1" w `docs/refaktoring.md`.
-⏳ user: smoke na produkcji.
+⏳ user: smoke na produkcji (deploy front+back RAZEM, v10).
 
 **Ciepły silnik na starcie + weryfikacja „przejęcia kontroli" 2026-07-18 (2 zgłoszenia usera, 782 testy
 zielone, BEZ protokołu — v10, shared/serwer/klient + test):** (1) **Ciepły silnik na starcie** (życzenie

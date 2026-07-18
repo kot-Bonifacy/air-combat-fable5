@@ -458,6 +458,10 @@ zmienia się na token slotu (zweryfikowane odczytem localStorage), a F5 daje `re
 prosto do poczekalni własnego pokoju, jeden wpis. typecheck/784 testy/lint/build zielone. Konsola czysta
 (jedyny błąd = pre-existing `favicon.ico` 404, §8).
 
+**Przy okazji (życzenie usera):** domyślny nick — pole nicku wstępnie wypełnione „Pilot" (`DEFAULT_NICK`
+w `lobby-ui.ts`, zgodny z serwerowym `NICK_FALLBACK`) zamiast pustego pola z samym placeholderem.
+
 **DEPLOY: front + back RAZEM** (semantyka rosteru: serwer wysyła `disconnected`, klient je renderuje;
-protokół binarny v10 NIEZMIENIONY — pole addytywne JSON). **NIEZACOMMITOWANE.** ⏳ user: smoke na produkcji
-(znajomy zamyka kartę/traci sieć w pokoju → po ~60 s znika, nie wisi jako duch; w oknie widać „(rozłączony)").
+protokół binarny v10 NIEZMIENIONY — pole addytywne JSON). **Zacommitowane `0ca3fb2` + push.** ⏳ user: smoke
+na produkcji (znajomy zamyka kartę/traci sieć w pokoju → po ~60 s znika, nie wisi jako duch; w oknie widać
+„(rozłączony)"; F5 wraca do własnego samolotu).
