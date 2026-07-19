@@ -41,6 +41,7 @@ import {
   nAvailG,
   peakRollRateRadS,
   planeConfigOf,
+  planeLabelOf,
   primaryGroup,
   surfaceHeightM,
   totalAmmo,
@@ -78,8 +79,8 @@ import { NetClient, defaultServerUrl } from './net/net-client';
 import { SnapshotInterpolator, createInterpolatedState } from './net/interpolation';
 import { NetDebugOverlay } from './net/net-debug-overlay';
 import { Predictor } from './net/prediction';
-import { LobbyUI, loadOffscreenArrows, type WaitingView } from './net/lobby-ui';
-import { ResultsOverlay, ScoreboardOverlay } from './net/match-ui';
+import { LobbyUI, difficultyLabelOf, loadOffscreenArrows, type WaitingView } from './net/lobby-ui';
+import { ResultsOverlay, ScoreboardOverlay, type StandingExtra } from './net/match-ui';
 import type { NetConditionsPanel } from './net/net-conditions-panel';
 import { RosterOverlay, type RosterRow } from './roster-overlay';
 import { ZoneBar, type ZoneBarState } from './zone-bar';
@@ -1397,6 +1398,33 @@ function playerName(id: number): string {
 }
 
 /**
+ * Dane dodatkowe wierszy tabeli wyników (2026-07-19): „Samolot" + zwarta „Info". StandingRow ich nie
+ * niesie, więc łączymy po id z rosterem poczekalni (roomView.players — odświeżany też w trakcie meczu):
+ * typ samolotu (planeType) i poziom bota (botDifficulty). „Info": bot → poziom trudności; człowiek →
+ * stan strzałek wskazujących. Własny wiersz czytamy z żywego showOffscreenArrows (natychmiast po
+ * przełączeniu, zanim wróci roster), obcych z rozgłoszonej flagi rostera (offscreenArrows).
+ */
+function buildStandingExtras(rows: readonly StandingRow[]): Map<number, StandingExtra> {
+  const byId = new Map<number, RoomPlayer>();
+  for (const p of roomView?.players ?? []) byId.set(p.id, p);
+  const localId = net?.localPlayerId ?? null;
+  const map = new Map<number, StandingExtra>();
+  for (const r of rows) {
+    const p = byId.get(r.id);
+    const plane = planeLabelOf(p?.planeType ?? planeTypeById.get(r.id) ?? DEFAULT_PLANE_TYPE);
+    let info: string;
+    if (r.isBot) {
+      info = p?.botDifficulty ? `poziom: ${difficultyLabelOf(p.botDifficulty)}` : 'poziom: —';
+    } else {
+      const on = r.id === localId ? showOffscreenArrows : (p?.offscreenArrows ?? false);
+      info = `strzałki: ${on ? 'wł.' : 'wył.'}`;
+    }
+    map.set(r.id, { plane, info });
+  }
+  return map;
+}
+
+/**
  * Komunikat śmierci LOKALNEGO gracza wg przyczyny z eventu KILL (życzenie usera 2026-06-23:
  * „ZESTRZELONY" tylko, gdy padł od ognia). Zderzenie z samolotem → KOLIZJA, rozbicie o teren/wodę
  * → ROZBITY. Domyślnie (przyczyna nieznana, np. świeże zestrzelenie zanim dotrze event) → ZESTRZELONY.
@@ -1440,6 +1468,7 @@ const lobby = new LobbyUI({
   onSendChat: (text) => net?.sendChat(text), // czat poczekalni
   onToggleOffscreenArrows: (enabled) => {
     showOffscreenArrows = enabled;
+    net?.setOffscreenArrows(enabled); // rozgłoś do pokoju → tabela wyników pokazuje, kto lata z pomocą
   }, // osobista pomoc HUD (per gracz, localStorage) — strzałki off-screen do innych samolotów
 });
 
@@ -1722,7 +1751,7 @@ function createNet(nick: string, token: string | null): NetClient {
     latestStandings = msg;
     matchMode = msg.mode;
     rebuildFactions(msg.rows);
-    scoreboard.update(msg.rows, msg.mode, localFaction);
+    scoreboard.update(msg.rows, msg.mode, localFaction, buildStandingExtras(msg.rows));
     // synchronizacja stanu stanowisk (v6) — dla późno dołączających i na wypadek zgubionego eventu
     for (let i = 0; i < msg.aaDestroyed.length; i++) setEmplacementDestroyed(i, msg.aaDestroyed[i] ?? false);
   };
@@ -1830,14 +1859,25 @@ function maybeRevealResults(): void {
   if (sinceLocalImpactS !== null && sinceLocalImpactS < RESULTS_AFTER_IMPACT_S) return; // odczekaj 5 s od uderzenia
   matchResultsShown = true;
   scoreboard.hide();
-  results.show(matchEndData.msg, matchEndData.localId, matchEndData.localFaction);
+  results.show(
+    matchEndData.msg,
+    matchEndData.localId,
+    matchEndData.localFaction,
+    buildStandingExtras(matchEndData.msg.rows),
+  );
 }
 
 /** Tab w fazie wyników: chowa/przywraca ekran „KONIEC MECZU" (odsłania widok bez utraty danych). */
 function toggleResultsVisible(): void {
   if (!matchEndData) return;
   if (results.visible) results.hide();
-  else results.show(matchEndData.msg, matchEndData.localId, matchEndData.localFaction);
+  else
+    results.show(
+      matchEndData.msg,
+      matchEndData.localId,
+      matchEndData.localFaction,
+      buildStandingExtras(matchEndData.msg.rows),
+    );
 }
 
 function onRoomJoined(msg: RoomJoinedMessage): void {
@@ -1859,6 +1899,9 @@ function onRoomJoined(msg: RoomJoinedMessage): void {
     youId: msg.youId,
   };
   scoreboard.setLocalId(msg.youId);
+  // dośle serwerowi stan „strzałek wskazujących" z localStorage (domyślnie false na nowym slocie),
+  // by roster/tabela wyników od razu pokazały naszą pomoc HUD i innym graczom (2026-07-19)
+  net?.setOffscreenArrows(showOffscreenArrows);
   lobby.clearChat(); // świeży pokój — czyść log PRZED historią z serwera (przychodzi tuż po roomJoined)
   const wasReconnecting = reconnecting;
   if (wasReconnecting) finishAutoReconnect(); // wróciliśmy do swojego slotu — koniec ponawiania

@@ -6,7 +6,7 @@ import { createPlaneState, type PlaneState } from '../physics/state';
 import { createSimPlane, pilotStep } from '../physics/pilot-step';
 import { validatePlaneState } from '../physics/nan-guard';
 import { A6M2_ZERO, SPITFIRE_MK2 } from '../planes/loader';
-import { Bot, type BotSituation } from './bot';
+import { Bot, type BotSituation, type BotWingOrders } from './bot';
 import { BOT_CONFIG, type DifficultyLevel } from './difficulty';
 
 // Poziom „as" (2026-07-12): świadomość sytuacyjna i antykolizja TYLKO na b.trudnym
@@ -275,6 +275,74 @@ describe('as — separacja w walce: ciaśniejsza bańka (strzela mimo luźnego t
 
   it('trudny bez separacji — strzela nawet z sąsiadem 8 m obok (kontrola)', () => {
     expect(fireWithNeighbor('trudny', 8)).toBe(true);
+  });
+});
+
+describe('as — krótkie serie na dalekim dystansie (oszczędza amunicję > 400 m)', () => {
+  /** Cel statyczny na wprost (w stożku/zasięgu ognia) na `rangeM`; zwraca ułamek ticków w 3 s,
+   *  w których as trzyma spust. Bot nie jest integrowany (self stały) — mierzymy sam cykl serii. */
+  function fireRatio(level: DifficultyLevel, rangeM: number): number {
+    const self = flyingState(0, 3000, 0, FWD, 130);
+    const target = flyingState(0, 3000, rangeM, FWD, 130);
+    const bot = makeBot(level);
+    bot.reset(self);
+    const demands = createPilotDemands();
+    const situation: BotSituation = { enemies: [target], traffic: [target] };
+    let fireTicks = 0;
+    const ticks = Math.round(3 / FIXED_DT_S);
+    for (let t = 0; t < ticks; t++) {
+      if (bot.update(self, SPITFIRE_MK2, target, ENV, FIXED_DT_S, demands, false, situation).fire) fireTicks++;
+    }
+    return fireTicks / ticks;
+  }
+
+  it('as > 400 m pulsuje ogniem (przerwy), < 400 m strzela ciągle', () => {
+    const far = fireRatio('as', 500);
+    expect(far).toBeGreaterThan(0.1); // seriami — jednak strzela
+    expect(far).toBeLessThan(0.85); // ...ale z wyraźnymi przerwami (nie ciągiem)
+    expect(fireRatio('as', 300)).toBe(1); // blisko = pewny strzał → ogień ciągły
+  });
+
+  it('trudny (brak knoba serii) strzela ciągle także z 500 m', () => {
+    expect(fireRatio('trudny', 500)).toBe(1);
+  });
+});
+
+describe('as — koordynacja skrzydłowego (lider atakuje, skrzydłowy ubezpiecza)', () => {
+  it('skrzydłowy bez zagrożenia lidera NIE strzela do wspólnego celu; jako lider strzelałby', () => {
+    // wspólny wróg na wprost w zasięgu (350 m), lider między nami a wrogiem, wróg leci od lidera
+    // (nie zagraża mu) → skrzydłowy trzyma dystans i ogień. Bez roli (lider) as strzela normalnie.
+    function fire(withWing: boolean): boolean {
+      const self = flyingState(0, 3000, 0, FWD, 130);
+      const leader = flyingState(0, 3000, 200, FWD, 130);
+      const enemy = flyingState(0, 3000, 350, FWD, 120);
+      const bot = makeBot('as');
+      bot.reset(self);
+      const situation: BotSituation = { enemies: [enemy], traffic: [enemy, leader] };
+      const wing: BotWingOrders | undefined = withWing ? { role: 'wingman', leader } : undefined;
+      return bot.update(self, SPITFIRE_MK2, enemy, ENV, FIXED_DT_S, createPilotDemands(), false, situation, wing)
+        .fire;
+    }
+    expect(fire(true)).toBe(false); // skrzydłowy trzyma ogień dla lidera
+    expect(fire(false)).toBe(true); // ten sam as bez roli — strzela do wspólnego celu
+  });
+
+  it('skrzydłowy broni lidera — przełącza cel na wroga wchodzącego liderowi na ogon i atakuje', () => {
+    const self = flyingState(0, 3000, 0, FWD, 130);
+    const leader = flyingState(0, 3000, 400, FWD, 130);
+    // napastnik 200 m za ogonem lidera, nosem +Z ku niemu (celuje w lidera); to nie wspólny cel
+    const attacker = flyingState(0, 3000, 200, FWD, 130);
+    const commonEnemy = flyingState(0, 3000, 1200, FWD, 120); // „wspólny" cel daleko z przodu
+    const bot = makeBot('as');
+    bot.reset(self);
+    const situation: BotSituation = {
+      enemies: [commonEnemy, attacker],
+      traffic: [commonEnemy, attacker, leader],
+    };
+    const wing: BotWingOrders = { role: 'wingman', leader };
+    const out = bot.update(self, SPITFIRE_MK2, commonEnemy, ENV, FIXED_DT_S, createPilotDemands(), false, situation, wing);
+    expect(out.state).toBe('engage'); // broni: podejmuje walkę z napastnikiem lidera
+    expect(out.fire).toBe(true); // strzela do napastnika (200 m na wprost), nie trzyma ognia
   });
 });
 

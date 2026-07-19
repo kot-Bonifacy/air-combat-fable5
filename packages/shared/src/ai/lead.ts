@@ -10,9 +10,14 @@ import { Vector3 } from 'three';
 // muzzleSpeed·t. Po podniesieniu do kwadratu:
 //   (|relVel|² − s²)·t² + 2·(relPos·relVel)·t + |relPos|² = 0
 // To DOKŁADNE rozwiązanie dla celu lecącego po prostej (kryterium testu).
-// Grawitację i opór pocisku pomijamy — na dystansach walki (≤ ~600 m, lot
-// ≤ ~0.8 s) opad kompensuje przystrzelanie dział (convergenceRise), a błąd
-// mieści się w promieniu trafienia. Iteracyjne uściślenie → backlog.
+// Opór pocisku pomijamy — czas lotu z tej stałej prędkości lekko go zaniża.
+//
+// Grawitacja: domyślnie pomijana (gravityMs2=0), bo `convergenceRise` przystrzeliwuje
+// działa i na ~200 m opad jest skompensowany. ALE dalej opad rośnie (½·g·t²) i na 350 m
+// pocisk pada ~0,9 m pod cel, na 550 m ~2,6 m (zmierzone) — dla precyzyjnego strzelca
+// (bot „as") to za dużo. Gdy `gravityMs2 > 0`, podnosimy namiar o ½·g·t² (kierunek startowy,
+// który po czasie t opadnie DOKŁADNIE w cel) — ten sam wzór, którym celują działka AA
+// (world/emplacement.ts). t liczone bez grawitacji (sprzężenie 2. rzędu, pomijalne na tych t).
 
 export interface LeadSolution {
   /** Czas lotu pocisku do przechwycenia [s]; -1 = brak rozwiązania (cel szybszy i ucieka). */
@@ -54,6 +59,10 @@ function smallestPositiveRoot(a: number, b: number, c: number): number {
  * Rozwiązuje wyprzedzenie i zapisuje do `out`. `shooterVel` to prędkość
  * strzelca (pocisk ją dziedziczy). Gdy brak rozwiązania — aimDir = LOS do
  * bieżącej pozycji celu, timeToInterceptS = -1.
+ *
+ * `gravityMs2` (domyślnie 0 = bez kompensacji, jak dotąd): gdy > 0, namiar podnoszony
+ * o ½·gravityMs2·t², by pocisk opadający w polu grawitacji trafił w cel na dystansie
+ * (kompensacja opadu — patrz nagłówek). Bot „as" podaje tu g·leadGravityFrac.
  */
 export function solveLead(
   shooterPos: Vector3,
@@ -62,6 +71,7 @@ export function solveLead(
   targetVel: Vector3,
   muzzleSpeedMs: number,
   out: LeadSolution,
+  gravityMs2 = 0,
 ): LeadSolution {
   scratchRelPos.subVectors(targetPos, shooterPos);
   scratchRelVel.subVectors(targetVel, shooterVel);
@@ -81,15 +91,19 @@ export function solveLead(
   }
 
   out.timeToInterceptS = t;
-  // punkt przechwycenia w świecie: gdzie cel będzie po czasie t
+  // podniesienie namiaru kompensujące opad grawitacyjny na czasie lotu (0 = brak kompensacji)
+  const gravRise = 0.5 * gravityMs2 * t * t;
+  // punkt przechwycenia w świecie: gdzie cel będzie po czasie t (+ kompensacja opadu w pionie świata)
   out.aimPoint.copy(targetPos).addScaledVector(targetVel, t);
-  // nos = kierunek składowej wylotowej pocisku = (relPos + relVel·t)/(s·t),
-  // co jest jednostkowe z definicji równania; liczymy z relPos/relVel by uniknąć
-  // odejmowania przyszłej pozycji strzelca
+  out.aimPoint.y += gravRise;
+  // nos = kierunek składowej wylotowej pocisku = (relPos + relVel·t + ½g t²·ŷ)/(s·t),
+  // co jest jednostkowe (bez grawitacji z definicji równania; człon grawitacji to mała korekta
+  // startowego kierunku, by po czasie t pocisk opadł w cel); normalize domyka jednostkowość.
   out.aimDir
     .copy(scratchRelPos)
     .addScaledVector(scratchRelVel, t)
-    .divideScalar(muzzleSpeedMs * t)
-    .normalize();
+    .divideScalar(muzzleSpeedMs * t);
+  out.aimDir.y += gravRise / (muzzleSpeedMs * t);
+  out.aimDir.normalize();
   return out;
 }

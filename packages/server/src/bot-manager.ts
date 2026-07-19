@@ -9,6 +9,7 @@ import {
   ZONE_LOITER_ALT_M,
   lookaheadSurfaceM,
   selectNearestTarget,
+  type BotWingOrders,
   type DifficultyLevel,
   type PilotDemands,
   type PlaneConfig,
@@ -172,7 +173,8 @@ export class BotManager {
    * separacja antykolizyjna; pusta lista/undefined = bez separacji (stare wywołania testów).
    * `dtS` to czas, który UPŁYNĄŁ od ostatniej decyzji (= fixedDt × interwał), żeby filtry
    * czasowe (reakcja, szum, jink) szły zgodnie z realnym tempem decyzji. `criticalDamage` (faza 22
-   * cz.3) sygnalizuje krytyczne uszkodzenia — bot przerywa walkę i ucieka.
+   * cz.3) sygnalizuje krytyczne uszkodzenia — bot przerywa walkę i ucieka. `wing` (koordynacja asów
+   * 2026-07-19) = rola lider/skrzydłowy wyliczona przez pokój; undefined = brak koordynacji.
    */
   think(
     id: number,
@@ -184,6 +186,7 @@ export class BotManager {
     dtS: number,
     criticalDamage = false,
     traffic: readonly PlaneState[] = candidates,
+    wing?: BotWingOrders,
   ): void {
     const rt = this.runtimes.get(id);
     if (!rt) return;
@@ -205,6 +208,7 @@ export class BotManager {
       demands,
       criticalDamage,
       { enemies: candidates, traffic },
+      wing,
     );
     rt.control.throttle = out.throttle;
     rt.control.fire = out.fire;

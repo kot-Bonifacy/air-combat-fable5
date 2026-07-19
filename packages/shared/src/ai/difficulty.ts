@@ -108,6 +108,20 @@ export interface BotDifficulty {
   /** Nieprzewidywalność obrony 0..1: losowe okresy/amplitudy jinku + rewers (nożyce) przy
    *  przestrzeleniu wroga; 0 = stary regularny sinus. */
   evadeVariety01: number;
+  /** Powyżej tego dystansu do celu [m] bot strzela KRÓTKIMI SERIAMI (przerywany ogień —
+   *  nie wystrzeliwuje całej amunicji na dalekim, mniej celnym dystansie); 0 = ogień ciągły
+   *  jak niższe poziomy. Bliżej progu (pewny strzał) ogień jest ciągły. */
+  burstFireRangeM: number;
+  /** Kompensacja opadu grawitacyjnego w celowaniu 0..1 (bot podnosi namiar o
+   *  frac·½·g·t² na czasie lotu pocisku). 0 = bez kompensacji (jak dotąd — pocisk pada pod
+   *  cel na dalekim dystansie, bo convergenceRise przystrzeliwuje tylko do ~200 m); 1 = pełna
+   *  (as celuje z uwzględnieniem grawitacji, jak działka AA). Tylko as — decyzja usera 2026-07-19. */
+  leadGravityFrac: number;
+  /** Dystans [m], na jaki SKRZYDŁOWY (koordynacja asów, 2026-07-19) trzyma się od wspólnego
+   *  wroga, ORAZ włącznik całej koordynacji lider/skrzydłowy. Gdy dwa sojusznicze asy mają tego
+   *  samego wroga za cel, jeden atakuje (lider), reszta trzyma ten dystans i ubezpiecza. 0 = brak
+   *  koordynacji (asy walczą niezależnie, jak dotąd). */
+  wingmanRangeM: number;
   /** Override tuning.detectRangeM [m]; 0 = wspólny. As: 1000 m — wróg dalej → patrol,
    *  czyli lot do strefy (priorytet zajmowania terenu, decyzja usera 2026-07-12). */
   detectRangeM: number;
@@ -194,6 +208,9 @@ const LEVEL_RANGES: Record<string, readonly [min: number, max: number]> = {
   rollAuthorityMinFrac: [0, 1],
   overshootGuardClosureMs: [0, 200],
   evadeVariety01: [0, 1],
+  burstFireRangeM: [0, 1000],
+  leadGravityFrac: [0, 1],
+  wingmanRangeM: [0, 3000],
   detectRangeM: [0, 10000],
   disengageRangeM: [0, 12000],
   lowEnergyIasKmh: [0, 500],
@@ -307,6 +324,9 @@ export function loadBotConfig(raw: unknown, source = 'difficulty.json'): BotConf
       rollAuthorityMinFrac: optNum(l, 'rollAuthorityMinFrac', prefix, problems, 0),
       overshootGuardClosureMs: optNum(l, 'overshootGuardClosureMs', prefix, problems, 0),
       evadeVariety01: optNum(l, 'evadeVariety01', prefix, problems, 0),
+      burstFireRangeM: optNum(l, 'burstFireRangeM', prefix, problems, 0),
+      leadGravityFrac: optNum(l, 'leadGravityFrac', prefix, problems, 0),
+      wingmanRangeM: optNum(l, 'wingmanRangeM', prefix, problems, 0),
       detectRangeM: optNum(l, 'detectRangeM', prefix, problems, 0),
       disengageRangeM: optNum(l, 'disengageRangeM', prefix, problems, 0),
       lowEnergyIasMs: optNum(l, 'lowEnergyIasKmh', prefix, problems, 0) * KMH_TO_MS,

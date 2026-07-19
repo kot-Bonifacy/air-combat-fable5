@@ -129,6 +129,22 @@ describe('lobby slotowe RTS — dowolne składy drużyn', () => {
     expect(bot?.botDifficulty).toBe('normalny');
   });
 
+  it('roster: offscreenArrows rozgłoszone dla ludzi (domyślnie false), nieobecne dla botów', () => {
+    // strzałki wskazujące (2026-07-19): rozgłaszamy osobistą pomoc HUD do rostera, by tabela wyników
+    // pokazała, kto lata z pomocą. Dotyczy ludzi; boty nie mają tego pola.
+    const room = new GameRoom('OA');
+    room.mode = 'team';
+    const a = add(room, 'human');
+    room.hostAddBot(0, 'normalny');
+    const bot = room.roomPlayers().find((p) => p.isBot);
+    expect(room.roomPlayers().find((p) => p.id === a)?.offscreenArrows).toBe(false); // domyślnie wyłączone
+    expect(bot?.offscreenArrows).toBeUndefined(); // boty bez pola
+    room.setOffscreenArrows(a, true);
+    expect(room.roomPlayers().find((p) => p.id === a)?.offscreenArrows).toBe(true); // po włączeniu rozgłoszone
+    room.setOffscreenArrows(bot!.id, true); // no-op dla bota (isBot)
+    expect(room.roomPlayers().find((p) => p.id === bot!.id)?.offscreenArrows).toBeUndefined();
+  });
+
   it('boty-wypełniacze (addBot bez drużyny) NADAL auto-balansują się wokół jawnych slotów', () => {
     const room = new GameRoom('MIX');
     room.mode = 'team';

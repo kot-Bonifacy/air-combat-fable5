@@ -42,6 +42,77 @@ komplet ostrzeżeń]; `docs/fizyka-lotu.md` §5.2/§5.3/**nowa §13** [formuły 
 w „Wynik R5"; **PROJEKT FIZYKA v2 domknięty po stronie kodu/docs — pozostaje playtest usera + smoke v10 na
 produkcji**). ⏳ user: playtest czucia 3 samolotów (ankieta 8 pkt w „Wynik R5") + deploy front+back RAZEM (v10).
 
+**Koordynacja skrzydłowych botów „as" + krótkie serie 2026-07-19 (życzenie usera, 803 testy zielone, BEZ
+protokołu — v10, czysto serwer/AI + JSON, deploy TYLKO backend):** sojusznicze asy z tym samym najbliższym
+wrogiem nie mają już „utrudniać sobie ataków" — jeden atakuje (lider), reszta trzyma dystans i ubezpiecza
+(skrzydłowi). **Decyzje usera (AskUserQuestion):** (1) skrzydłowy = **aktywne ubezpieczanie** (trzyma ~1 km od
+wroga za liderem, skanuje ogon LIDERA, atakuje wroga wchodzącego liderowi na ogon, przejmuje gdy trzeba); (2)
+skrzydłowy **trzyma ogień do wspólnego celu** (strzela tylko do innych wrogów — nie odbiera strzału liderowi,
+brak friendly fire z tyłu); (3) **1 lider + reszta skrzydłowi** (3+ asów); (4) koordynacja **tylko sojusznicy
+(drużyna)** — w FFA `faction=id`, asy są rywalami → nie koordynują (zostaje istniejąca separacja). **Architektura:**
+`PlaneState` nie niesie id/amunicji → arbitraż ról **na serwerze** (`game-room.assignWingRoles()` co tick PRZED
+ruchem): grupuje żywe asy po (frakcja, najbliższy wróg); w grupie ≥2 lider = najbliższy wrogowi as **z amunicją**,
+z **histerezą** (obecny lider trzyma rolę, dopóki `ammoRemaining>0` i ≤ `WING_LEADER_HANDOFF_RANGE_M=1100` od
+wroga — dzięki temu skrzydłowy przejmuje dokładnie, gdy liderowi skończy się amunicja albo oddali się od wroga
+>~1 km, życzenie usera). Pola `ServerPlayer.wingRole`/`wingLeaderId` (reset przy spawnie); `wingOrdersFor` przekazuje
+skrzydłowemu żywy `PlaneState` lidera przez `BotManager.think`. **Zachowanie w `bot.ts`** (`update` nowy param
+`wing?: BotWingOrders`): skrzydłowy skanuje ogon lidera (`findLeaderThreat` reużywa wyekstrahowany `findTailThreat`
+— DRY z check-six) → jest napastnik? podmiana celu na niego (normalny engage+ogień). Brak? **standoff**:
+`steerWingmanStandoff` leci do punktu na linii wróg→lider w `wingmanRangeM=1000` od wroga, `fire=false`. Lider =
+zwykły engage (rola `'leader'`→`wing` undefined, bo zachowanie bez zmian). **Krótkie serie** (osobny knob):
+`burstFireRangeM=400` — powyżej progu ogień PULSUJE (`BURST_ON_S=0,6`/`BURST_OFF_S=0,9`, zegar `burstTimerS` w
+tempie decyzji), poniżej ciągły; oszczędza amunicję na dalekim dystansie. **Knoby w `difficulty.json` (as, 0=off,
+niższe poziomy nietknięte):** `burstFireRangeM`, `wingmanRangeM`. Testy: `bot-ace.test.ts` (serie <400 ciągłe /
+>400 pulsujące; skrzydłowy nie strzela do wspólnego celu vs strzela do napastnika lidera), `bots.test.ts`
+(arbitraż drużynowy: bliższy=lider, oddalenie>1,1 km→przejęcie; FFA=none). **PLAN [[plan-bot-as-skrzydlowi]]
+ZREALIZOWANY.** **NIEZACOMMITOWANE.** ⏳ user: playtest w trybie DRUŻYNOWYM (≥2 asy po stronie vs wróg — lider
+atakuje, skrzydłowy wisi ~1 km i broni ogona? przejęcie przy pustym magazynku?) + deploy backendu.
+
+**Kompensacja grawitacji w celowaniu asa 2026-07-19 (zgłoszenie usera, 806 testów zielone, BEZ protokołu
+— v10, czysto shared/AI + JSON, deploy TYLKO backend):** as strzelał POD lecący prosto cel bezpośrednio
+za nim na **350 m+** (marnował amunicję). **Przyczyna:** `ai/lead.ts solveLead` świadomie POMIJAŁ grawitację
+— `convergenceRise` przystrzeliwuje działa tylko do ~200 m, dalej pocisk opada `½·g·t²` coraz mocniej.
+Sonda balistyczna (guny idealnie na cel, ta sama wysokość): pion strumienia −0,34 m @200 → **−0,90 @350**
+→ −2,61 @550 → −4,02 @650 (systematyczny błąd POD, rosnący z zasięgiem). **Fix (decyzja usera „as ma
+uwzględniać grawitację"):** knob `leadGravityFrac` [0,1] w `difficulty.json` (**as=1,0**; niższe poziomy 0
+= bitowo bez zmian); `solveLead(...,gravityMs2=0)` przy >0 podnosi namiar o `½·gravityMs2·t²` (aimPoint.y
+ORAZ licznik aimDir.y) — **ten sam wzór co działka AA** (`world/emplacement.ts`); `bot.ts` podaje
+`GRAVITY_MS2·leadGravityFrac`. Po korekcie strumień centruje się: 350 m −1,37→**−0,28**, 550 m −4,66→**−1,86**
+(w sferze trafień 6 m). **Prędkości samolotów uwzględnione** (pytanie usera): `aimDir ∝ relPos+relVel·t+½gt²·ŷ`
+— `shooterVel·t` skraca się (pocisk dziedziczy prędkość strzelca), prędkość celu w `relVel`, opad zależy
+tylko od `t`. **RESZTKA „pod" na dużym zasięgu (świadoma):** `t` pomija OPÓR pocisku → realny lot dłuższy;
+domknięcie = poprawka czasu jak AA (`t=(e^{k·D}−1)/(k·v₀)`) — jeśli user zechce. **RYZYKO (zgłoszone):**
+w pełnym harnessie as z nadmiarem energii (WEP) siedzi lekko WYŻEJ (nos ~0,5° NAD LOS) → tam może
+przestrzelić NAD (osobny efekt śledzenia, nie broń); czysta balistyka „nos na cel" potwierdza under →
+kompensacja poprawna. Testy: `lead.test.ts` (+3: ½gt², nos w górę, całkowanie balistyczne), `difficulty.test.ts`
+(as>0/reszta=0). **NIEZACOMMITOWANE → commit razem ze skrzydłowymi/tabelą (spleceni w tych samych plikach).**
+⏳ user: playtest asa (350 m+ prosto za wrogiem — teraz w cel? nie NAD?) — ew. obniżyć `leadGravityFrac` 0,5–0,7.
+
+**Tabela wyników: samolot + poziom bota + strzałki 2026-07-19 (życzenie usera, 790 testów zielone, BEZ
+bumpu protokołu — v10, addytywny JSON rosteru; deploy front+back RAZEM dla pełnego efektu strzałek):**
+user: w tabeli wyników (TAB + ekran końca meczu) pokazać, kto jakim SAMOLOTEM leci, jaki POZIOM ma każdy
+bot i czy dany gracz ma włączone STRZAŁKI wskazujące. **Decyzje usera (AskUserQuestion):** (1) strzałki =
+stan WSZYSTKICH graczy (rozgłaszane przez serwer), nie tylko własny wiersz; (2) TAB + ekran wyników; (3)
+układ = zwarta kolumna „Info" (bot → „poziom: X"; człowiek → „strzałki: wł./wył."). **Ustalenie:** typ
+samolotu (`planeType`) i poziom bota (`botDifficulty`) są JUŻ w kliencie w `roomView.players` (odświeżanym
+też w `'playing'` przez `onRoomUpdate`) — `StandingRow` ich nie niesie, więc łączę je po `id` **czysto
+klienckie** (helper `buildStandingExtras` w `online-main.ts`), zero zmian serwera dla tych dwóch. Strzałki
+to ustawienie LOKALNE (localStorage, poza protokołem), więc trzeba je ROZGŁOSIĆ: `RoomPlayer.offscreenArrows?`
+(tylko ludzie, jak `botDifficulty?` tylko boty) + komunikat klient→serwer `SetOffscreenArrowsMessage{enabled}`
++ `CONTROL_TAGS`; serwer `ServerPlayer.offscreenArrows`+`setOffscreenArrows(id,enabled)` (human-only,
+`broadcastRoomUpdate` jak `setReady`; BEZ ograniczenia do 'waiting' → można przełączyć też w meczu),
+`roomPlayers()` dokłada pole dla ludzi; `connection.ts case 'setOffscreenArrows'`; klient `net.setOffscreenArrows`
+wołany na toggle (obok localStorage) ORAZ raz w `onRoomJoined` (dosyła wartość na nowy slot). Tabela
+(`match-ui.ts`): typ `StandingExtra{plane,info}` (moduł dostaje GOTOWE napisy — nie zna `planeLabelOf` ani
+etykiet poziomów), kolumny „Samolot"+„Info" po „A", `teamHeaderRow` dokłada 2 puste komórki, `difficultyLabelOf`
+wyeksportowany z `lobby-ui.ts`. **PUŁAPKA CSS (chrome-devtools):** siatka grid bez `column-gap` — prawy
+dosuw asyst stykał się z lewym „Samolot" → „ASamolot"/„0Spitfire"; fix `.mui-plane padding-left:14px` + szer.
+kolumny 92→100px (mieści „Spitfire"). Weryfikacja E2E chrome-devtools (Anna/Spitfire strzałki wł. + boty
+Zero/as, Bf 109/trudny, Spitfire/łatwy — komplet poprawny; **PUŁAPKA: Tab = przytrzymanie**, do zrzutu
+`dispatchEvent(keydown)`, bo `press_key` błyska). Test serwerowy w `bot-slots.test.ts`. **NIEZACOMMITOWANE.**
+⏳ user: playtest + deploy front+back RAZEM (v10; samolot/poziom działają klient-only, „strzałki u wszystkich"
+wymagają nowego serwera).
+
 **Logowanie sesji graczy do MySQL 2026-07-19 (życzenie usera, 789 testów zielone, BEZ protokołu — v10,
 czysto serwerowe + deploy; zacommitowane `20d8345` na gałęzi `feat/logowanie-sesji-mysql`, NIEPUSHOWANE):** user chciał widzieć „kto/kiedy gra na serwerze" w istniejącym
 phpMyAdmin `http://tatanga.eu:8081`. Ustalone: ten panel to baza **MySQL `39790326_temp`** (kontener

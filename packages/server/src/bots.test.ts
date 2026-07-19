@@ -234,6 +234,68 @@ describe('serwer — bot „as" na WEP (2026-07-12)', () => {
   });
 });
 
+describe('serwer — koordynacja skrzydłowych botów „as" (2026-07-19)', () => {
+  /** Pokój drużynowy: 2 sojusznicze asy (team 0) + wróg (team 1) + host odsunięty daleko. */
+  function wingRoom(): { room: GameRoom; ace1: number; ace2: number; enemy: number; host: number } {
+    const room = new GameRoom('WING');
+    const host = addHuman(room, 'host');
+    room.applyRoomSettings({ mode: 'team' });
+    const ace1 = room.addBot('as', 'spitfire', 0);
+    const ace2 = room.addBot('as', 'spitfire', 0);
+    const enemy = room.addBot('trudny', 'bf109', 1);
+    room.start();
+    return { room, ace1, ace2, enemy, host };
+  }
+
+  it('bliższy as z amunicją zostaje liderem, drugi skrzydłowym wskazującym na lidera', () => {
+    const { room, ace1, ace2, enemy, host } = wingRoom();
+    repose(room, host, [12000, 5000, 0]); // host poza zasięgiem wykrycia (nie jest celem asów)
+    repose(room, enemy, [0, 5000, 0]);
+    repose(room, ace1, [0, 5000, 300]); // 300 m od wroga → bliżej
+    repose(room, ace2, [0, 5000, 800]); // 800 m od wroga → dalej
+    room.step(FIXED_DT_S);
+    expect(room.wingRoleOf(ace1)).toBe('leader');
+    expect(room.wingRoleOf(ace2)).toBe('wingman');
+    expect(room.wingLeaderOf(ace2)).toBe(ace1);
+  });
+
+  it('gdy lider oddali się od wroga > ~1 km, skrzydłowy przejmuje rolę lidera', () => {
+    const { room, ace1, ace2, enemy, host } = wingRoom();
+    repose(room, host, [12000, 5000, 0]);
+    repose(room, enemy, [0, 5000, 0]);
+    repose(room, ace1, [0, 5000, 300]);
+    repose(room, ace2, [0, 5000, 800]);
+    room.step(FIXED_DT_S); // ace1 = lider
+    expect(room.wingRoleOf(ace1)).toBe('leader');
+
+    // lider odlatuje na 1300 m (> handoff), skrzydłowy zostaje bliżej → przejęcie
+    repose(room, host, [12000, 5000, 0]);
+    repose(room, enemy, [0, 5000, 0]);
+    repose(room, ace1, [0, 5000, 1300]);
+    repose(room, ace2, [0, 5000, 700]);
+    room.step(FIXED_DT_S);
+    expect(room.wingRoleOf(ace2)).toBe('leader');
+    expect(room.wingRoleOf(ace1)).toBe('wingman');
+    expect(room.wingLeaderOf(ace1)).toBe(ace2);
+  });
+
+  it('FFA: asy NIE koordynują się (są rywalami, nie sojusznikami)', () => {
+    const room = new GameRoom('FFA0');
+    const host = addHuman(room, 'host');
+    const ace1 = room.addBot('as', 'spitfire');
+    const ace2 = room.addBot('as', 'spitfire');
+    const enemy = room.addBot('trudny', 'bf109');
+    room.start();
+    repose(room, host, [12000, 5000, 0]);
+    repose(room, enemy, [0, 5000, 0]);
+    repose(room, ace1, [0, 5000, 300]);
+    repose(room, ace2, [0, 5000, 800]);
+    room.step(FIXED_DT_S);
+    expect(room.wingRoleOf(ace1)).toBe('none');
+    expect(room.wingRoleOf(ace2)).toBe('none');
+  });
+});
+
 describe('serwer — wydajność botów (faza-12.md: 1 gracz + 7 botów < 50% budżetu ticku)', () => {
   it('1 gracz + 7 botów: 10 s symulacji mieści się w budżecie czasu ticku', () => {
     const room = new GameRoom('ABCD');

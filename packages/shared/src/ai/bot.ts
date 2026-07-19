@@ -1,4 +1,5 @@
 import { Quaternion, Vector3 } from 'three';
+import { GRAVITY_MS2 } from '../constants';
 import { primaryGroup } from '../combat/fire';
 import { createRng } from '../math/rng';
 import { getForward, getRight, getUp } from '../math/frame';
@@ -43,6 +44,18 @@ export interface BotSituation {
   enemies: readonly PlaneState[];
   /** Żywe stany wszystkich INNYCH samolotów, TAKŻE sojuszników (separacja antykolizyjna). */
   traffic: readonly PlaneState[];
+}
+
+/** Rozkaz koordynacji lider/skrzydłowy (poziom „as", 2026-07-19). Arbitraż ról robi SERWER
+ *  (zna id/frakcje/amunicję/cele — `PlaneState` ich nie niesie); botowi przekazuje gotową rolę.
+ *  Brak rozkazu = as walczy niezależnie (jak dotąd). */
+export interface BotWingOrders {
+  /** 'leader' = atakuje wspólnego wroga normalnie (bez zmiany zachowania — obecny tu tylko po to,
+   *  by bot wiedział, że NIE jest skrzydłowym); 'wingman' = ubezpiecza lidera i trzyma dystans. */
+  role: 'leader' | 'wingman';
+  /** Żywy stan lidera (referencja serwera) — dla skrzydłowego: skan jego ogona (check-six na jego
+   *  rzecz) i punkt trzymania za nim. null dla lidera. */
+  leader: PlaneState | null;
 }
 
 /** Wynik ticku bota dla wołającego (poza wypełnionym PilotDemands). */
@@ -103,6 +116,15 @@ const SEPARATION_HOLD_FIRE_ENGAGED_U = 0.75;
  *  realnie kolizyjny dystans, nie na „sąsiada w luźnym tłoku" — inaczej omijanie każdego
  *  samolotu w 70 m zjadałoby celność. Rozdzielenie sklejonych (dryf < tej bańki) zachowane. */
 const SEPARATION_ENGAGED_BUBBLE_FRAC = 0.6;
+/** Krótkie serie (burstFireRangeM>0): powyżej progu dystansu ogień pulsuje — BURST_ON_S sekund
+ *  ognia, potem BURST_OFF_S przerwy. Cel: nie wypruć całej amunicji na dalekim, mniej celnym
+ *  dystansie. Cykl liczony w tempie decyzji (10 Hz), więc granularność ~0,1 s wystarcza. */
+const BURST_ON_S = 0.6;
+const BURST_OFF_S = 0.9;
+// bufory koordynacji skrzydłowego (2026-07-19): pozycja/nos lidera i punkt trzymania standoff
+const scratchLeaderPos = new Vector3();
+const scratchLeaderFwd = new Vector3();
+const scratchHold = new Vector3();
 
 const scratchSelfFwd = new Vector3();
 const scratchSelfUp = new Vector3();
@@ -198,6 +220,8 @@ export class Bot {
   private jinkPeriodS = 1;
   private jinkAmpScale = 1;
   private jinkResampleAtS = 0;
+  /** Zegar cyklu krótkich serii (burstFireRangeM>0) — rośnie w tempie decyzji, faza on/off. */
+  private burstTimerS = 0;
 
   constructor(
     tuning: BotTuning,
@@ -226,6 +250,7 @@ export class Bot {
     this.hasScanThreat = false;
     this.headOnActive = false;
     this.jinkResampleAtS = 0;
+    this.burstTimerS = 0;
   }
 
   /**
@@ -247,6 +272,8 @@ export class Bot {
    * i ucieka (FSM → extend). Domyślnie false (sprawny / wywołania testów bez uszkodzeń).
    * `situation` (poziom „as", 2026-07-12): pełne listy wrogów (check-six) i ruchu (separacja);
    * bez niej lub przy knobach 0 zachowanie jak dotąd.
+   * `wing` (koordynacja asów, 2026-07-19): rola lider/skrzydłowy z serwera. Skrzydłowy trzyma
+   * dystans od wspólnego wroga i broni ogona lidera (podmiana celu na napastnika lidera).
    */
   update(
     self: PlaneState,
@@ -257,12 +284,31 @@ export class Bot {
     outDemands: PilotDemands,
     criticalDamage = false,
     situation?: BotSituation,
+    wing?: BotWingOrders,
   ): BotOutput {
     this.jinkTimeS += dtS;
+    this.burstTimerS += dtS;
     this.updateHitReaction(dtS);
     getForward(self.orientation, scratchSelfFwd);
     getUp(self.orientation, scratchSelfUp);
     getRight(self.orientation, scratchSelfRight);
+
+    // Koordynacja skrzydłowego (as, wingmanRangeM>0): domyślnie trzyma dystans od WSPÓLNEGO wroga
+    // (standoff — nie odbiera liderowi strzału), ale gdy wróg wchodzi LIDEROWI na ogon, przełącza
+    // cel na tego napastnika i atakuje go normalnie (aktywne ubezpieczanie). Podmiana `target` musi
+    // nastąpić PRZED geometrią/FSM (liczą się dla efektywnego celu). Lider (role='leader') leci bez
+    // zmian — atakuje wspólnego wroga jak zwykły engage.
+    let wingStandoff = false;
+    if (
+      wing?.role === 'wingman' &&
+      wing.leader?.life === 'alive' &&
+      this.difficulty.wingmanRangeM > 0 &&
+      target !== null
+    ) {
+      const defend = this.findLeaderThreat(self, wing.leader, situation);
+      if (defend) target = defend;
+      else wingStandoff = true;
+    }
 
     const hasTarget = target !== null && target.life === 'alive';
     if (hasTarget && target) {
@@ -284,10 +330,13 @@ export class Bot {
         self.velocity,
         tgtPos,
         target.velocity,
-        // wyprzedzenie liczone dla broni głównej (jedna prędkość wylotowa); rachunek i tak
-        // pomija grawitację/opór, więc reprezentatywna grupa wystarcza (faza 19)
+        // wyprzedzenie liczone dla broni głównej (jedna prędkość wylotowa); rachunek pomija
+        // opór, więc reprezentatywna grupa wystarcza (faza 19)
         primaryGroup(plane.armament).muzzleVelocityMs,
         this.lead,
+        // kompensacja opadu grawitacyjnego (as: leadGravityFrac=1 → celuje z uwzględnieniem
+        // grawitacji; niższe poziomy 0 → pocisk pada pod cel na dalekim dystansie, jak dotąd)
+        GRAVITY_MS2 * this.difficulty.leadGravityFrac,
       );
       this.perception.hasTarget = true;
       this.perception.rangeM = this.geom.rangeM;
@@ -318,6 +367,17 @@ export class Bot {
     if (hasTarget && target) {
       switch (this.state) {
         case 'engage': {
+          if (wingStandoff && wing?.leader) {
+            // skrzydłowy bez zagrożenia lidera: trzymaj dystans od wspólnego wroga (za liderem),
+            // NIE strzelaj do niego (nie odbieraj strzału liderowi, brak ryzyka trafienia go z tyłu)
+            this.steerWingmanStandoff(self, wing.leader, aimDir);
+            throttle =
+              this.geom.rangeM < this.difficulty.wingmanRangeM
+                ? Math.min(this.difficulty.throttle, MANEUVER_THROTTLE)
+                : this.difficulty.throttle;
+            fire = false;
+            break;
+          }
           this.steerEngage(self, aimDir);
           throttle =
             this.geom.rangeM < this.tuning.minRangeM
@@ -328,6 +388,9 @@ export class Bot {
           // w czołówce as nie naciska spustu (nos i tak schodzi z celu; strzał czołowy
           // to zaproszenie do wymiany, której unik ma właśnie zapobiec)
           fire = this.shouldFire() && !this.headOnActive;
+          // krótkie serie na dalekim dystansie (burstFireRangeM>0): pulsuj ogień, by nie
+          // wystrzelać zapasu, gdy strzał i tak mniej pewny; blisko progu ogień ciągły
+          fire = this.applyBurstDiscipline(fire);
           break;
         }
         case 'evade': {
@@ -547,27 +610,99 @@ export class Bot {
     this.hasScanThreat = false;
     const rangeLimit = this.difficulty.checkSixRangeM;
     if (rangeLimit <= 0 || !situation) return false;
+    const threat = this.findTailThreat(self.position, scratchSelfFwd, situation.enemies, rangeLimit);
+    if (!threat) return false;
+    const pos = nearestToroidalImage(threat.position, self.position, scratchThreatPos);
+    scratchSepRel.subVectors(pos, self.position);
+    const d = scratchSepRel.length();
+    scratchSepRel.divideScalar(Math.max(d, 1e-6)); // LOS ja→wróg, jednostkowy
+    scratchSepVel.subVectors(threat.velocity, self.velocity);
+    this.hasScanThreat = true;
+    this.scanThreatRangeM = d;
+    // zbliżanie (+ = dystans maleje): −d|rel|/dt = −LOS·(v_wróg − v_ja)
+    this.scanThreatClosureMs = -scratchSepRel.dot(scratchSepVel);
+    return true;
+  }
+
+  /**
+   * Najbliższy żywy wróg zagrażający pozycji `refPos` z TYLNEJ półsfery: leci za linią 3-9 obrońcy
+   * (kąt(refFwd, LOS) > threatBehind) i celuje w niego (jego nos ~ −LOS, w stożku threatCone).
+   * Zwraca referencję wroga (bez zapisu do pól) albo null. Wspólny rdzeń check-six (skan własnego
+   * ogona) i obrony lidera przez skrzydłowego (skan ogona LIDERA).
+   */
+  private findTailThreat(
+    refPos: Vector3,
+    refFwd: Vector3,
+    enemies: readonly PlaneState[],
+    rangeLimit: number,
+  ): PlaneState | null {
+    let best: PlaneState | null = null;
     let bestD = rangeLimit;
-    for (const e of situation.enemies) {
+    for (const e of enemies) {
       if (e.life !== 'alive') continue;
-      const pos = nearestToroidalImage(e.position, self.position, scratchEnemyPos);
-      scratchSepRel.subVectors(pos, self.position);
+      const pos = nearestToroidalImage(e.position, refPos, scratchEnemyPos);
+      scratchSepRel.subVectors(pos, refPos);
       const d = scratchSepRel.length();
       if (d < 1e-3 || d >= bestD) continue;
-      scratchSepRel.divideScalar(d); // LOS ja→wróg, jednostkowy
-      if (angleBetweenRad(scratchSelfFwd, scratchSepRel) < this.tuning.threatBehindRad) continue;
+      scratchSepRel.divideScalar(d); // LOS ref→wróg, jednostkowy
+      if (angleBetweenRad(refFwd, scratchSepRel) < this.tuning.threatBehindRad) continue;
       getForward(e.orientation, scratchEnemyFwd);
-      // celuje we mnie: kąt(jego nos, −LOS) = π − kąt(jego nos, LOS)
+      // celuje w ref: kąt(jego nos, −LOS) = π − kąt(jego nos, LOS)
       if (Math.PI - angleBetweenRad(scratchEnemyFwd, scratchSepRel) > this.tuning.threatConeRad) continue;
+      best = e;
       bestD = d;
-      this.hasScanThreat = true;
-      scratchThreatPos.copy(pos);
-      this.scanThreatRangeM = d;
-      // zbliżanie (+ = dystans maleje): −d|rel|/dt = −LOS·(v_wróg − v_ja)
-      scratchSepVel.subVectors(e.velocity, self.velocity);
-      this.scanThreatClosureMs = -scratchSepRel.dot(scratchSepVel);
     }
-    return this.hasScanThreat;
+    return best;
+  }
+
+  /**
+   * Skrzydłowy (koordynacja asów, 2026-07-19): najbliższy wróg wchodzący LIDEROWI na ogon (skan
+   * tylnej półsfery lidera w zasięgu check-six). Zwraca napastnika do przełączenia celu (obrona
+   * lidera) albo null (lider czysty → skrzydłowy trzyma dystans). Bez listy wrogów — null.
+   */
+  private findLeaderThreat(
+    self: PlaneState,
+    leader: PlaneState,
+    situation?: BotSituation,
+  ): PlaneState | null {
+    const rangeLimit = this.difficulty.checkSixRangeM;
+    if (rangeLimit <= 0 || !situation) return null;
+    const leaderPos = nearestToroidalImage(leader.position, self.position, scratchLeaderPos);
+    getForward(leader.orientation, scratchLeaderFwd);
+    return this.findTailThreat(leaderPos, scratchLeaderFwd, situation.enemies, rangeLimit);
+  }
+
+  /**
+   * Sterowanie skrzydłowego bez zagrożenia lidera (standoff): trzyma się na `wingmanRangeM` od
+   * WSPÓLNEGO wroga (scratchTargetPos), po stronie lidera — w praktyce tuż za nim, gotów przejąć
+   * atak. Punkt trzymania = na linii wróg→lider, `wingmanRangeM` od wroga. Ogień wygaszony przez
+   * wołającego (nie odbiera strzału liderowi). Wołane w engage PO wyliczeniu geometrii celu.
+   */
+  private steerWingmanStandoff(self: PlaneState, leader: PlaneState, aim: Vector3): void {
+    const leaderPos = nearestToroidalImage(leader.position, self.position, scratchLeaderPos);
+    // kierunek wróg→lider (jednostkowy); fallback: wprost do lidera / bieżący nos
+    scratchHold.subVectors(leaderPos, scratchTargetPos);
+    if (scratchHold.lengthSq() < 1e-6) scratchHold.subVectors(leaderPos, self.position);
+    if (scratchHold.lengthSq() < 1e-6) scratchHold.copy(scratchSelfFwd);
+    scratchHold.normalize();
+    // punkt trzymania = wingmanRangeM od wroga w stronę lidera
+    scratchHold.multiplyScalar(this.difficulty.wingmanRangeM).add(scratchTargetPos);
+    aim.subVectors(scratchHold, self.position);
+    if (aim.lengthSq() < 1e-6) aim.copy(scratchSelfFwd);
+    aim.normalize();
+  }
+
+  /**
+   * Krótkie serie (burstFireRangeM>0): powyżej progu dystansu pulsuj ogień (BURST_ON_S ognia /
+   * BURST_OFF_S przerwy), by nie wystrzelać zapasu na dalekim, mniej celnym dystansie. Poniżej
+   * progu (pewny, bliski strzał) ogień ciągły. 0 = brak dyscypliny (niższe poziomy: bez zmian).
+   */
+  private applyBurstDiscipline(fire: boolean): boolean {
+    if (!fire) return false;
+    const burstRange = this.difficulty.burstFireRangeM;
+    if (burstRange <= 0 || this.geom.rangeM <= burstRange) return fire;
+    const period = BURST_ON_S + BURST_OFF_S;
+    return this.burstTimerS % period < BURST_ON_S;
   }
 
   /**

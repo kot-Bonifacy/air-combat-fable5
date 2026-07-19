@@ -262,6 +262,13 @@ export class Connection implements RoomMember {
         this.room.setReady(this.playerId, msg.ready === true);
         return;
       }
+      case 'setOffscreenArrows': {
+        // gracz rozgłasza swoją osobistą pomoc HUD „strzałki wskazujące" (2026-07-19), by tabela wyników
+        // pokazała, kto jej używa. Tylko w pokoju; wartość bool — bez klampu zakresu (niezm. nr 11).
+        if (this.state !== 'inRoom' || !this.room || this.playerId === null) return;
+        this.room.setOffscreenArrows(this.playerId, msg.enabled === true);
+        return;
+      }
       case 'updateRoom': {
         // host zmienia ustawienia pokoju w poczekalni (tryb/boty/poziom). Tylko host; serwer
         // klampuje wartości (niezm. nr 11), a GameRoom egzekwuje stan 'waiting'. Pola opcjonalne:

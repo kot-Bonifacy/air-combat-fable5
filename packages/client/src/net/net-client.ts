@@ -243,6 +243,12 @@ export class NetClient {
     this.sendControl({ t: 'setReady', ready });
   }
 
+  /** Rozgłoś stan osobistej pomocy HUD „strzałki wskazujące" (2026-07-19), by tabela wyników pokazała
+   *  u każdego gracza, czy lata z tą pomocą. Serwer trzyma flagę per człowiek i broadcastuje roster. */
+  setOffscreenArrows(enabled: boolean): void {
+    this.sendControl({ t: 'setOffscreenArrows', enabled });
+  }
+
   /** Host zmienia ustawienia pokoju w poczekalni (tryb/boty/poziom). Serwer egzekwuje host+waiting. */
   updateRoom(opts: { mode?: MatchMode; bots?: number; difficulty?: DifficultyLevel }): void {
     this.sendControl({ t: 'updateRoom', ...opts });

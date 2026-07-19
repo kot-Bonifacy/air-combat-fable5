@@ -96,6 +96,8 @@ describe('loadBotConfig', () => {
       expect(BOT_CONFIG.levels[lvl].checkSixRangeM).toBe(0);
       expect(BOT_CONFIG.levels[lvl].useWep).toBe(0);
       expect(BOT_CONFIG.levels[lvl].evadeVariety01).toBe(0);
+      // niższe poziomy NIE kompensują grawitacji (pociski padają pod cel na dalekim dystansie)
+      expect(BOT_CONFIG.levels[lvl].leadGravityFrac).toBe(0);
     }
     const as = BOT_CONFIG.levels.as;
     expect(as.separationRangeM).toBeGreaterThan(0);
@@ -103,6 +105,7 @@ describe('loadBotConfig', () => {
     expect(as.checkSixRangeM).toBeGreaterThan(0);
     expect(as.useWep).toBeGreaterThan(0);
     expect(as.rollAuthorityMinFrac).toBeGreaterThan(0);
+    expect(as.leadGravityFrac).toBeGreaterThan(0); // as celuje z uwzględnieniem grawitacji
     expect(as.aimErrorRad).toBeLessThan(BOT_CONFIG.levels.trudny.aimErrorRad);
     expect(as.reactionTimeS).toBeLessThan(BOT_CONFIG.levels.trudny.reactionTimeS);
     // priorytet strefy (user 2026-07-12): wróg dalej niż 1000 m → patrol = lot do strefy

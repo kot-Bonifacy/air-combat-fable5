@@ -1,5 +1,6 @@
 import { Vector3 } from 'three';
 import {
+  BOT_CONFIG,
   BULLET_POOL_CAPACITY,
   BulletPool,
   INTERP_DELAY_MS,
@@ -61,6 +62,7 @@ import {
   segmentSphereHitT,
   smallerTeamIndex,
   snapshotByteLength,
+  SPOT_RANGE_M,
   stepFire,
   stepPilotedPlane,
   stepWreckPiloted,
@@ -78,6 +80,7 @@ import {
   ZoneControl,
   type AaFire,
   type AaTarget,
+  type BotWingOrders,
   type DamageState,
   type Emplacement,
   type ChatMessage,
@@ -177,6 +180,12 @@ const autopilotCommand: PilotCommand = {
   aimY: 0,
   aimZ: 1,
 };
+
+/** Koordynacja asów (2026-07-19): obecny lider TRACI rolę, gdy oddali się od wspólnego wroga poza
+ *  ten dystans [m] (albo skończy mu się amunicja) — wtedy najbliższy skrzydłowy z amunicją przejmuje
+ *  atak. Nieco większy od `wingmanRangeM` skrzydłowego (~1000 m) o histerezę: rola nie migocze, gdy
+ *  lider oscyluje wokół granicy trzymania skrzydłowego. */
+const WING_LEADER_HANDOFF_RANGE_M = 1100;
 
 /**
  * Buduje pierścień slotów startowych: pozycja na obrzeżach areny, nos poziomo ku środkowi
@@ -293,6 +302,10 @@ interface ServerPlayer {
    *  różne poziomy. Tylko dla botów; dla ludzi pole istnieje, ale jest nieużywane. Kodowane do roster
    *  (RoomPlayer.botDifficulty) i używane przy odtworzeniu kontrolera AI (BotManager.setDifficulty). */
   botDifficulty: DifficultyLevel;
+  /** Osobista pomoc HUD „strzałki wskazujące" tego gracza (localStorage klienta, rozgłaszana do pokoju
+   *  2026-07-19). Serwer jej NIE używa mechanicznie — tylko przekazuje do rostera, by tabela wyników
+   *  pokazała, kto lata z pomocą. Dotyczy ludzi; dla botów pozostaje domyślne false (i tak pomijane). */
+  offscreenArrows: boolean;
   /** Pełny, autorytatywny stan modułowych uszkodzeń (faza 22): HP stref + pożar. NIE jedzie jeszcze
    *  w snapshocie (Część 3 doda poziomy v8) — tu serwer trzyma go i działa lokalnie. Re-tworzony przy
    *  zmianie typu samolotu (inne strefy/HP), resetowany przy (re)spawnie. */
@@ -315,6 +328,13 @@ interface ServerPlayer {
   overheatAccumS: number;
   /** Czy katastrofalna awaria z przegrzania już nastąpiła na tym życiu (raz na życie). */
   overheatFailed: boolean;
+  /** Rola w koordynacji asów (2026-07-19): 'none' = brak; 'leader' = atakuje wspólnego wroga;
+   *  'wingman' = trzyma dystans i ubezpiecza lidera. Wyliczana co tick przez assignWingRoles (tylko
+   *  boty-asy z wingmanRangeM>0); dla reszty stale 'none'. Serwerowe — poza snapshotem. */
+  wingRole: 'none' | 'leader' | 'wingman';
+  /** Id lidera dla skrzydłowego (wingRole='wingman'); −1 dla lidera/none. Utrzymywane między
+   *  tickami — assignWingRoles czyta poprzednią decyzję dla histerezy (bez migotania ról). */
+  wingLeaderId: number;
 }
 
 export class GameRoom {
@@ -406,6 +426,17 @@ export class GameRoom {
   /** Ruch dla separacji asa: wszyscy INNI żywi, TAKŻE sojusznicy (osobny bufor, bo
    *  botTargetScratch filtruje frakcję). */
   private readonly botTrafficScratch: PlaneState[] = [];
+  /** Scratch arbitrażu ról lider/skrzydłowy (2026-07-19): żywe asy z ich wspólnym celem i kwadratem
+   *  dystansu do niego. Pre-alokowane sloty (zero alokacji per tick); `wingAceCount` = ile użytych. */
+  private readonly wingAceScratch: {
+    ace: ServerPlayer | null;
+    target: ServerPlayer | null;
+    distSq: number;
+  }[] = Array.from({ length: MAX_PLAYERS_PER_ROOM }, () => ({ ace: null, target: null, distSq: 0 }));
+  private wingAceCount = 0;
+  private readonly wingImageScratch = new Vector3();
+  /** Reużywalny rozkaz skrzydłowego (wingOrdersFor) — pole `leader` nadpisywane per bot. */
+  private readonly wingOrderScratch: BotWingOrders = { role: 'wingman', leader: null };
   /** Scratch listy żywych, nietykalnych encji do testu kolizji (faza 15) — zero alokacji per tick. */
   private readonly collisionScratch: ServerPlayer[] = [];
 
@@ -470,6 +501,8 @@ export class GameRoom {
       ready: p.ready,
       // poziom bota tylko dla botów (lobby slotowe RTS): host edytuje go per slot w poczekalni
       ...(p.isBot ? { botDifficulty: p.botDifficulty } : {}),
+      // stan „strzałek wskazujących" tylko dla ludzi (rozgłoszony z klienta) — tabela wyników pokazuje pomoc
+      ...(!p.isBot ? { offscreenArrows: p.offscreenArrows } : {}),
       // człowiek w oknie reconnectu (rozłączony) — poczekalnia oznacza go „(rozłączony)"; obecne tylko gdy true
       ...(!p.isBot && p.member === null ? { disconnected: true } : {}),
     }));
@@ -583,6 +616,7 @@ export class GameRoom {
       withdrawn: false,
       ready: isBot, // boty zawsze gotowe; człowiek potwierdza przyciskiem „Gotów"
       botDifficulty: 'normalny', // nadpisywane przez addBot dla botów; dla ludzi nieużywane
+      offscreenArrows: false, // klient dośle stan z localStorage (setOffscreenArrows) po wejściu do pokoju
       damage: createDamageState(initPlane.zones), // pełna sprawność; reset też na (re)spawnie
       damageLevelsBuf: new Array<number>(ZONE_COUNT).fill(0),
       fireStarterId: -1,
@@ -590,6 +624,8 @@ export class GameRoom {
       fireSelfInflicted: false,
       overheatAccumS: 0,
       overheatFailed: false,
+      wingRole: 'none',
+      wingLeaderId: -1,
     };
     this.players.set(id, player);
     return player;
@@ -753,6 +789,20 @@ export class GameRoom {
     if (!player || player.isBot) return;
     if (player.ready === ready) return;
     player.ready = ready;
+    this.broadcastRoomUpdate();
+  }
+
+  /**
+   * Gracz zmienia osobistą pomoc HUD „strzałki wskazujące" (2026-07-19). Ustawienie jest lokalne po
+   * stronie klienta (localStorage), ale rozgłaszamy je do rostera, by tabela wyników pokazała u każdego,
+   * czy lata z pomocą. Serwer NIE używa tej flagi mechanicznie. Tylko człowiek; bot/nieznany = no-op.
+   * Bez ograniczenia do 'waiting' — gracz może ją przełączyć również w trakcie meczu (roster leci dalej).
+   */
+  setOffscreenArrows(id: number, enabled: boolean): void {
+    const player = this.players.get(id);
+    if (!player || player.isBot) return;
+    if (player.offscreenArrows === enabled) return;
+    player.offscreenArrows = enabled;
     this.broadcastRoomUpdate();
   }
 
@@ -1182,6 +1232,16 @@ export class GameRoom {
     return this.players.get(id)?.fire.ammoRemaining ?? 0;
   }
 
+  /** Rola koordynacji asów (diagnostyka/testy): 'none'|'leader'|'wingman'. */
+  wingRoleOf(id: number): 'none' | 'leader' | 'wingman' {
+    return this.players.get(id)?.wingRole ?? 'none';
+  }
+
+  /** Id lidera przypisanego skrzydłowemu (diagnostyka/testy); −1 gdy brak. */
+  wingLeaderOf(id: number): number {
+    return this.players.get(id)?.wingLeaderId ?? -1;
+  }
+
   /** Liczba aktywnych pocisków w pokoju — diagnostyka/testy. */
   get activeBulletCount(): number {
     return this.pool.activeCount;
@@ -1201,6 +1261,10 @@ export class GameRoom {
     // (mniejsza moc/clMax, bias roll, słabszy ogon, wyciek) wpływają na RUCH tego ticku. Sprawny
     // płatowiec → null = tożsamość fizyki (złote testy nietknięte).
     for (const player of this.players.values()) this.refreshDamageLevels(player);
+
+    // 0b) arbitraż ról lider/skrzydłowy botów-asów (koordynacja 2026-07-19) — PRZED ruchem, żeby
+    // decyzje botów w tym ticku czytały świeże role. Tania pętla O(asy²), asy ≤ 7.
+    this.assignWingRoles();
 
     // 1) ruch wszystkich uczestników (alive: fizyka+cykl-życia; dead: timer respawnu).
     // Bot i gracz różnią się TYLKO źródłem sterowania (AI vs input) — dalej identyczna ścieżka.
@@ -1429,6 +1493,7 @@ export class GameRoom {
           dtS * BOT_THINK_INTERVAL,
           critical,
           this.collectBotTraffic(player),
+          this.wingOrdersFor(player),
         );
       }
       const control = this.botManager.controlOf(player.id);
@@ -1482,6 +1547,116 @@ export class GameRoom {
       this.botTrafficScratch.push(p.sim.state);
     }
     return this.botTrafficScratch;
+  }
+
+  /**
+   * Najbliższy żywy WRÓG danego bota — TA SAMA selekcja co think (wg frakcji w trybie drużynowym,
+   * w FFA każdy inny; torus, w zasięgu spotting). Zwraca ServerPlayer (nie surowy stan), bo arbitraż
+   * ról potrzebuje id i amunicji, których `PlaneState` nie niesie.
+   */
+  private nearestEnemyOf(self: ServerPlayer): ServerPlayer | null {
+    let best: ServerPlayer | null = null;
+    let bestSq = SPOT_RANGE_M * SPOT_RANGE_M;
+    const selfPos = self.sim.state.position;
+    for (const p of this.players.values()) {
+      if (p === self || p.sim.state.life !== 'alive') continue;
+      if (this.mode === 'team' && p.faction === self.faction) continue;
+      const img = nearestToroidalImage(p.sim.state.position, selfPos, this.wingImageScratch);
+      const d = img.distanceToSquared(selfPos);
+      if (d < bestSq) {
+        bestSq = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Arbitraż ról lider/skrzydłowy dla botów-asów (koordynacja 2026-07-19; wołany raz na tick PRZED
+   * ruchem). Grupuje SOJUSZNICZE asy (ta sama frakcja) mające tego samego najbliższego wroga; w
+   * grupie ≥2 jeden jest liderem (atakuje), reszta skrzydłowymi (trzymają dystans + ubezpieczają).
+   * Lider = najbliższy wrogowi as Z AMUNICJĄ, z histerezą: obecny lider trzyma rolę, dopóki ma
+   * amunicję i jest ≤ WING_LEADER_HANDOFF_RANGE_M od wroga — dzięki temu skrzydłowy przejmuje atak
+   * dokładnie wtedy, gdy liderowi skończy się amunicja albo oddali się od wroga (życzenie usera).
+   * Tylko poziom „as" z wingmanRangeM>0; pozostali zawsze 'none'.
+   */
+  private assignWingRoles(): void {
+    // 1) żywe asy z aktywną koordynacją → slot (ace, wspólny wróg, dystans²). Bez wroga = 'none'.
+    this.wingAceCount = 0;
+    for (const p of this.players.values()) {
+      if (!p.isBot || p.sim.state.life !== 'alive') continue;
+      if (BOT_CONFIG.levels[p.botDifficulty].wingmanRangeM <= 0) continue;
+      const enemy = this.nearestEnemyOf(p);
+      if (!enemy) {
+        p.wingRole = 'none';
+        p.wingLeaderId = -1;
+        continue;
+      }
+      const slot = this.wingAceScratch[this.wingAceCount];
+      if (!slot) break; // slotów = MAX_PLAYERS_PER_ROOM → nie przekroczymy liczby botów
+      const img = nearestToroidalImage(enemy.sim.state.position, p.sim.state.position, this.wingImageScratch);
+      slot.ace = p;
+      slot.target = enemy;
+      slot.distSq = img.distanceToSquared(p.sim.state.position);
+      this.wingAceCount++;
+    }
+
+    // 2) grupuj po (frakcja, wróg) i przydziel role. Slot konsumowany (ace=null) po obsłużeniu grupy.
+    const handoffSq = WING_LEADER_HANDOFF_RANGE_M * WING_LEADER_HANDOFF_RANGE_M;
+    for (let i = 0; i < this.wingAceCount; i++) {
+      const gi = this.wingAceScratch[i];
+      if (!gi || gi.ace === null || gi.target === null) continue;
+      const targetId = gi.target.id;
+      const faction = gi.ace.faction;
+
+      // wybór lidera: obecny (histereza) trzyma rolę, gdy ma amunicję i ≤ handoff; inaczej najbliższy
+      // wrogowi as z amunicją. Brak asa z amunicją w grupie → grupa bez lidera (walczą niezależnie).
+      let leader: ServerPlayer | null = null;
+      let bestAmmoAce: ServerPlayer | null = null;
+      let bestAmmoDistSq = Infinity;
+      let members = 0;
+      for (let j = i; j < this.wingAceCount; j++) {
+        const gj = this.wingAceScratch[j];
+        if (!gj || gj.ace === null || gj.target === null) continue;
+        if (gj.target.id !== targetId || gj.ace.faction !== faction) continue;
+        members++;
+        const hasAmmo = gj.ace.fire.ammoRemaining > 0;
+        if (hasAmmo && gj.ace.wingRole === 'leader' && gj.distSq <= handoffSq) leader = gj.ace;
+        if (hasAmmo && gj.distSq < bestAmmoDistSq) {
+          bestAmmoDistSq = gj.distSq;
+          bestAmmoAce = gj.ace;
+        }
+      }
+      if (leader === null) leader = bestAmmoAce; // brak ważnego obecnego lidera → nowy z amunicją
+
+      for (let j = i; j < this.wingAceCount; j++) {
+        const gj = this.wingAceScratch[j];
+        if (!gj || gj.ace === null || gj.target === null) continue;
+        if (gj.target.id !== targetId || gj.ace.faction !== faction) continue;
+        if (members < 2 || leader === null) {
+          gj.ace.wingRole = 'none'; // samotny goniący / grupa bez amunicji → bez koordynacji
+          gj.ace.wingLeaderId = -1;
+        } else if (gj.ace === leader) {
+          gj.ace.wingRole = 'leader';
+          gj.ace.wingLeaderId = -1;
+        } else {
+          gj.ace.wingRole = 'wingman';
+          gj.ace.wingLeaderId = leader.id;
+        }
+        gj.ace = null; // konsumuj slot (nie wracamy do niego w pętli zewnętrznej)
+      }
+    }
+  }
+
+  /** Rozkaz koordynacji dla bota do przekazania kontrolerowi AI. Tylko skrzydłowy zmienia zachowanie
+   *  (lider/none = normalny engage → undefined). Reużywalny scratch (think→update konsumuje
+   *  synchronicznie, jeden bot naraz). null, gdy lider zginął (skrzydłowy wraca do swojej walki). */
+  private wingOrdersFor(player: ServerPlayer): BotWingOrders | undefined {
+    if (player.wingRole !== 'wingman') return undefined;
+    const leader = this.players.get(player.wingLeaderId);
+    if (!leader || leader.sim.state.life !== 'alive') return undefined;
+    this.wingOrderScratch.leader = leader.sim.state;
+    return this.wingOrderScratch;
   }
 
   /** Krok kontroli ognia: spust z inputu (gracz) albo z decyzji AI (bot); rewind lag-comp, event MUZZLE. */
@@ -1994,6 +2169,8 @@ export class GameRoom {
     player.fireSelfInflicted = false;
     player.overheatAccumS = 0; // świeży silnik: licznik przegrzania od zera
     player.overheatFailed = false;
+    player.wingRole = 'none'; // koordynacja asów przydzieli rolę od nowa w assignWingRoles
+    player.wingLeaderId = -1;
     player.sim.damageLevels = null;
     // nietykalność po (re)spawnie (anty-spawn-kill); znika po czasie albo gdy gracz strzeli
     player.protectionTimerS = SPAWN_PROTECTION_S;

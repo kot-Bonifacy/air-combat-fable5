@@ -811,6 +811,10 @@ export interface RoomPlayer {
    *  okna. Obecne TYLKO gdy true (człowiek bez połączenia); boty i połączeni gracze — nieobecne.
    *  Pole addytywne JSON — bez bumpu protokołu. */
   disconnected?: boolean;
+  /** Osobista pomoc HUD „strzałki wskazujące" tego gracza (localStorage klienta, rozgłaszana do
+   *  pokoju 2026-07-19), by tabela wyników pokazała, kto lata z pomocą. Obecne TYLKO dla ludzi
+   *  (isBot=false); dla botów nieobecne. Pole addytywne JSON — bez bumpu protokołu. */
+  offscreenArrows?: boolean;
 }
 
 // --- klient → serwer ---
@@ -871,6 +875,15 @@ export interface SelectTeamMessage {
 export interface SetReadyMessage {
   t: 'setReady';
   ready: boolean;
+}
+
+/** Klient → serwer: zmiana osobistej pomocy HUD „strzałki wskazujące" (2026-07-19). Ustawienie jest
+ *  lokalne (localStorage klienta), ale rozgłaszamy je do pokoju, by tabela wyników pokazała u każdego
+ *  gracza, czy lata z tą pomocą. Serwer trzyma flagę per człowiek i broadcastuje roster. Poza pokojem
+ *  ignorowany. Wartość addytywna JSON — bez bumpu protokołu. */
+export interface SetOffscreenArrowsMessage {
+  t: 'setOffscreenArrows';
+  enabled: boolean;
 }
 
 /**
@@ -1123,6 +1136,7 @@ export type ControlMessage =
   | SelectPlaneMessage
   | SelectTeamMessage
   | SetReadyMessage
+  | SetOffscreenArrowsMessage
   | UpdateRoomMessage
   | AddBotMessage
   | RemoveBotMessage
@@ -1153,6 +1167,7 @@ const CONTROL_TAGS: ReadonlySet<string> = new Set([
   'selectPlane',
   'selectTeam',
   'setReady',
+  'setOffscreenArrows',
   'updateRoom',
   'addBot',
   'removeBot',

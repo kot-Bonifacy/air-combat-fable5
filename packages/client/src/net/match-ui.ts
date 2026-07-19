@@ -25,6 +25,19 @@ import {
 const TEAM_OWN_COLOR = '#5fe88a';
 const TEAM_FOE_COLOR = '#ff6a4a';
 
+/**
+ * Dane dodatkowe wiersza tabeli (2026-07-19) — łączone po `id` w online-main z rosterem poczekalni
+ * (roomView.players), bo StandingRow ich nie niesie. Moduł tabeli sam ich NIE wylicza (nie zna typów
+ * samolotu ani etykiet poziomów) — dostaje gotowe napisy do wyświetlenia.
+ */
+export interface StandingExtra {
+  /** Etykieta samolotu, np. „Spitfire" / „Bf 109" / „Zero". Pusty string → komórka pusta. */
+  plane: string;
+  /** Zwarta informacja: bot → „poziom: trudny"; człowiek → „strzałki: wł./wył.". */
+  info: string;
+}
+export type StandingExtras = ReadonlyMap<number, StandingExtra>;
+
 /** Powód zakończenia jako tekst. P1 (2026-06-19): oba tryby eliminacyjne — `'score'` znaczy
  *  eliminację (drużynowy: przeciwna drużyna; FFA: ostatni ocalały), nie limit zestrzeleń. */
 function reasonText(reason: MatchEndReason, mode: MatchMode): string {
@@ -42,6 +55,11 @@ function orderedFactions(rows: readonly StandingRow[], localFaction: number): nu
     if (b === localFaction) return 1;
     return a - b;
   });
+}
+
+/** Pusta komórka wyrównująca siatkę (nagłówki drużyn nie mają danych samolotu/info). */
+function emptyCell(cls: string): HTMLSpanElement {
+  return el('span', `mui-cell ${cls}`);
 }
 
 /** Nagłówek drużyny: nazwa (kolor wg „swoja/wroga") + agregat Z/Ś/A i czas strefy (liczony raz). */
@@ -75,7 +93,19 @@ function teamHeaderRow(faction: number, localFaction: number, rows: readonly Sta
   const pointsCell = el('span', 'mui-cell mui-num');
   pointsCell.textContent = String(scorePoints(kills, assists, zoneSeconds, groundKills));
   const pingCell = el('span', 'mui-cell mui-num');
-  tr.append(rankCell, nameCell, killsCell, deathsCell, assistsCell, zoneCell, pointsCell, pingCell);
+  // nagłówek drużyny nie ma danych samolotu/info — puste komórki, by siatka pozostała wyrównana
+  tr.append(
+    rankCell,
+    nameCell,
+    killsCell,
+    deathsCell,
+    assistsCell,
+    emptyCell('mui-plane'),
+    emptyCell('mui-info'),
+    zoneCell,
+    pointsCell,
+    pingCell,
+  );
   return tr;
 }
 
@@ -88,15 +118,16 @@ function standingsNodes(
   localId: number | null,
   localFaction: number,
   mode: MatchMode,
+  extras: StandingExtras | undefined,
 ): HTMLElement[] {
   if (mode !== 'team') {
-    return [headerRow(), ...rows.map((row, i) => standingRow(row, i + 1, localId))];
+    return [headerRow(), ...rows.map((row, i) => standingRow(row, i + 1, localId, extras))];
   }
   const nodes: HTMLElement[] = [headerRow()];
   for (const faction of orderedFactions(rows, localFaction)) {
     const teamRows = rows.filter((r) => r.faction === faction);
     nodes.push(teamHeaderRow(faction, localFaction, teamRows));
-    teamRows.forEach((row, i) => nodes.push(standingRow(row, i + 1, localId)));
+    teamRows.forEach((row, i) => nodes.push(standingRow(row, i + 1, localId, extras)));
   }
   return nodes;
 }
@@ -110,7 +141,12 @@ function formatClock(totalS: number): string {
 }
 
 /** Buduje jeden wiersz tabeli wyników (wspólny dla scoreboardu i ekranu końca). */
-function standingRow(row: StandingRow, rank: number, localId: number | null): HTMLDivElement {
+function standingRow(
+  row: StandingRow,
+  rank: number,
+  localId: number | null,
+  extras: StandingExtras | undefined,
+): HTMLDivElement {
   const tr = el('div', 'mui-row');
   if (row.id === localId) tr.classList.add('mui-row-self');
 
@@ -124,6 +160,12 @@ function standingRow(row: StandingRow, rank: number, localId: number | null): HT
   deathsCell.textContent = String(row.deaths);
   const assistsCell = el('span', 'mui-cell mui-num');
   assistsCell.textContent = String(row.assists);
+  // samolot + zwarta „Info" (bot → poziom, człowiek → strzałki) — dane łączone po id z rosterem (extras)
+  const ex = extras?.get(row.id);
+  const planeCell = el('span', 'mui-cell mui-plane');
+  planeCell.textContent = ex?.plane ?? '';
+  const infoCell = el('span', 'mui-cell mui-info');
+  infoCell.textContent = ex?.info ?? '';
   const zoneCell = el('span', 'mui-cell mui-num');
   zoneCell.textContent = formatClock(row.zoneSeconds); // czas wyłącznej kontroli strefy (faza 17)
   const pointsCell = el('span', 'mui-cell mui-num');
@@ -132,7 +174,18 @@ function standingRow(row: StandingRow, rank: number, localId: number | null): HT
   const pingCell = el('span', 'mui-cell mui-num');
   pingCell.textContent = row.isBot ? 'BOT' : `${String(row.pingMs)}`;
 
-  tr.append(rankCell, nameCell, killsCell, deathsCell, assistsCell, zoneCell, pointsCell, pingCell);
+  tr.append(
+    rankCell,
+    nameCell,
+    killsCell,
+    deathsCell,
+    assistsCell,
+    planeCell,
+    infoCell,
+    zoneCell,
+    pointsCell,
+    pingCell,
+  );
   return tr;
 }
 
@@ -145,6 +198,8 @@ function headerRow(): HTMLDivElement {
     ['Z', 'mui-num'],
     ['Ś', 'mui-num'],
     ['A', 'mui-num'],
+    ['Samolot', 'mui-plane'],
+    ['Info', 'mui-info'],
     ['Strefa', 'mui-num'],
     ['Pkt', 'mui-num'],
     ['ping', 'mui-num'],
@@ -165,6 +220,7 @@ export class ScoreboardOverlay {
   private mode: MatchMode = 'ffa';
   private localFaction = 0;
   private localId: number | null = null;
+  private extras: StandingExtras | undefined;
   private shown = false;
 
   constructor() {
@@ -186,11 +242,13 @@ export class ScoreboardOverlay {
     this.localId = id;
   }
 
-  /** Aktualizuje dane (z wiadomości standings); przerysowuje, jeśli widoczne. */
-  update(rows: StandingRow[], mode: MatchMode, localFaction: number): void {
+  /** Aktualizuje dane (z wiadomości standings); przerysowuje, jeśli widoczne. `extras` = samolot/info
+   *  łączone po id z rosterem (online-main) — bez nich tabela pokazuje puste kolumny (degradacja łagodna). */
+  update(rows: StandingRow[], mode: MatchMode, localFaction: number, extras?: StandingExtras): void {
     this.lastRows = rows;
     this.mode = mode;
     this.localFaction = localFaction;
+    this.extras = extras;
     if (this.shown) this.render();
   }
 
@@ -217,7 +275,7 @@ export class ScoreboardOverlay {
         ? 'TABELA WYNIKÓW — eliminacja drużynowa'
         : 'TABELA WYNIKÓW — eliminacja (każdy na każdego)';
     this.tableEl.replaceChildren(
-      ...standingsNodes(this.lastRows, this.localId, this.localFaction, this.mode),
+      ...standingsNodes(this.lastRows, this.localId, this.localFaction, this.mode, this.extras),
     );
   }
 }
@@ -263,7 +321,7 @@ export class ResultsOverlay {
    * W trybie drużynowym zwycięstwo jest DRUŻYNOWE (`winningFaction`) — baner i tabela
    * mówią o drużynie, nie o pojedynczym pilocie.
    */
-  show(msg: MatchEndedMessage, localId: number | null, localFaction: number): void {
+  show(msg: MatchEndedMessage, localId: number | null, localFaction: number, extras?: StandingExtras): void {
     const { mode, winnerId, winningFaction, reason, rows } = msg;
     const reasonStr = reasonText(reason, mode);
 
@@ -290,7 +348,7 @@ export class ResultsOverlay {
       }
     }
 
-    this.tableEl.replaceChildren(...standingsNodes(rows, localId, localFaction, mode));
+    this.tableEl.replaceChildren(...standingsNodes(rows, localId, localFaction, mode, extras));
 
     this.hintEl.textContent = 'Wróć do poczekalni, by zagrać ponownie, albo opuść pokój. [Tab] chowa/pokazuje tabelę.';
     this.shown = true;
@@ -342,7 +400,7 @@ const MATCH_UI_CSS = `
 .mui-scoreboard.show, .mui-results.show { display: flex; }
 .mui-panel {
   pointer-events: auto;
-  min-width: 460px; max-width: 92vw;
+  min-width: 560px; max-width: 92vw;
   padding: 20px 26px; border-radius: 12px;
   background: rgba(7,13,21,0.88); border: 1px solid #2a3f54;
   box-shadow: 0 10px 40px rgba(0,0,0,0.55);
@@ -350,7 +408,7 @@ const MATCH_UI_CSS = `
 }
 .mui-title { font: 700 18px monospace; letter-spacing: 1px; color: #ffd24a; text-align: center; }
 .mui-table { display: flex; flex-direction: column; gap: 2px; }
-.mui-row { display: grid; grid-template-columns: 32px 1fr 44px 44px 44px 56px 52px 56px; align-items: center; padding: 4px 8px; border-radius: 4px; }
+.mui-row { display: grid; grid-template-columns: 32px 1fr 44px 44px 44px 100px 160px 56px 52px 56px; align-items: center; padding: 4px 8px; border-radius: 4px; }
 .mui-head { color: #9fc4e6; border-bottom: 1px solid #2a3f54; border-radius: 0; font-size: 13px; }
 .mui-row-self { background: rgba(200,88,31,0.28); }
 .mui-team { background: rgba(40,60,80,0.4); font-weight: 700; border-top: 1px solid #2a3f54; margin-top: 4px; }
@@ -359,7 +417,11 @@ const MATCH_UI_CSS = `
 .mui-rank { color: #9fc4e6; }
 .mui-name { padding-right: 8px; }
 .mui-num { text-align: right; font-variant-numeric: tabular-nums; }
-.mui-results-panel { min-width: 480px; }
+/* padding-left oddziela lewy dosuw „Samolot" od prawego dosuwu kolumny asyst (bez tego „0" wtapiał się
+   w etykietę samolotu: „0Spitfire", a nagłówek „ASamolot" — siatka grid nie ma column-gap). */
+.mui-plane { text-align: left; padding-left: 14px; padding-right: 10px; }
+.mui-info { text-align: left; padding-right: 8px; color: #b9c9d8; }
+.mui-results-panel { min-width: 620px; }
 .mui-banner { text-align: center; font: 700 22px monospace; color: #eaf3ff; padding: 6px 0; }
 .mui-banner-win { color: #ffd24a; text-shadow: 0 2px 10px rgba(255,210,74,0.5); }
 .mui-hint { text-align: center; color: #9fc4e6; font-size: 13px; }

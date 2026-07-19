@@ -26,6 +26,11 @@ const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   as: 'as', // b.trudny — najlepszy pilot (nazwa „as" wybrana przez usera 2026-07-12)
 };
 
+/** Etykieta poziomu trudności do UI (poczekalnia i tabela wyników). Jedno źródło nazw — bez duplikacji. */
+export function difficultyLabelOf(level: DifficultyLevel): string {
+  return DIFFICULTY_LABELS[level];
+}
+
 /** Wartość sentinel selektora modelu nowego bota = „Losowy" (host nie wymusza typu → serwer losuje
  *  z id). Pusty string nie koliduje z żadnym PlaneType, więc bezpiecznie odróżnia „brak wyboru". */
 const RANDOM_PLANE_VALUE = '';
