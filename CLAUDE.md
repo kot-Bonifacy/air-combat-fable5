@@ -43,7 +43,7 @@ w „Wynik R5"; **PROJEKT FIZYKA v2 domknięty po stronie kodu/docs — pozostaj
 produkcji**). ⏳ user: playtest czucia 3 samolotów (ankieta 8 pkt w „Wynik R5") + deploy front+back RAZEM (v10).
 
 **Logowanie sesji graczy do MySQL 2026-07-19 (życzenie usera, 789 testów zielone, BEZ protokołu — v10,
-czysto serwerowe + deploy; NIEZACOMMITOWANE):** user chciał widzieć „kto/kiedy gra na serwerze" w istniejącym
+czysto serwerowe + deploy; zacommitowane `20d8345` na gałęzi `feat/logowanie-sesji-mysql`, NIEPUSHOWANE):** user chciał widzieć „kto/kiedy gra na serwerze" w istniejącym
 phpMyAdmin `http://tatanga.eu:8081`. Ustalone: ten panel to baza **MySQL `39790326_temp`** (kontener
 `portfolio_db` ze stacku portfolio); dogfight to OSOBNY stack Docker **bez bazy** (dotąd logi tylko `docker logs`
 przez pino). **Decyzje usera (AskUserQuestion):** (1) zakres = **sesje graczy** (jeden wiersz na wejście do
@@ -59,7 +59,7 @@ IP: `server.ts clientIp()` bierze 1. wpis `X-Forwarded-For`; `deploy/nginx.conf`
 dokłada IP klienta). **Deploy (`deploy/docker-compose.yml`):** backend dołącza do **external network
 `portfolio_default`** (obok `default`) → host `portfolio_db`; `DB_LOG_*` z `.env` (**hasło NIE w repo**,
 `${DB_LOG_PASSWORD:-}` = domyślnie wyłączone). Dokumentacja: `deploy/README.md` (sekcja logowania + weryfikacja),
-`deploy/.env.example`, baza wiedzy VPS. ⏳ user: konfiguracja `.env` + weryfikacja sieci `portfolio_default` na VPS
+`deploy/.env.example`, baza wiedzy VPS. ⏳ user: merge/push gałęzi + konfiguracja `.env` + weryfikacja sieci `portfolio_default` na VPS
 + smoke (zagraj → wiersz w `dogfight_sessions` w phpMyAdmin, IP realne nie `172.x`).
 
 **RF1 — fix „ducha gracza" 2026-07-18 (zgłoszenie usera, 784 testy zielone, protokół v10 NIEZMIENIONY —
