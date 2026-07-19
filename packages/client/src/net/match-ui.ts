@@ -35,6 +35,9 @@ export interface StandingExtra {
   plane: string;
   /** Zwarta informacja: bot → „poziom: trudny"; człowiek → „strzałki: wł./wył.". */
   info: string;
+  /** true = pilot wyeliminowany (stracony samolot, brak żyć) → wiersz wyszarzony jak w RosterOverlay
+   *  (widok na głównym ekranie gry). online-main liczy to tą samą regułą (deaths ≥ MATCH_LIVES + martwy). */
+  isLost: boolean;
 }
 export type StandingExtras = ReadonlyMap<number, StandingExtra>;
 
@@ -147,8 +150,11 @@ function standingRow(
   localId: number | null,
   extras: StandingExtras | undefined,
 ): HTMLDivElement {
+  const ex = extras?.get(row.id);
   const tr = el('div', 'mui-row');
   if (row.id === localId) tr.classList.add('mui-row-self');
+  // stracony samolot (wyeliminowany) → wyszarzenie wiersza, spójnie z RosterOverlay na głównym ekranie
+  if (ex?.isLost) tr.classList.add('mui-row-lost');
 
   const rankCell = el('span', 'mui-cell mui-rank');
   rankCell.textContent = String(rank);
@@ -160,8 +166,7 @@ function standingRow(
   deathsCell.textContent = String(row.deaths);
   const assistsCell = el('span', 'mui-cell mui-num');
   assistsCell.textContent = String(row.assists);
-  // samolot + zwarta „Info" (bot → poziom, człowiek → strzałki) — dane łączone po id z rosterem (extras)
-  const ex = extras?.get(row.id);
+  // samolot + zwarta „Info" (bot → poziom, człowiek → strzałki) — dane łączone po id z rosterem (extras, wyżej)
   const planeCell = el('span', 'mui-cell mui-plane');
   planeCell.textContent = ex?.plane ?? '';
   const infoCell = el('span', 'mui-cell mui-info');
@@ -411,6 +416,10 @@ const MATCH_UI_CSS = `
 .mui-row { display: grid; grid-template-columns: 32px 1fr 44px 44px 44px 100px 160px 56px 52px 56px; align-items: center; padding: 4px 8px; border-radius: 4px; }
 .mui-head { color: #9fc4e6; border-bottom: 1px solid #2a3f54; border-radius: 0; font-size: 13px; }
 .mui-row-self { background: rgba(200,88,31,0.28); }
+/* stracony samolot (wyeliminowany) — wyszarzenie jak RosterOverlay: przygaszenie + szary tekst.
+   Selektor .mui-row-lost .mui-cell (dwie klasy) przebija kolory kolumn (.mui-rank/.mui-info — jedna klasa). */
+.mui-row-lost { opacity: 0.5; }
+.mui-row-lost .mui-cell { color: #8b98a6; }
 .mui-team { background: rgba(40,60,80,0.4); font-weight: 700; border-top: 1px solid #2a3f54; margin-top: 4px; }
 .mui-team .mui-name { padding-left: 2px; letter-spacing: 0.5px; }
 .mui-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

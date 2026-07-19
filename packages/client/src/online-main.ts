@@ -1404,7 +1404,27 @@ function playerName(id: number): string {
  * stan strzałek wskazujących. Własny wiersz czytamy z żywego showOffscreenArrows (natychmiast po
  * przełączeniu, zanim wróci roster), obcych z rozgłoszonej flagi rostera (offscreenArrows).
  */
-function buildStandingExtras(rows: readonly StandingRow[]): Map<number, StandingExtra> {
+/** Stracony samolot (wyeliminowany): wyczerpał życia (MATCH_LIVES) i nie żyje ani nie spada (wrak =
+ *  wciąż w walce, jak SP). Fazę życia bierzemy z renderowanego stanu encji (lifeById; snapshot binarny
+ *  nie niesie liczby żyć), niezależnie od trybu. Wspólne dla RosterOverlay (główny ekran) i tabeli
+ *  wyników (Tab/koniec meczu) → identyczne wyszarzenie w obu miejscach. */
+function isRowLost(r: StandingRow): boolean {
+  const life = lifeById.get(r.id);
+  return r.deaths >= MATCH_LIVES && life !== 'alive' && life !== 'dying';
+}
+
+/**
+ * Buduje dane dodatkowe wierszy (samolot/info/isLost) łączone po id z rosterem poczekalni.
+ * `atEnd` = ekran KOŃCA meczu: świat zamrożony (serwer nie wysyła snapshotów w 'ended'), więc lifeById
+ * stoi na ostatniej klatce — ostatnio zestrzelony zostaje na zawsze w fazie 'dying' i isRowLost fałszywie
+ * traktowałby go jak żywego (spadający wrak = „wciąż w walce"). Po rozstrzygnięciu meczu to nieprawda:
+ * wyszarzamy po samym wyczerpaniu żyć (`deaths ≥ MATCH_LIVES`) — zwycięzca ma 0, reszta ≥1. W TAB podczas
+ * gry (atEnd=false) zostaje isRowLost z lifeById (żywy snapshot, spójnie z RosterOverlay).
+ */
+function buildStandingExtras(
+  rows: readonly StandingRow[],
+  atEnd = false,
+): Map<number, StandingExtra> {
   const byId = new Map<number, RoomPlayer>();
   for (const p of roomView?.players ?? []) byId.set(p.id, p);
   const localId = net?.localPlayerId ?? null;
@@ -1419,7 +1439,8 @@ function buildStandingExtras(rows: readonly StandingRow[]): Map<number, Standing
       const on = r.id === localId ? showOffscreenArrows : (p?.offscreenArrows ?? false);
       info = `strzałki: ${on ? 'wł.' : 'wył.'}`;
     }
-    map.set(r.id, { plane, info });
+    const isLost = atEnd ? r.deaths >= MATCH_LIVES : isRowLost(r);
+    map.set(r.id, { plane, info, isLost });
   }
   return map;
 }
@@ -1863,7 +1884,7 @@ function maybeRevealResults(): void {
     matchEndData.msg,
     matchEndData.localId,
     matchEndData.localFaction,
-    buildStandingExtras(matchEndData.msg.rows),
+    buildStandingExtras(matchEndData.msg.rows, true), // koniec meczu → wyszarzenie po deaths (świat zamrożony)
   );
 }
 
@@ -1876,7 +1897,7 @@ function toggleResultsVisible(): void {
       matchEndData.msg,
       matchEndData.localId,
       matchEndData.localFaction,
-      buildStandingExtras(matchEndData.msg.rows),
+      buildStandingExtras(matchEndData.msg.rows, true), // koniec meczu → wyszarzenie po deaths (świat zamrożony)
     );
 }
 
@@ -2500,18 +2521,14 @@ function rosterRows(): readonly RosterRow[] {
   const localId = net?.localPlayerId ?? null;
   return latestStandings.rows.map((r: StandingRow): RosterRow => {
     const isPlayer = r.id === localId;
-    // P1 (2026-06-19): OBA tryby eliminacyjne → wyeliminowany = wyczerpał życia (MATCH_LIVES) i nie
-    // żyje ani nie spada (wrak = wciąż w walce, jak SP). Fazę życia bierzemy z renderowanego stanu
-    // encji (lifeById; snapshot binarny nie niesie liczby żyć), niezależnie od trybu.
-    const life = lifeById.get(r.id);
-    const isLost = r.deaths >= MATCH_LIVES && life !== 'alive' && life !== 'dying';
+    // P1 (2026-06-19): OBA tryby eliminacyjne → wyeliminowany wg isRowLost (współdzielone z tabelą wyników).
     return {
       name: r.nick,
       kills: r.kills,
       assists: r.assists,
       colorCss: cssColor(entityColorHex(r.id, isPlayer)),
       isPlayer,
-      isLost,
+      isLost: isRowLost(r),
     };
   });
 }
