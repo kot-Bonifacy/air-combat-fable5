@@ -59,8 +59,9 @@ IP: `server.ts clientIp()` bierze 1. wpis `X-Forwarded-For`; `deploy/nginx.conf`
 dokłada IP klienta). **Deploy (`deploy/docker-compose.yml`):** backend dołącza do **external network
 `portfolio_default`** (obok `default`) → host `portfolio_db`; `DB_LOG_*` z `.env` (**hasło NIE w repo**,
 `${DB_LOG_PASSWORD:-}` = domyślnie wyłączone). Dokumentacja: `deploy/README.md` (sekcja logowania + weryfikacja),
-`deploy/.env.example`, baza wiedzy VPS. ⏳ user: merge/push gałęzi + konfiguracja `.env` + weryfikacja sieci `portfolio_default` na VPS
-+ smoke (zagraj → wiersz w `dogfight_sessions` w phpMyAdmin, IP realne nie `172.x`).
+`deploy/.env.example`, baza wiedzy VPS. **ZMERGOWANE do master + pushnięte; WDROŻONE NA VPS I ZWERYFIKOWANE
+2026-07-19** (logi widoczne w phpMyAdmin :8081). Ogólny wzorzec podpinania logów do kolejnych dockerów
+dopisany w `C:\AI\vps_home_pl_konfiguracja.md` (sekcja „📝 Logowanie zdarzeń do wspólnej bazy MySQL").
 
 **RF1 — fix „ducha gracza" 2026-07-18 (zgłoszenie usera, 784 testy zielone, protokół v10 NIEZMIENIONY —
 addytywne pole JSON rosteru; deploy front+back RAZEM):** duch = gracz rozłączony/po F5 wisiał w poczekalni.
