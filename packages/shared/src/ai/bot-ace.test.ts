@@ -213,6 +213,71 @@ describe('as — prędkość bojowa per samolot (autorytet lotek z rollRateCurve
   });
 });
 
+describe('as — kontrola przestrzelenia (nie wyprzedza wolnego celu, gdy jest z nim sam)', () => {
+  /** As tuż za wolniejszym celem (dogania szybko, closure ~60 m/s > próg 55). Zwraca
+   *  {throttle, wep, state}. `otherEnemyNear` dokłada drugiego wroga 500 m (< 1 km) → guard OFF. */
+  function overshoot(level: DifficultyLevel, otherEnemyNear: boolean): {
+    throttle: number;
+    wep: boolean;
+    state: string;
+  } {
+    const self = flyingState(0, 3000, 0, FWD, 160); // dogania
+    const target = flyingState(0, 3000, 200, FWD, 100); // wolny cel 200 m z przodu
+    const enemies = [target];
+    if (otherEnemyNear) enemies.push(flyingState(500, 3000, 0, FWD, 130));
+    const bot = makeBot(level);
+    bot.reset(self);
+    const demands = createPilotDemands();
+    const situation: BotSituation = { enemies, traffic: enemies };
+    const out = bot.update(self, SPITFIRE_MK2, target, ENV, FIXED_DT_S, demands, false, situation);
+    return { throttle: out.throttle, wep: out.wep, state: out.state };
+  }
+
+  it('as SAM z wolnym celem: zdejmuje gaz (i WEP), by nie przelecieć', () => {
+    const r = overshoot('as', false);
+    expect(r.state).toBe('engage');
+    expect(r.throttle).toBeLessThan(1); // guard dopasowuje prędkość
+    expect(r.wep).toBe(false); // zejście gazu < 1 gasi WEP
+  });
+
+  it('as z INNYM wrogiem < 1 km: guard OFF — pełny gaz i WEP (energia w kłębowisku)', () => {
+    const r = overshoot('as', true);
+    expect(r.throttle).toBe(1);
+    expect(r.wep).toBe(true);
+  });
+
+  it('trudny (brak knoba) nie zna guardu — pełny gaz nawet dogania­jąc wolny cel', () => {
+    expect(overshoot('trudny', false).throttle).toBe(1);
+  });
+});
+
+describe('as — separacja w walce: ciaśniejsza bańka (strzela mimo luźnego tłoku)', () => {
+  /** As celuje w cel na wprost (300 m, w stożku → strzela). Sąsiad-ruch z boku na `sideM`.
+   *  Zwraca, czy padł strzał. */
+  function fireWithNeighbor(level: DifficultyLevel, sideM: number): boolean {
+    const self = flyingState(0, 3000, 0, FWD, 130);
+    const target = flyingState(0, 3000, 300, FWD, 120); // na wprost, w zasięgu
+    const neighbor = flyingState(sideM, 3000, 0, FWD, 130); // sojusznik/ruch z boku
+    const bot = makeBot(level);
+    bot.reset(self);
+    const demands = createPilotDemands();
+    const situation: BotSituation = { enemies: [target], traffic: [target, neighbor] };
+    return bot.update(self, SPITFIRE_MK2, target, ENV, FIXED_DT_S, demands, false, situation).fire;
+  }
+
+  it('luźny sąsiad 60 m obok — as NADAL strzela (poza ciaśniejszą bańką walki)', () => {
+    expect(fireWithNeighbor('as', 60)).toBe(true);
+  });
+
+  it('sąsiad w kolizyjnej odległości 8 m — as wstrzymuje ogień (antykolizja)', () => {
+    expect(fireWithNeighbor('as', 8)).toBe(false);
+  });
+
+  it('trudny bez separacji — strzela nawet z sąsiadem 8 m obok (kontrola)', () => {
+    expect(fireWithNeighbor('trudny', 8)).toBe(true);
+  });
+});
+
 describe('as — priorytet strefy (wróg dalej niż 1000 m → patrol = lot do strefy)', () => {
   function stateAtRange(level: DifficultyLevel, rangeM: number): string {
     const self = flyingState(0, 3000, 0, FWD, 130);

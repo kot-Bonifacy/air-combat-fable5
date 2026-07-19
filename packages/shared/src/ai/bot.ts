@@ -87,6 +87,22 @@ const MANEUVER_THROTTLE = 0.62;
 /** Nożyce (evade z variety): rewers breaku, gdy zagrożenie tuż za nami wciąż szybko się zbliża. */
 const SCISSORS_RANGE_M = 220;
 const SCISSORS_CLOSURE_MS = 40;
+/** Kontrola przestrzelenia (overshootGuardClosureMs>0): działa tylko w tej strefie dystansu
+ *  [m] — bliski/średni ogień, gdzie wyprzedzenie wolnego celu boli. Daleki pościg (poza nią)
+ *  = pełny gaz, bo tam nadmiar prędkości to dobór dystansu i przewaga energetyczna. */
+const OVERSHOOT_GUARD_RANGE_M = 350;
+/** „Sam z celem": guard przestrzelenia działa tylko, gdy w tym promieniu [m] nie ma innego
+ *  żywego wroga (życzenie usera: nie wyprzedzaj celu, gdy w pobliżu < 1 km nie ma innych). */
+const OVERSHOOT_GUARD_LONE_RANGE_M = 1000;
+/** Separacja w WALCE (bot ma cel) jest łagodniejsza niż w czystej antykolizji bez celu:
+ *  słabsze odpychanie kursu (żeby nie odciągało od celu → as strzelał w kłębowisku) i wyższy
+ *  próg wstrzymania ognia. Bez celu (patrol/dwa boty lecące obok) zostają pełne SEPARATION_*. */
+const SEPARATION_GAIN_ENGAGED = 1.5;
+const SEPARATION_HOLD_FIRE_ENGAGED_U = 0.75;
+/** W walce twarda bańka od NIE-celu jest ciaśniejsza (× separationRangeM): reaguj tylko na
+ *  realnie kolizyjny dystans, nie na „sąsiada w luźnym tłoku" — inaczej omijanie każdego
+ *  samolotu w 70 m zjadałoby celność. Rozdzielenie sklejonych (dryf < tej bańki) zachowane. */
+const SEPARATION_ENGAGED_BUBBLE_FRAC = 0.6;
 
 const scratchSelfFwd = new Vector3();
 const scratchSelfUp = new Vector3();
@@ -105,6 +121,7 @@ const scratchSepPos = new Vector3();
 const scratchSepRel = new Vector3();
 const scratchSepVel = new Vector3();
 const scratchSepAvoid = new Vector3();
+const scratchOvershoot = new Vector3();
 
 function clamp(x: number, lo: number, hi: number): number {
   return x < lo ? lo : x > hi ? hi : x;
@@ -307,6 +324,7 @@ export class Bot {
               ? this.difficulty.throttle * ENGAGE_CLOSE_THROTTLE
               : this.difficulty.throttle;
           throttle = this.applyManeuverThrottle(self, plane, throttle);
+          throttle = this.applyOvershootThrottle(self, target, situation, throttle);
           // w czołówce as nie naciska spustu (nos i tak schodzi z celu; strzał czołowy
           // to zaproszenie do wymiany, której unik ma właśnie zapobiec)
           fire = this.shouldFire() && !this.headOnActive;
@@ -569,6 +587,11 @@ export class Bot {
   ): boolean {
     const sep = this.difficulty.separationRangeM;
     if (sep <= 0 || !situation) return false;
+    // w walce (mamy cel) reagujemy TYLKO na twardą bańkę (samolot realnie blisko TERAZ),
+    // pomijając predykcyjne CPA dalekich minięć — to właśnie omijanie przewidywanych minięć
+    // odciągało bota od celu w kłębowisku (zmierzone: śr. dystans ~84→300 m, prawie brak ognia).
+    // Antykolizja realna (sklejanie skrzydłami < sep) zostaje; bez celu (patrol) pełne CPA.
+    const engaged = target !== null;
     scratchSepAvoid.set(0, 0, 0);
     let urgency = 0;
     for (const other of situation.traffic) {
@@ -582,13 +605,18 @@ export class Bot {
       let tCpa = vv > 1e-6 ? -scratchSepRel.dot(scratchSepVel) / vv : 0;
       tCpa = clamp(tCpa, 0, SEPARATION_HORIZON_S);
       const isTarget = other === target;
-      // bańka twarda (bieżący dystans) — dla celu jedyne kryterium (patrz nagłówek)
-      const bubbleM = isTarget ? sep * 1.2 : sep;
+      // bańka twarda (bieżący dystans) — dla celu jedyne kryterium (patrz nagłówek); w walce
+      // od nie-celu ciaśniejsza (patrz SEPARATION_ENGAGED_BUBBLE_FRAC), poza walką pełny sep
+      const bubbleM = isTarget
+        ? sep * 1.2
+        : engaged
+          ? sep * SEPARATION_ENGAGED_BUBBLE_FRAC
+          : sep;
       let u: number;
       if (d < bubbleM) {
         u = 1 - d / bubbleM;
         scratchSepRel.divideScalar(d); // od intruza TERAZ
-      } else if (!isTarget) {
+      } else if (!isTarget && !engaged) {
         scratchSepRel.addScaledVector(scratchSepVel, tCpa); // pozycja względna przy CPA
         const dCpa = scratchSepRel.length();
         if (dCpa >= sep || dCpa < 1e-3) continue;
@@ -602,14 +630,18 @@ export class Bot {
       if (u > urgency) urgency = u;
     }
     if (urgency <= 0) return false;
+    // w walce łagodniejszy gain (twarda bańka i tak odpala rzadko — patrz wyżej) i wyższy próg
+    // wstrzymania ognia: as strzela, chyba że realnie grozi zderzenie. Bez celu — pełne wartości.
+    const gain = engaged ? SEPARATION_GAIN_ENGAGED : SEPARATION_GAIN;
+    const holdFireU = engaged ? SEPARATION_HOLD_FIRE_ENGAGED_U : SEPARATION_HOLD_FIRE_U;
     // tylko składowa ⊥ do aim: unik odchyla kurs, nie „hamuje" celu nosa; unik dokładnie
     // na wprost (składowa ⊥ znika) → w górę (od ziemi, override ziemi i tak pilnuje)
     const along = scratchSepAvoid.dot(aim);
     scratchSepAvoid.addScaledVector(aim, -along);
     if (scratchSepAvoid.lengthSq() < 1e-8) scratchSepAvoid.copy(scratchSelfUp);
     scratchSepAvoid.normalize();
-    aim.addScaledVector(scratchSepAvoid, SEPARATION_GAIN * urgency).normalize();
-    return urgency > SEPARATION_HOLD_FIRE_U;
+    aim.addScaledVector(scratchSepAvoid, gain * urgency).normalize();
+    return urgency > holdFireU;
   }
 
   /**
@@ -627,6 +659,46 @@ export class Bot {
     if (peak <= 1e-6) return throttle;
     const authority = maxRollRateRadS(self.iasMs, plane) / peak;
     return authority < minAuth ? Math.min(throttle, MANEUVER_THROTTLE) : throttle;
+  }
+
+  /**
+   * Kontrola przestrzelenia (asa, overshootGuardClosureMs>0): gdy bot siedzi za wolniejszym
+   * celem w strefie strzału i dochodzi ZBYT szybko (closure > próg), zdejmuje gaz do reżimu
+   * manewrowego — dzięki czemu nie wyprzedza celu na WEP, tylko dopasowuje prędkość i zostaje
+   * na ogonie. Zejście gazu < 1 gasi też WEP (updateWep wymaga pełnego gazu). Działa TYLKO
+   * gdy bot jest z celem „sam" (żaden inny żywy wróg < OVERSHOOT_GUARD_LONE_RANGE_M) — decyzja
+   * usera: w kłębowisku nadmiar prędkości to przewaga, więc guard się wyłącza. Poza strefą
+   * strzału (daleki pościg) pełny gaz = przewaga energetyczna.
+   */
+  private applyOvershootThrottle(
+    self: PlaneState,
+    target: PlaneState | null,
+    situation: BotSituation | undefined,
+    throttle: number,
+  ): number {
+    const guard = this.difficulty.overshootGuardClosureMs;
+    if (guard <= 0 || !target) return throttle;
+    if (this.geom.rangeM > OVERSHOOT_GUARD_RANGE_M) return throttle;
+    if (this.geom.closureMs <= guard) return throttle;
+    if (this.hasOtherEnemyNear(self, target, situation)) return throttle;
+    return Math.min(throttle, MANEUVER_THROTTLE);
+  }
+
+  /** Czy w promieniu OVERSHOOT_GUARD_LONE_RANGE_M jest INNY żywy wróg niż `target`. Bez listy
+   *  wrogów (situation) zakładamy „sam z celem" (testy 1v1, zgodność wstecz) → guard aktywny. */
+  private hasOtherEnemyNear(
+    self: PlaneState,
+    target: PlaneState,
+    situation: BotSituation | undefined,
+  ): boolean {
+    if (!situation) return false;
+    const limitSq = OVERSHOOT_GUARD_LONE_RANGE_M * OVERSHOOT_GUARD_LONE_RANGE_M;
+    for (const e of situation.enemies) {
+      if (e === target || e.life !== 'alive') continue;
+      const pos = nearestToroidalImage(e.position, self.position, scratchOvershoot);
+      if (pos.distanceToSquared(self.position) < limitSq) return true;
+    }
+    return false;
   }
 
   /**

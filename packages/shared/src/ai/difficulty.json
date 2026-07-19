@@ -63,6 +63,7 @@
       "checkSixRangeM": 800,
       "useWep": 1,
       "rollAuthorityMinFrac": 0.5,
+      "overshootGuardClosureMs": 55,
       "evadeVariety01": 1.0,
       "detectRangeM": 1000,
       "disengageRangeM": 1400,

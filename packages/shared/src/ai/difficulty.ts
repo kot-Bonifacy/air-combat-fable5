@@ -98,6 +98,13 @@ export interface BotDifficulty {
    *  MANEWROWEJ redukuje gaz (prędkość bojowa per samolot — Zero zwalnia z „betonu",
    *  Spit/Bf prawie nieodczuwalne); 0 = pełny gaz zawsze. */
   rollAuthorityMinFrac: number;
+  /** Próg prędkości zbliżania [m/s], powyżej którego bot w strefie strzału zdejmuje gaz
+   *  (i WEP), by NIE wyprzedzić wolniejszego celu, za którym siedzi — zamiast przelecieć
+   *  na dopalaczu, dopasowuje prędkość i zostaje na ogonie. Działa TYLKO gdy bot jest z celem
+   *  „sam" (żaden inny żywy wróg w promieniu 1 km) — w kłębowisku nadmiar prędkości to
+   *  przewaga (dynamiczna sytuacja), więc guard się wyłącza. 0 = bez kontroli przestrzelenia
+   *  (niższe poziomy: pełny gaz aż do minRangeM). Poza strefą strzału pełny gaz (energia). */
+  overshootGuardClosureMs: number;
   /** Nieprzewidywalność obrony 0..1: losowe okresy/amplitudy jinku + rewers (nożyce) przy
    *  przestrzeleniu wroga; 0 = stary regularny sinus. */
   evadeVariety01: number;
@@ -185,6 +192,7 @@ const LEVEL_RANGES: Record<string, readonly [min: number, max: number]> = {
   checkSixRangeM: [0, 3000],
   useWep: [0, 1],
   rollAuthorityMinFrac: [0, 1],
+  overshootGuardClosureMs: [0, 200],
   evadeVariety01: [0, 1],
   detectRangeM: [0, 10000],
   disengageRangeM: [0, 12000],
@@ -297,6 +305,7 @@ export function loadBotConfig(raw: unknown, source = 'difficulty.json'): BotConf
       checkSixRangeM: optNum(l, 'checkSixRangeM', prefix, problems, 0),
       useWep: optNum(l, 'useWep', prefix, problems, 0),
       rollAuthorityMinFrac: optNum(l, 'rollAuthorityMinFrac', prefix, problems, 0),
+      overshootGuardClosureMs: optNum(l, 'overshootGuardClosureMs', prefix, problems, 0),
       evadeVariety01: optNum(l, 'evadeVariety01', prefix, problems, 0),
       detectRangeM: optNum(l, 'detectRangeM', prefix, problems, 0),
       disengageRangeM: optNum(l, 'disengageRangeM', prefix, problems, 0),
