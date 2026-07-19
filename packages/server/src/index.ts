@@ -1,5 +1,6 @@
 import { pino } from 'pino';
 import { PORT } from '@air-combat/shared';
+import { createDbLogger } from './db-logger';
 import { createGameServer } from './server';
 
 // Punkt wejścia serwera gry (faza 8): autorytatywna symulacja + protokół binarny.
@@ -7,7 +8,10 @@ import { createGameServer } from './server';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
-const server = createGameServer(PORT, { log });
+// Logowanie sesji graczy do MySQL (kto/kiedy gra → phpMyAdmin). Wyłączone, gdy brak DB_LOG_*.
+const dbLogger = createDbLogger(log);
+
+const server = createGameServer(PORT, { log, dbLogger });
 
 void server.ready.then((port) => {
   log.info({ port }, 'serwer gry nasłuchuje (protokół binarny fazy 8)');
@@ -21,7 +25,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     log.info({ signal }, 'zamykanie serwera — powiadamiam graczy');
     server.notifyShutdown();
     setTimeout(() => {
-      void server.close().then(() => process.exit(0));
+      void Promise.allSettled([server.close(), dbLogger.close()]).then(() => process.exit(0));
     }, SHUTDOWN_GRACE_MS);
   });
 }

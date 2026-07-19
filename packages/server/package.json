@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=build/index.js --external:ws --external:pino"
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=build/index.js --external:ws --external:pino --external:mysql2"
   },
   "dependencies": {
+    "mysql2": "^3.11.5",
     "pino": "^10.3.1",
     "ws": "^8.21.0"
   },

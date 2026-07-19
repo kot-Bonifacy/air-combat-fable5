@@ -26,6 +26,18 @@ services:
     environment:
       - NODE_ENV=production
       - LOG_LEVEL=info
+      # Logowanie sesji graczy do MySQL portfolio (kto/kiedy gra → phpMyAdmin :8081).
+      # Bez DB_LOG_PASSWORD (w .env) logowanie jest WYŁĄCZONE — gra działa jak dotąd.
+      - DB_LOG_HOST=${DB_LOG_HOST:-portfolio_db}
+      - DB_LOG_PORT=${DB_LOG_PORT:-3306}
+      - DB_LOG_USER=${DB_LOG_USER:-39790326_temp}
+      - DB_LOG_PASSWORD=${DB_LOG_PASSWORD:-}
+      - DB_LOG_DATABASE=${DB_LOG_DATABASE:-39790326_temp}
+    # backend musi być w dwóch sieciach: domyślnej (rozmowa z frontendem) ORAZ portfolio
+    # (dostęp do kontenera bazy portfolio_db). Patrz sekcja `networks` na dole pliku.
+    networks:
+      - default
+      - portfolio
     restart: unless-stopped
     # współdzielony VPS: limity USTAWIONE ZANIM coś pójdzie nie tak (OOM killer wybiera
     # ofiary nieprzewidywalnie — pułapka faza-13.md). 8 graczy 60 Hz to ułamek rdzenia.
@@ -38,3 +50,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+# `default` = wewnętrzna sieć stacku dogfight (frontend↔backend). `portfolio` = ISTNIEJĄCA
+# sieć stacku portfolio (external) — backend dołącza do niej, by pisać do kontenera bazy
+# `portfolio_db`. UWAGA: zweryfikuj nazwę sieci na VPS: `docker network ls | grep portfolio`
+# (domyślnie `portfolio_default`); jeśli inna — popraw `name` poniżej.
+networks:
+  default:
+  portfolio:
+    external: true
+    name: portfolio_default

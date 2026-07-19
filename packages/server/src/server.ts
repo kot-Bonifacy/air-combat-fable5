@@ -12,6 +12,7 @@ import {
   type ServerShutdownMessage,
 } from '@air-combat/shared';
 import { Connection, type Logger } from './connection';
+import type { DbLogger } from './db-logger';
 import { Lobby } from './lobby';
 
 // Złożenie serwera: serwer HTTP (healthcheck /health) z zamontowanym WebSocketServer +
@@ -26,6 +27,8 @@ import { Lobby } from './lobby';
 export interface GameServerOptions {
   log?: Logger;
   seed?: number;
+  /** Logger sesji graczy do MySQL (opcjonalny; brak → połączenia bez logowania). */
+  dbLogger?: DbLogger;
 }
 
 export interface GameServer {
@@ -67,8 +70,8 @@ export function createGameServer(port: number, options: GameServerOptions = {}):
   const connections = new Set<Connection>();
 
   wss.on('connection', (socket, request) => {
-    const remote = request.socket.remoteAddress ?? '?';
-    const conn = new Connection(socket, lobby, log, remote);
+    const remote = clientIp(request);
+    const conn = new Connection(socket, lobby, log, remote, options.dbLogger);
     connections.add(conn);
     socket.on('close', () => connections.delete(conn));
   });
@@ -136,6 +139,21 @@ export function createGameServer(port: number, options: GameServerOptions = {}):
         wss.close(() => httpServer.close(() => resolve()));
       }),
   };
+}
+
+/**
+ * Prawdziwe IP klienta za reverse proxy. Łańcuch: klient → NPM → nginx frontu → backend,
+ * więc surowe `remoteAddress` to IP nginx. Bierzemy PIERWSZY wpis X-Forwarded-For (klient),
+ * a nginx frontu musi ten nagłówek przekazywać (patrz deploy/nginx.conf, blok /ws).
+ */
+function clientIp(req: IncomingMessage): string {
+  const xff = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(xff) ? xff[0] : xff;
+  if (typeof raw === 'string' && raw.length > 0) {
+    const first = raw.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return req.socket.remoteAddress ?? '?';
 }
 
 /** Obsługa zwykłych żądań HTTP: tylko healthcheck /health (reszta 404). */

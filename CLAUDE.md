@@ -42,6 +42,26 @@ komplet ostrzeżeń]; `docs/fizyka-lotu.md` §5.2/§5.3/**nowa §13** [formuły 
 w „Wynik R5"; **PROJEKT FIZYKA v2 domknięty po stronie kodu/docs — pozostaje playtest usera + smoke v10 na
 produkcji**). ⏳ user: playtest czucia 3 samolotów (ankieta 8 pkt w „Wynik R5") + deploy front+back RAZEM (v10).
 
+**Logowanie sesji graczy do MySQL 2026-07-19 (życzenie usera, 789 testów zielone, BEZ protokołu — v10,
+czysto serwerowe + deploy; NIEZACOMMITOWANE):** user chciał widzieć „kto/kiedy gra na serwerze" w istniejącym
+phpMyAdmin `http://tatanga.eu:8081`. Ustalone: ten panel to baza **MySQL `39790326_temp`** (kontener
+`portfolio_db` ze stacku portfolio); dogfight to OSOBNY stack Docker **bez bazy** (dotąd logi tylko `docker logs`
+przez pino). **Decyzje usera (AskUserQuestion):** (1) zakres = **sesje graczy** (jeden wiersz na wejście do
+pokoju → wyjście/rozłączenie); (2) **prawdziwe IP** (nie tylko nick); (3) **bezpośrednio do MySQL** (nie endpoint
+PHP). Implementacja: nowy `server/src/db-logger.ts` — pula `mysql2/promise` (**dynamiczny import** — ładowany
+TYLKO gdy włączone; `--external:mysql2` w esbuild), tabela `dogfight_sessions` tworzona sama
+(`CREATE TABLE IF NOT EXISTS`: nick/ip/room_code/mode/joined_at/left_at/duration_s), czas formatowany w
+**Europe/Warsaw** (`formatWarsawDateTime` — kontener MySQL w UTC). **BEST-EFFORT (twarda zasada):** brak kompletu
+`DB_LOG_*` → `DisabledDbLogger` no-op (testy/dev bez bazy); baza nieosiągalna → throttlowane ostrzeżenie, gra leci
+dalej (zweryfikowane runtime: serwer wstaje mimo ECONNREFUSED). Wpięcie w `connection.ts`: `beginSession` przy
+`enterRoom`+reconnect, `end()` przy `leaveRoom`+`cleanup` (krótki blip+reconnect = 2 wiersze, świadome). Prawdziwe
+IP: `server.ts clientIp()` bierze 1. wpis `X-Forwarded-For`; `deploy/nginx.conf` dokłada nagłówek na `/ws` (NPM już
+dokłada IP klienta). **Deploy (`deploy/docker-compose.yml`):** backend dołącza do **external network
+`portfolio_default`** (obok `default`) → host `portfolio_db`; `DB_LOG_*` z `.env` (**hasło NIE w repo**,
+`${DB_LOG_PASSWORD:-}` = domyślnie wyłączone). Dokumentacja: `deploy/README.md` (sekcja logowania + weryfikacja),
+`deploy/.env.example`, baza wiedzy VPS. ⏳ user: konfiguracja `.env` + weryfikacja sieci `portfolio_default` na VPS
++ smoke (zagraj → wiersz w `dogfight_sessions` w phpMyAdmin, IP realne nie `172.x`).
+
 **RF1 — fix „ducha gracza" 2026-07-18 (zgłoszenie usera, 784 testy zielone, protokół v10 NIEZMIENIONY —
 addytywne pole JSON rosteru; deploy front+back RAZEM):** duch = gracz rozłączony/po F5 wisiał w poczekalni.
 **Repro chrome-devtools — DWIE warstwy przyczyny z `refaktoring.md §3.1`, OBIE potwierdzone:** (1) **ŹRÓDŁO

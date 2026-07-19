@@ -21,6 +21,7 @@ import {
   type WelcomeMessage,
 } from '@air-combat/shared';
 import { MAX_BOTS_PER_ROOM } from './bot-manager';
+import type { DbLogger, DbSession } from './db-logger';
 import type { GameRoom, RoomMember } from './game-room';
 import type { Lobby } from './lobby';
 
@@ -79,6 +80,8 @@ export class Connection implements RoomMember {
   private token = '';
   private nick = '';
   private violations = 0;
+  // uchwyt otwartego wiersza sesji w MySQL (logowanie „kto/kiedy gra"); null = brak/domknięty
+  private dbSession: DbSession | null = null;
   // okno rate-limitu ramek INPUT
   private inputWindowStartMs = 0;
   private inputWindowCount = 0;
@@ -91,6 +94,8 @@ export class Connection implements RoomMember {
     private readonly lobby: Lobby,
     private readonly log: Logger,
     private readonly remote: string,
+    // logger sesji do MySQL (opcjonalny — bez niego zachowanie bez zmian; wyłączony w testach/dev)
+    private readonly dbLogger?: DbLogger,
   ) {
     socket.on('message', (data: RawData, isBinary: boolean) => {
       try {
@@ -180,6 +185,7 @@ export class Connection implements RoomMember {
         this.playerId = resumed.playerId;
         this.nick = resumed.room.nick(resumed.playerId) ?? this.nick;
         this.state = 'inRoom';
+        this.beginDbSession(resumed.room);
         this.sendWelcome();
         this.sendRoomJoined(resumed.room, resumed.playerId);
         this.log.info({ remote: this.remote, code: resumed.room.code, playerId: resumed.playerId }, 'reconnect gracza');
@@ -364,14 +370,29 @@ export class Connection implements RoomMember {
     this.room = room;
     this.playerId = playerId;
     this.state = 'inRoom';
+    this.beginDbSession(room);
     this.sendRoomJoined(room, playerId);
     room.broadcastRoomUpdate();
     this.log.info({ remote: this.remote, code: room.code, playerId }, 'gracz wszedł do pokoju');
   }
 
+  /** Otwiera wiersz sesji w MySQL przy wejściu do pokoju (best-effort; brak loggera → no-op). */
+  private beginDbSession(room: GameRoom): void {
+    this.dbSession?.end(); // domknij ewentualną poprzednią (obrona — nie powinno się zdarzyć)
+    this.dbSession =
+      this.dbLogger?.beginSession({ nick: this.nick, ip: this.remote, roomCode: room.code, mode: room.mode }) ?? null;
+  }
+
+  /** Domyka wiersz sesji (wyjście do lobby albo rozłączenie). Idempotentne. */
+  private endDbSession(): void {
+    this.dbSession?.end();
+    this.dbSession = null;
+  }
+
   private leaveRoom(): void {
     if (this.playerId === null) return;
     const code = this.room?.code;
+    this.endDbSession();
     this.lobby.leave(this.token, this.playerId);
     this.room = null;
     this.playerId = null;
@@ -481,6 +502,8 @@ export class Connection implements RoomMember {
   private cleanup(): void {
     if (this.state === 'closed') return;
     this.state = 'closed';
+    // domknij wiersz sesji przy rozłączeniu (krótki blip + reconnect da nowy wiersz — świadome, drobne)
+    this.endDbSession();
     // NIE usuwamy gracza od razu — trzymamy slot na reconnect (okno 60 s, lobby.maintain
     // posprząta po wygaśnięciu). Połączenie znika z pokoju jako RoomMember.
     if (this.room && this.playerId !== null) {
