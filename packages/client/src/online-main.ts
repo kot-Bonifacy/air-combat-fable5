@@ -2101,11 +2101,13 @@ function sendInputTick(dtS: number): void {
   if (!scriptActive && mouseAim.locked && mouseAim.enabled && !hasKeyboard) {
     // aim = punkt świata „pod celownikiem" (War Thunder): kotwica w świecie, nos dolatuje i STAJE.
     // advance wchłania ruch myszy i przelicza aimDir (celownik osiada do środka, gdy nos dosięgnie celu).
-    mouseAim.advance(camera);
+    // scratchNose (kierunek nosa) służy do ZASIEWU po przejęciu steru: celownik startuje na nosie, nie
+    // na osi (być może swobodnej) kamery → powrót z widoku swobodnego bez nagłej zmiany kierunku lotu.
+    mouseAim.advance(camera, scratchNose);
     mouseAim.aimDirection(scratchAim);
   } else {
-    // klawiatura steruje bezpośrednio (albo brak myszy/skrypt E2E): aim = nos, celownik wraca
-    // na środek — po puszczeniu klawiszy celownik startuje od osi kamery ≈ nos (gładko)
+    // klawiatura steruje bezpośrednio (albo brak myszy/skrypt E2E): aim = nos, celownik zdejmuje
+    // zasiew — następne przejęcie steru myszą zasieje aimDir z powrotem na nosie (gładko)
     mouseAim.recenter();
     scratchAim.copy(scratchNose);
   }

@@ -74,7 +74,7 @@ export class MouseAim {
    * instruktora; samolot „dolatuje" do niego i staje (osiadanie), zamiast skręcać w nieskończoność.
    */
   private readonly aimDir = new Vector3(0, 0, 1);
-  /** false = celownik wyśrodkowany (aim wzdłuż osi kamery); pierwszy advance zasiewa aimDir. */
+  /** false = brak zasiewu; pierwszy advance zasiewa aimDir na kierunku nosa (noseDirWorld). */
   private aimSeeded = false;
   /** Nieskonsumowany ruch myszy [px] (×czułość), zbierany z mousemove, wchłaniany w advance. */
   private pendingDx = 0;
@@ -181,16 +181,27 @@ export class MouseAim {
    * Zaawansuj celownik o jedną klatkę sterowania myszą: wchłoń zebrany ruch, docina offset do okręgu,
    * przelicz kierunek celu w świecie. aimDir jest KOTWICZONY W ŚWIECIE — gdy nie ruszasz myszą, nos
    * dolatuje do aimDir i STAJE (celownik wraca do środka), zamiast skręcać w nieskończoność. Wołane
-   * z pętli wejścia, gdy mysz steruje lotem.
+   * z pętli wejścia, gdy mysz steruje lotem. `noseDirWorld` = bieżący kierunek nosa (świat) — używany
+   * TYLKO przy zasiewie (przejęcie steru), by celownik startował na nosie, nie na osi kamery.
    */
-  advance(camera: PerspectiveCamera): void {
-    this.offsetPxFromAim(camera); // reticleXPx/YPx = bieżący rzut aimDir (kurczy się w miarę skrętu)
+  advance(camera: PerspectiveCamera, noseDirWorld: Vector3): void {
     if (!this.aimSeeded) {
-      this.aimDir.copy(scratchFwd); // zasiew: cel wzdłuż osi kamery ≈ nos
+      // Przejęcie steru myszą (respawn / powrót z kamery swobodnej pod Altem): ZASIEW na kierunku
+      // NOSA, nie na osi kamery. Dzięki temu komenda dla instruktora = „leć prosto" (aimDir = nos →
+      // błąd 0 → brak nagłej zmiany kierunku lotu), a celownik ląduje na znaczniku nosa. NIE
+      // przeliczamy aimDir z offsetu względem kamery: na klatce przejścia z kamery swobodnej `camera`
+      // to jeszcze STARA orbita (mogła patrzeć w bok/za siebie — input-tick liczy się PRZED
+      // aktualizacją kamery w pętli renderu), więc rzut nosa bywa poza okręgiem i po odwróceniu
+      // zniekształciłby aim = dokładnie ten skok kierunku, który tu leczymy. Offset ekranowy
+      // celownika policzy reticlePixel z już zaktualizowanej kamery pościgowej w tej samej klatce.
+      this.aimDir.copy(noseDirWorld).normalize();
       this.aimSeeded = true;
-      this.reticleXPx = 0;
-      this.reticleYPx = 0;
+      this.pendingDx = 0;
+      this.pendingDy = 0;
+      this.offsetPxFromAim(camera); // wstępny reticleXPx/YPx (render odświeży z kamery pościgowej)
+      return;
     }
+    this.offsetPxFromAim(camera); // reticleXPx/YPx = bieżący rzut aimDir (kurczy się w miarę skrętu)
     let x = this.reticleXPx + this.pendingDx;
     let y = this.reticleYPx + this.pendingDy;
     this.pendingDx = 0;
@@ -207,9 +218,9 @@ export class MouseAim {
     this.aimFromOffsetPx(x, y, camera);
   }
 
-  /** Wyśrodkuj celownik (respawn / przejęcie sterów przez klawiaturę — cel wzdłuż osi kamery ≈ nos). */
+  /** Wyśrodkuj celownik (respawn / przejęcie sterów przez klawiaturę — cel na kierunku nosa). */
   recenter(): void {
-    this.aimSeeded = false; // następny advance zasieje aimDir = oś kamery
+    this.aimSeeded = false; // następny advance zasieje aimDir = kierunek nosa (noseDirWorld)
     this.pendingDx = 0;
     this.pendingDy = 0;
     this.reticleXPx = 0;
