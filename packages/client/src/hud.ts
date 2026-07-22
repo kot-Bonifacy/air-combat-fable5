@@ -1,4 +1,5 @@
 import { ENGINE_HEAT_REDLINE, ENGINE_HEAT_WARN, type StallPhase } from '@air-combat/shared';
+import { t } from './i18n';
 
 export interface HudData {
   iasKmh: number;
@@ -48,9 +49,13 @@ export interface HudData {
   /** Czy gracz PRÓBUJE włączyć WEP (trzyma L.Shift na pełnym gazie). Dla samolotu bez WEP pokazuje „bez WEP"
    *  TYLKO w tej chwili (nie stale przy 100% gazu) — uczy, że nie warto trzymać Shifta (zgł. usera). */
   wepRequested: boolean;
-  /** Etykieta pozycji klap (fizyka v2 R3): nazwa pozycji („pełne"/„bojowe") gdy wysunięte, „URWANE"
-   *  gdy urwane od przeciążenia; undefined = schowane (wiersz „klapy" ukryty). */
+  /** Etykieta pozycji klap (fizyka v2 R3): już ZLOKALIZOWANA nazwa pozycji („pełne"/„full") gdy
+   *  wysunięte, albo napis „urwane" (t('hud.flaps.torn')) gdy urwane; undefined = schowane (wiersz
+   *  „klapy" ukryty). Kolor (czerwień urwania) steruje osobny bool `flapsTorn` — po lokalizacji nie
+   *  da się już wywnioskować urwania z porównania tekstu. */
   flapsLabel?: string;
+  /** Czy klapy urwane (poziom uszkodzenia skrzydła) — wiersz „klapy" na czerwono. */
+  flapsTorn?: boolean;
   /**
    * Poziom ostrzeżenia Vne (prędkość nieprzekraczalna): 0 poniżej progu, 1 zbliżanie (ostrzeżenie
    * przy IAS), 2 przekroczenie — drżenie strukturalne (flutter) urywa skrzydła. Steruje sufiksem
@@ -78,8 +83,8 @@ export const AILERON_CONCRETE_FRAC = 0.2;
 /** Sufiks ostrzeżenia o sztywnieniu lotek z prędkością — dopisywany do wiersza IAS,
  *  bo przyczyną (i lekarstwem) jest prędkość: zwolnij, a stery wracają. */
 export function aileronWarning(rollAuthority01: number): string {
-  if (rollAuthority01 < AILERON_CONCRETE_FRAC) return '   *** LOTKI ZABETONOWANE ***';
-  if (rollAuthority01 < AILERON_STIFF_FRAC) return '   ! lotki sztywne — zwolnij !';
+  if (rollAuthority01 < AILERON_CONCRETE_FRAC) return t('hud.warn.aileronsLocked');
+  if (rollAuthority01 < AILERON_STIFF_FRAC) return t('hud.warn.aileronsStiff');
   return '';
 }
 
@@ -87,8 +92,8 @@ export function aileronWarning(rollAuthority01: number): string {
  *  przyczyną i lekarstwem jest prędkość. Poziom 2 (przekroczenie: flutter urywa skrzydła) ma
  *  PIERWSZEŃSTWO nad ostrzeżeniem o sztywnych lotkach (rozpad konstrukcji ważniejszy). */
 export function vneWarning(vneLevel: 0 | 1 | 2): string {
-  if (vneLevel >= 2) return '   *** Vne — WYRWIE SKRZYDŁA ***';
-  if (vneLevel >= 1) return '   ! Vne — zwolnij !';
+  if (vneLevel >= 2) return t('hud.warn.vneTear');
+  if (vneLevel >= 1) return t('hud.warn.vne');
   return '';
 }
 
@@ -97,8 +102,8 @@ const LOW_AMMO_RATIO = 0.15;
 
 /** Sufiks ostrzeżenia o stanie amunicji (puste / mało) — wspólny dla broni głównej i wtórnej. */
 function ammoWarning(ammo: number, ammoMax: number): string {
-  if (ammo === 0) return '   *** PUSTE ***';
-  if (ammo <= ammoMax * LOW_AMMO_RATIO) return '   ! mało !';
+  if (ammo === 0) return t('hud.warn.ammoEmpty');
+  if (ammo <= ammoMax * LOW_AMMO_RATIO) return t('hud.warn.low');
   return '';
 }
 
@@ -107,15 +112,15 @@ const LOW_FUEL_RATIO = 0.15;
 
 /** Sufiks ostrzeżenia o stanie paliwa (silnik zgasł / mało). */
 function fuelWarning(fuel01: number): string {
-  if (fuel01 <= 0) return '   *** SILNIK STANĄŁ ***';
-  if (fuel01 <= LOW_FUEL_RATIO) return '   ! mało !';
+  if (fuel01 <= 0) return t('hud.warn.fuelEmpty');
+  if (fuel01 <= LOW_FUEL_RATIO) return t('hud.warn.low');
   return '';
 }
 
 /** Sufiks ostrzeżenia o przegrzaniu (sam próg „gorąco" sygnalizuje teraz ŻÓŁTY kolor wiersza —
  *  napis „! gorąco !" usunięty na życzenie usera 2026-06-30; przy przegrzaniu zostaje „*** PRZEGRZANIE ***"). */
 function engineTempWarning(engineHeat01: number): string {
-  return engineHeat01 >= ENGINE_HEAT_REDLINE ? '   *** PRZEGRZANIE ***' : '';
+  return engineHeat01 >= ENGINE_HEAT_REDLINE ? t('hud.warn.overheat') : '';
 }
 
 /**
@@ -161,7 +166,7 @@ const LOW_FPS_BLINK_MS = 5000;
 export function fpsHudLine(fps: number): string {
   const fpsRow = hudRow('fps', String(fps));
   if (fps <= 0 || fps >= LOW_FPS_THRESHOLD) return fpsRow;
-  return Date.now() % LOW_FPS_BLINK_MS < LOW_FPS_BLINK_MS / 2 ? fpsRow : 'KARTA GRAFICZNA ZA SŁABA';
+  return Date.now() % LOW_FPS_BLINK_MS < LOW_FPS_BLINK_MS / 2 ? fpsRow : t('hud.lowFps');
 }
 
 const PITCH_PX_PER_RAD = 120;
@@ -206,26 +211,25 @@ export class Hud {
         : null;
     // wiersz temperatury w °C — kolor (żółty/czerwony) niesie ostrzeżenie o przegrzaniu, więc renderujemy
     // go jako kolorowany <span> (reszta HUD to zwykły tekst). Stąd cały blok idzie przez innerHTML z escape.
-    const tempLine = hudRow('temp.', data.engineTempC.toFixed(0), '°C') + engineTempWarning(data.engineHeat01);
+    const tempLine = hudRow(t('hud.temp'), data.engineTempC.toFixed(0), '°C') + engineTempWarning(data.engineHeat01);
     const tempColor = engineTempColor(data.engineHeat01);
     const tempHtml = tempColor ? `<span style="color:${tempColor}">${escHtml(tempLine)}</span>` : escHtml(tempLine);
     // wiersz gazu z markerem WEP: aktywny WEP na bursztynowo (pop = „dopalacz włączony"), a gdy samolot
     // NIE ma WEP, a gracz PRÓBUJE go włączyć (trzyma L.Shift) — wyszarzone „bez WEP" TYLKO w tej chwili
     // (nie stale przy 100% gazu), żeby gracz zrozumiał, że nie warto trzymać Shifta (Zero; zgł. usera)
-    const throttleBase = hudRow('gaz', (data.throttle01 * 100).toFixed(0), '%');
+    const throttleBase = hudRow(t('hud.throttle'), (data.throttle01 * 100).toFixed(0), '%');
     const throttleHtml = data.wepActive
       ? escHtml(throttleBase) + '<span style="color:#ffd24a">   WEP</span>'
       : !data.wepCapable && data.wepRequested
-        ? escHtml(throttleBase) + '<span style="color:#6a7a86">   bez WEP</span>'
+        ? escHtml(throttleBase) + `<span style="color:#6a7a86">   ${escHtml(t('hud.noWep'))}</span>`
         : escHtml(throttleBase);
-    // wiersz klap (R3) — tylko gdy wysunięte lub urwane; „URWANE" na czerwono (utrata mechanizacji)
-    const flapsTorn = data.flapsLabel === 'URWANE';
+    // wiersz klap (R3) — tylko gdy wysunięte lub urwane; napis „urwane" na czerwono (utrata mechanizacji)
     const flapsHtml =
       data.flapsLabel === undefined
         ? null
-        : flapsTorn
-          ? `<span style="color:#ff5a4d">${escHtml(hudRow('klapy', data.flapsLabel))}</span>`
-          : escHtml(hudRow('klapy', data.flapsLabel));
+        : data.flapsTorn
+          ? `<span style="color:#ff5a4d">${escHtml(hudRow(t('hud.flaps'), data.flapsLabel))}</span>`
+          : escHtml(hudRow(t('hud.flaps'), data.flapsLabel));
     this.textEl.innerHTML = [
       // Vne (rozpad konstrukcji) ma pierwszeństwo nad sztywnymi lotkami — oba wynikają z prędkości
       escHtml(
@@ -233,47 +237,47 @@ export class Hud {
           (vneWarning(data.vneLevel) || aileronWarning(data.rollAuthority01)),
       ),
       escHtml(hudRow('TAS', data.tasKmh.toFixed(0), 'km/h')),
-      escHtml(hudRow('alt', data.altM.toFixed(0), 'm')),
-      escHtml(hudRow('wznosz.', varioValue(data.verticalSpeedMs), 'm/s')),
+      escHtml(hudRow(t('hud.alt'), data.altM.toFixed(0), 'm')),
+      escHtml(hudRow(t('hud.climb'), varioValue(data.verticalSpeedMs), 'm/s')),
       throttleHtml,
       ...(flapsHtml !== null ? [flapsHtml] : []),
       tempHtml,
-      escHtml(hudRow('paliwo', (data.fuel01 * 100).toFixed(0), '%') + fuelWarning(data.fuel01)),
+      escHtml(hudRow(t('hud.fuel'), (data.fuel01 * 100).toFixed(0), '%') + fuelWarning(data.fuel01)),
       escHtml(hudRow('n', data.nG.toFixed(1), 'G') + gLocText),
-      escHtml(hudRow('ster', data.controlMode)),
-      escHtml(hudRow('amun.', String(data.ammo), `/ ${String(data.ammoMax)}`) + ammoWarn),
+      escHtml(hudRow(t('hud.ctrl'), data.controlMode === 'mysz' ? t('hud.mouse') : t('hud.keyboard'))),
+      escHtml(hudRow(t('hud.ammo'), String(data.ammo), `/ ${String(data.ammoMax)}`) + ammoWarn),
       ...(secondaryRow !== null ? [escHtml(secondaryRow)] : []),
       ...data.extraLines.map(escHtml),
     ].join('\n');
 
     if (data.stallPhase === 'stalled') {
-      this.warningEl.textContent = 'PRZECIĄGNIĘCIE';
+      this.warningEl.textContent = t('hud.big.stall');
       this.warningEl.className = 'stall';
       // miganie sterowane czasem — bez timerów, HUD odświeżany co klatkę
       this.warningEl.style.opacity = Date.now() % 500 < 300 ? '1' : '0.25';
     } else if (data.stallPhase === 'buffet') {
-      this.warningEl.textContent = 'BUFFET';
+      this.warningEl.textContent = t('hud.big.buffet');
       this.warningEl.className = 'buffet';
       this.warningEl.style.opacity = String(0.35 + 0.65 * data.buffetIntensity);
     } else if (data.vneLevel >= 2) {
       // przekroczona Vne: drżenie strukturalne urywa skrzydła (śmierć w sekundy) — najpilniejsze
       // po przeciągnięciu/buffecie (reżimy rozłączne: stall = mała V, flutter = duża V). Miga szybko.
-      this.warningEl.textContent = 'PRZEKROCZONA Vne — DRŻENIE URYWA SKRZYDŁA';
+      this.warningEl.textContent = t('hud.big.vne');
       this.warningEl.className = 'stall';
       this.warningEl.style.opacity = Date.now() % 400 < 240 ? '1' : '0.25';
     } else if (data.blackoutFactor > 0.05) {
       // szarzenie od przeciążenia (G-LOC) — stall ma priorytet (inny reżim prędkości)
-      this.warningEl.textContent = 'SZARZENIE — ODPUŚĆ G';
+      this.warningEl.textContent = t('hud.big.greyout');
       this.warningEl.className = 'buffet';
       this.warningEl.style.opacity = String(0.35 + 0.6 * data.blackoutFactor);
     } else if (data.engineHeat01 >= ENGINE_HEAT_REDLINE) {
       // przegrzanie: silnik bierze realne obrażenia — zmniejsz gaz (miganie jak przy stallu)
-      this.warningEl.textContent = 'PRZEGRZANIE SILNIKA — ZMNIEJSZ GAZ';
+      this.warningEl.textContent = t('hud.big.overheat');
       this.warningEl.className = 'stall';
       this.warningEl.style.opacity = Date.now() % 600 < 360 ? '1' : '0.3';
     } else if (data.fuel01 <= 0) {
       // pusty bak — silnik zgasł (najniższy priorytet ostrzeżeń, ale stale widoczne)
-      this.warningEl.textContent = 'BRAK PALIWA — SILNIK STANĄŁ';
+      this.warningEl.textContent = t('hud.big.noFuel');
       this.warningEl.className = 'stall';
       this.warningEl.style.opacity = '1';
     } else {

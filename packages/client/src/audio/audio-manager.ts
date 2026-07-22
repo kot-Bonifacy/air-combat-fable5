@@ -1,6 +1,7 @@
 import { Audio, AudioListener, AudioLoader, Object3D, PerspectiveCamera, PositionalAudio, Vector3 } from 'three';
 import type { PlaneType } from '@air-combat/shared';
 import { EngineVoice, GunVoice, WindVoice } from './voices';
+import { onLangChange, t } from '../i18n';
 
 // Faza 21 — dźwięk. Web Audio przez klasy Three.js (AudioListener na kamerze → 3D pozycyjne
 // automatycznie z grafu sceny; PositionalAudio na meshu wroga panuje/tłumi się z odległością).
@@ -274,8 +275,10 @@ export class AudioManager {
     const pct = document.createElement('span');
     pct.style.cssText = 'min-width:3em;text-align:right;';
 
+    const label = document.createElement('span');
     const sync = (): void => {
-      muteBtn.textContent = this.muted ? '🔇 wycisz.' : '🔊 dźwięk';
+      muteBtn.textContent = this.muted ? t('audio.muted') : t('audio.sound');
+      label.textContent = t('audio.volume');
       slider.value = String(Math.round(this.volume * 100));
       pct.textContent = `${Math.round((this.muted ? 0 : this.volume) * 100)}%`;
     };
@@ -288,10 +291,9 @@ export class AudioManager {
       sync();
     });
 
-    const label = document.createElement('span');
-    label.textContent = 'głośność';
     wrap.append(muteBtn, label, slider, pct);
     sync();
+    onLangChange(sync); // odśwież etykiety panelu przy zmianie języka
     return wrap;
   }
 }

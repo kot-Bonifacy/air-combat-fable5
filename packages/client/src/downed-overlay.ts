@@ -5,6 +5,8 @@
 // (z-index niższy niż menu), pointer-events: auto — kursor jest wolny (wrak sterowany
 // klawiaturą), więc przyciski są klikalne.
 
+import { onLangChange, t } from './i18n';
+
 function styleActionButton(b: HTMLButtonElement, accent: string): void {
   b.style.cssText =
     'font:600 15px/1 monospace;padding:11px 20px;margin:0 6px;cursor:pointer;' +
@@ -19,6 +21,8 @@ export class DownedOverlay {
   /** Podpowiedź o sterowaniu spadającym wrakiem — chowana, gdy nie ma czym sterować (rozbicie/kolizja
    *  prosto w ziemię, alive→dead bez fazy 'dying'). */
   private readonly hint: HTMLElement;
+  private readonly standingsBtn: HTMLButtonElement;
+  private readonly endBtn: HTMLButtonElement;
 
   constructor(onSpectate: () => void, onStandings: () => void, onEnd: () => void) {
     this.root = document.createElement('div');
@@ -28,14 +32,12 @@ export class DownedOverlay {
       'font-family:monospace;text-align:center;pointer-events:auto;';
 
     const title = document.createElement('div');
-    title.textContent = 'ZESTRZELONY';
     title.style.cssText =
       'font:700 20px/1 monospace;color:#ff6a4a;letter-spacing:2px;' +
       'text-shadow:0 0 12px rgba(255,90,60,0.6);';
     this.title = title;
 
     const hint = document.createElement('div');
-    hint.textContent = 'steruj wrakiem: W/S/A/D, Q/E   •   Spacja: ogień   — albo:';
     hint.style.cssText = 'font:12px monospace;color:#9ab;';
     this.hint = hint;
 
@@ -43,23 +45,32 @@ export class DownedOverlay {
     buttons.style.cssText = 'display:flex;justify-content:center;';
 
     this.spectateBtn = document.createElement('button');
-    this.spectateBtn.textContent = 'TRYB OBSERWATORA';
     styleActionButton(this.spectateBtn, '#4a8c6c');
     this.spectateBtn.addEventListener('click', onSpectate);
 
-    const standingsBtn = document.createElement('button');
-    standingsBtn.textContent = 'TABELA WYNIKÓW';
-    styleActionButton(standingsBtn, '#4a6c8c');
-    standingsBtn.addEventListener('click', onStandings);
+    this.standingsBtn = document.createElement('button');
+    styleActionButton(this.standingsBtn, '#4a6c8c');
+    this.standingsBtn.addEventListener('click', onStandings);
 
-    const endBtn = document.createElement('button');
-    endBtn.textContent = 'ZAKOŃCZ MISJĘ';
-    styleActionButton(endBtn, '#8c4a4a');
-    endBtn.addEventListener('click', onEnd);
+    this.endBtn = document.createElement('button');
+    styleActionButton(this.endBtn, '#8c4a4a');
+    this.endBtn.addEventListener('click', onEnd);
 
-    buttons.append(this.spectateBtn, standingsBtn, endBtn);
+    buttons.append(this.spectateBtn, this.standingsBtn, this.endBtn);
     this.root.append(title, hint, buttons);
     document.body.appendChild(this.root);
+    this.applyStaticTexts();
+    onLangChange(() => this.applyStaticTexts());
+  }
+
+  /** Ustawia/odświeża teksty stałe (podpowiedź + przyciski + domyślny tytuł). Tytuł jest i tak
+   *  nadpisywany komunikatem śmierci w show(), ale ustawiamy sensowny default. */
+  private applyStaticTexts(): void {
+    this.title.textContent = t('death.shotDown');
+    this.hint.textContent = t('downed.hint');
+    this.spectateBtn.textContent = t('downed.spectate');
+    this.standingsBtn.textContent = t('downed.scoreboard');
+    this.endBtn.textContent = t('downed.end');
   }
 
   /** Pokazuje nakładkę; `canSpectate` decyduje, czy dostępny jest tryb obserwatora.

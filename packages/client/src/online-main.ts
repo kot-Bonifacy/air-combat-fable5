@@ -72,6 +72,7 @@ import { Explosions } from './explosion';
 import { OrbitCamera } from './orbit-camera';
 import { GreyoutOverlay } from './greyout-overlay';
 import { Hud, hudRow, fpsHudLine } from './hud';
+import { getLang, onLangChange, t, type MessageKey } from './i18n';
 import { KeyboardInput } from './input';
 import { MouseAim, projectDirToScreen } from './mouse-aim';
 import { MuzzleFlash } from './muzzle-flash';
@@ -1034,8 +1035,8 @@ function updateLoadingStatus(): void {
   if (!statusEl) return;
   statusEl.textContent =
     modelsTotal === 0
-      ? 'Wczytywanie świata…'
-      : `Wczytywanie modeli samolotów: ${String(modelsReady)} / ${String(modelsTotal)}`;
+      ? t('loading.world')
+      : t('loading.models', { ready: modelsReady, total: modelsTotal });
 }
 
 /** Chowa ekran ładowania, gdy świat gotowy: jesteśmy w grze, predykcja ruszyła i wczytały się
@@ -1336,23 +1337,29 @@ function onKill(killerId: number, victimId: number, cause: KillCause, localId: n
     // teamkill (friendly fire ON w drużynowym) — serwer NIE kredytuje, więc oznaczamy w feedzie
     // „(sojusznik!)" i NIE pokazujemy złotego markera zestrzelenia (parytet z SP).
     const teamkill = matchMode === 'team' && factionById.get(killerId) === factionById.get(victimId);
-    pushKillFeed(`✕ ${playerName(killerId)} → ${victim}${teamkill ? ' (sojusznik!)' : ''}`);
+    pushKillFeed(
+      t('feed.kill', {
+        killer: playerName(killerId),
+        victim,
+        teamkill: teamkill ? t('feed.teammate') : '',
+      }),
+    );
     if (killerId === localId && !teamkill) {
       hitMarkerTimerS = HIT_MARKER_KILL_S;
       hitMarkerKill = true;
     }
   } else {
-    const reason =
+    const reasonKey: MessageKey =
       cause === 'collision'
-        ? 'kolizja'
+        ? 'feed.reason.collision'
         : cause === 'flak'
-          ? 'ostrzał z ziemi'
+          ? 'feed.reason.flak'
           : cause === 'overheat'
-            ? 'pożar silnika'
+            ? 'feed.reason.overheat'
             : cause === 'structure'
-              ? 'rozpad konstrukcji'
-              : 'rozbicie';
-    pushKillFeed(`✕ ${victim} — ${reason}`);
+              ? 'feed.reason.structure'
+              : 'feed.reason.crash';
+    pushKillFeed(t('feed.death', { victim, reason: t(reasonKey) }));
   }
   // efekt śmierci (parytet z SP, faza 15/16): zestrzelenie w locie / kolizja → ofiara staje się
   // spadającym wrakiem ('dying'), więc TERAZ tylko mały błysk; UDERZENIE w powierzchnię (plusk wody
@@ -1397,6 +1404,35 @@ function playerName(id: number): string {
   return found?.nick ?? `#${String(id)}`;
 }
 
+/** Lokalizuje błąd lobby: po polsku bierzemy bogatszy komunikat serwera (np. „pokój ABCD nie istnieje"),
+ *  po angielsku mapujemy KOD (serwer nie zna języka klienta) — fallback do komunikatu serwera. */
+function localizeLobbyError(code: string, serverMessage: string): string {
+  if (getLang() === 'pl') return serverMessage;
+  const map: Record<string, MessageKey> = {
+    version: 'error.version',
+    notHost: 'error.notHost',
+    badCode: 'error.badCode',
+    full: 'error.full',
+  };
+  const key = map[code];
+  return key ? t(key) : serverMessage;
+}
+
+/** Ustawia teksty statycznych elementów z index.html (ekran ładowania, błąd WebGL) wg języka.
+ *  Wołane raz przy starcie i przy każdej zmianie języka (elementy nie są przebudowywane). */
+function applyStaticDomTexts(): void {
+  const loadingStatus = document.getElementById('loading-status');
+  // ustawiamy tylko, gdy nadal wisi domyślny „łączenie" (nie nadpisuj postępu ładowania modeli)
+  if (loadingStatus && modelsTotal === 0) loadingStatus.textContent = t('loading.connecting');
+  const set = (id: string, key: MessageKey): void => {
+    const elx = document.getElementById(id);
+    if (elx) elx.textContent = t(key);
+  };
+  set('webgl-error-head', 'webgl.head');
+  set('webgl-error-body', 'webgl.body');
+  set('webgl-error-refresh', 'webgl.refresh');
+}
+
 /**
  * Dane dodatkowe wierszy tabeli wyników (2026-07-19): „Samolot" + zwarta „Info". StandingRow ich nie
  * niesie, więc łączymy po id z rosterem poczekalni (roomView.players — odświeżany też w trakcie meczu):
@@ -1434,10 +1470,12 @@ function buildStandingExtras(
     const plane = planeLabelOf(p?.planeType ?? planeTypeById.get(r.id) ?? DEFAULT_PLANE_TYPE);
     let info: string;
     if (r.isBot) {
-      info = p?.botDifficulty ? `poziom: ${difficultyLabelOf(p.botDifficulty)}` : 'poziom: —';
+      info = p?.botDifficulty
+        ? t('info.botLevel', { level: difficultyLabelOf(p.botDifficulty) })
+        : t('info.botLevelUnknown');
     } else {
       const on = r.id === localId ? showOffscreenArrows : (p?.offscreenArrows ?? false);
-      info = `strzałki: ${on ? 'wł.' : 'wył.'}`;
+      info = t('info.arrows', { state: on ? t('info.on') : t('info.off') });
     }
     const isLost = atEnd ? r.deaths >= MATCH_LIVES : isRowLost(r);
     map.set(r.id, { plane, info, isLost });
@@ -1452,20 +1490,35 @@ function buildStandingExtras(
  * Faza 22 cz.4: gdy padł od ognia/flaku, dokleja MODUŁ z uszkodzeń („— SILNIK"/„— POŻAR") — czytelność
  * „wiem, co mnie zabiło". Dla kolizji/rozbicia moduł pomijamy (to nie strefa dobiła, tylko ziemia).
  */
+/** Klucze i18n nazw pozycji klap z JSON samolotów (schowane/bojowe/pełne). */
+const FLAP_NAME_KEYS: Record<string, MessageKey> = {
+  schowane: 'flaps.schowane',
+  bojowe: 'flaps.bojowe',
+  pełne: 'flaps.pełne',
+};
+
+/** Lokalizuje nazwę pozycji klap (z JSON) do wyświetlenia w HUD; nieznana → bez zmian. */
+function localizeFlapName(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  const key = FLAP_NAME_KEYS[name];
+  return key ? t(key) : name;
+}
+
 function deathLabel(cause: KillCause | null, module: string | null = null): string {
-  const base =
+  const baseKey: MessageKey =
     cause === 'collision'
-      ? 'KOLIZJA'
+      ? 'death.collision'
       : cause === 'ground'
-        ? 'ROZBITY'
+        ? 'death.crashed'
         : cause === 'overheat'
-          ? 'POŻAR SILNIKA'
+          ? 'death.engineFire'
           : cause === 'structure'
-            ? 'ROZPAD KONSTRUKCJI'
-            : 'ZESTRZELONY';
+            ? 'death.structural'
+            : 'death.shotDown';
+  const base = t(baseKey);
   // moduł doklejamy tylko przy zestrzeleniach (air/flak); 'overheat'/'structure' same mówią o przyczynie
   const showModule = module && (cause === null || cause === 'air' || cause === 'flak');
-  return showModule ? `${base} — ${module}` : base;
+  return showModule ? t('death.withModule', { base, module }) : base;
 }
 
 // --- lobby UI + sieć ---
@@ -1788,7 +1841,7 @@ function createNet(nick: string, token: string | null): NetClient {
     scoreboard.hide();
     results.hide();
   };
-  c.onLobbyError = (_code, message) => lobby.setError(message);
+  c.onLobbyError = (code, message) => lobby.setError(localizeLobbyError(code, message));
   c.onClose = () => handleUnexpectedClose(); // niezamierzone zerwanie → spróbuj wznowić w trakcie meczu
   return c;
 }
@@ -2166,10 +2219,14 @@ function updateHud(frameDtS: number): void {
     ? (damageById.get(net?.localPlayerId ?? -1)?.levels ?? null)
     : null;
   let flapsLabel: string | undefined;
+  let flapsTorn = false;
   if (localAlive && localFlapIndex > 0) {
-    flapsLabel = flapsAvailable(localFlapDamage)
-      ? localPlane.flaps.positions[localFlapIndex]?.name
-      : 'URWANE';
+    if (flapsAvailable(localFlapDamage)) {
+      flapsLabel = localizeFlapName(localPlane.flaps.positions[localFlapIndex]?.name);
+    } else {
+      flapsLabel = t('hud.flaps.torn');
+      flapsTorn = true;
+    }
   }
 
   hud.update({
@@ -2207,8 +2264,9 @@ function updateHud(frameDtS: number): void {
     // surowy sygnał „gracz trzyma L.Shift na pełnym gazie" (intencja WEP, niezależna od wepBoostFrac) —
     // dla Zera steruje chwilowym „bez WEP" (znika po puszczeniu Shifta → gracz uczy się, że nie warto trzymać)
     wepRequested: localAlive && keyboard.wepHeld,
-    // klapy (fizyka v2 R3): nazwa pozycji / „URWANE"; undefined = schowane (wiersz ukryty)
+    // klapy (fizyka v2 R3): nazwa pozycji / „urwane"; undefined = schowane (wiersz ukryty)
     flapsLabel,
+    flapsTorn,
     // poziom ostrzeżenia Vne (0/1/2): zbliżanie → ostrzeżenie, przekroczenie → alarm „FLATTER — ZWOLNIJ"
     vneLevel: localAlive ? vneWarnLevel(s.iasMs, localPlane) : 0,
     ammo: Math.round(localAmmoFrac * localAmmoMax),
@@ -2247,7 +2305,7 @@ function updateConnOverlay(): void {
     // auto-powrót do meczu w toku: banner z odliczaniem zamiast twardej nakładki „Rozłączono"
     const leftS = Math.max(0, Math.ceil((reconnectDeadlineMs - performance.now()) / 1000));
     connEl.classList.add('show');
-    connEl.innerHTML = `<div class="head">Wznawianie połączenia…</div><div class="msg">powrót do gry (${String(leftS)} s)</div>`;
+    connEl.innerHTML = `<div class="head">${escapeHtml(t('conn.reconnecting'))}</div><div class="msg">${escapeHtml(t('conn.reconnectingMsg', { s: leftS }))}</div>`;
     return;
   }
   if (!net) {
@@ -2257,11 +2315,11 @@ function updateConnOverlay(): void {
   switch (net.status) {
     case 'error':
       connEl.classList.add('show');
-      connEl.innerHTML = `<div class="head">Błąd połączenia</div><div class="msg">${escapeHtml(net.statusMessage)}</div><button onclick="location.reload()">Spróbuj ponownie</button>`;
+      connEl.innerHTML = `<div class="head">${escapeHtml(t('conn.errorHead'))}</div><div class="msg">${escapeHtml(net.statusMessage)}</div><button onclick="location.reload()">${escapeHtml(t('conn.tryAgain'))}</button>`;
       break;
     case 'closed':
       connEl.classList.add('show');
-      connEl.innerHTML = `<div class="head">Rozłączono</div><div class="msg">${escapeHtml(net.statusMessage)}</div><button onclick="location.reload()">Połącz ponownie</button>`;
+      connEl.innerHTML = `<div class="head">${escapeHtml(t('conn.closedHead'))}</div><div class="msg">${escapeHtml(net.statusMessage)}</div><button onclick="location.reload()">${escapeHtml(t('conn.reconnect'))}</button>`;
       break;
     default:
       connEl.classList.remove('show');
@@ -2438,8 +2496,8 @@ function updateHudOverlays(): void {
   if (playerDeath === 'spectating') {
     // nick obserwowanego (zgł. usera 2026-07-12: przy przełączaniu nie było widać kogo się ogląda)
     const specId = currentSpectateId();
-    const who = specId !== null ? `OBSERWUJESZ: ${playerName(specId)}` : 'OBSERWUJESZ';
-    alertEl.textContent = spectatableCount() > 1 ? `${who}   [LPM] zmień samolot` : who;
+    const who = specId !== null ? t('alert.spectatingWho', { name: playerName(specId) }) : t('alert.spectating');
+    alertEl.textContent = spectatableCount() > 1 ? t('alert.spectateSwitch', { who }) : who;
     alertEl.className = 'crash';
     alertEl.style.opacity = '1';
   } else if (wreck) {
@@ -2451,7 +2509,7 @@ function updateHudOverlays(): void {
   } else {
     const edgeM = distanceToArenaEdgeM(s.position.x, s.position.z);
     if (edgeM <= ARENA_WARNING_DISTANCE_M) {
-      alertEl.textContent = `KONIEC MAPY ZA ${Math.max(0, edgeM).toFixed(0)} m — NASTĄPI PRZENIESIENIE`;
+      alertEl.textContent = t('alert.arenaEdge', { m: Math.max(0, edgeM).toFixed(0) });
       alertEl.className = 'warning';
       alertEl.style.opacity = '1';
     } else {
@@ -2779,6 +2837,11 @@ renderer.setAnimationLoop(() => {
   }
   renderer.render(scene, camera);
 });
+
+// teksty statycznych elementów z index.html (ekran ładowania, błąd WebGL) wg języka + odświeżanie
+// przy przełączeniu języka w pierwszym oknie (pozostałe moduły UI same rejestrują onLangChange)
+applyStaticDomTexts();
+onLangChange(applyStaticDomTexts);
 
 // --- start: pokaż lobby; spróbuj reconnectu, jeśli mamy token z poprzedniej sesji ---
 const savedToken = loadToken();

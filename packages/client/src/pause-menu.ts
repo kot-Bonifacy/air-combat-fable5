@@ -6,6 +6,8 @@
 // (serwer kończy mecz całkowicie); gdy grają inni ludzie — „WRÓĆ DO POCZEKALNI" (wycofanie z meczu
 // bez kończenia go pozostałym). Czysty DOM/CSS nad canvasem, jak DownedOverlay/ResultsOverlay.
 
+import { onLangChange, t } from './i18n';
+
 function styleButton(b: HTMLButtonElement, accent: string): void {
   b.style.cssText =
     'font:600 16px/1 monospace;padding:13px 26px;margin:4px;cursor:pointer;min-width:240px;' +
@@ -14,9 +16,13 @@ function styleButton(b: HTMLButtonElement, accent: string): void {
 
 export class PauseMenu {
   private readonly root: HTMLElement;
+  private readonly title: HTMLElement;
+  private readonly resumeBtn: HTMLButtonElement;
   private readonly endBtn: HTMLButtonElement;
   private readonly hint: HTMLElement;
   private shown = false;
+  /** Ostatni kontekst z show() — do odświeżenia etykiety akcji/podpowiedzi przy zmianie języka. */
+  private lastOtherHumans = false;
 
   /** `onResume` — wróć do gry (zamknij menu); `onEnd` — zakończ misję / wróć do poczekalni
    *  (wybór akcji zależny od kontekstu rozstrzyga wywołujący — patrz endMissionContextual). */
@@ -28,38 +34,46 @@ export class PauseMenu {
       'text-align:center;pointer-events:auto;';
 
     const title = document.createElement('div');
-    title.textContent = 'PAUZA';
     title.style.cssText =
       'font:700 30px/1 monospace;color:#ffd24a;letter-spacing:4px;margin-bottom:8px;' +
       'text-shadow:0 2px 10px rgba(0,0,0,0.8);';
+    this.title = title;
 
-    const resumeBtn = document.createElement('button');
-    resumeBtn.textContent = 'WRÓĆ DO GRY';
-    styleButton(resumeBtn, '#4a6c8c');
-    resumeBtn.addEventListener('click', onResume);
+    this.resumeBtn = document.createElement('button');
+    styleButton(this.resumeBtn, '#4a6c8c');
+    this.resumeBtn.addEventListener('click', onResume);
 
     this.endBtn = document.createElement('button');
-    this.endBtn.textContent = 'ZAKOŃCZ MISJĘ';
     styleButton(this.endBtn, '#8c4a4a');
     this.endBtn.addEventListener('click', onEnd);
 
     this.hint = document.createElement('div');
     this.hint.style.cssText = 'font:13px monospace;color:#9ab;margin-top:10px;max-width:30em;';
 
-    this.root.append(title, resumeBtn, this.endBtn, this.hint);
+    this.root.append(title, this.resumeBtn, this.endBtn, this.hint);
     document.body.appendChild(this.root);
+    this.applyStaticTexts();
+    onLangChange(() => this.applyStaticTexts());
+  }
+
+  /** Ustawia/odświeża teksty (tytuł, „wróć do gry" + akcja końca zależna od kontekstu). */
+  private applyStaticTexts(): void {
+    this.title.textContent = t('pause.title');
+    this.resumeBtn.textContent = t('pause.resume');
+    if (this.lastOtherHumans) {
+      this.endBtn.textContent = t('pause.backToLobby');
+      this.hint.textContent = t('pause.hintHumans');
+    } else {
+      this.endBtn.textContent = t('pause.end');
+      this.hint.textContent = t('pause.hintBots');
+    }
   }
 
   /** Pokazuje menu; `otherHumansPresent` dobiera akcję końca: same boty → zakończenie meczu,
    *  inni ludzie → powrót do poczekalni bez kończenia gry pozostałym. */
   show(otherHumansPresent: boolean): void {
-    if (otherHumansPresent) {
-      this.endBtn.textContent = 'WRÓĆ DO POCZEKALNI';
-      this.hint.textContent = 'Mecz toczy się dalej dla pozostałych graczy — dołączysz przy kolejnym starcie.';
-    } else {
-      this.endBtn.textContent = 'ZAKOŃCZ MISJĘ';
-      this.hint.textContent = 'Mecz zostanie zakończony — wrócisz do poczekalni.';
-    }
+    this.lastOtherHumans = otherHumansPresent;
+    this.applyStaticTexts();
     this.root.style.display = 'flex';
     this.shown = true;
   }

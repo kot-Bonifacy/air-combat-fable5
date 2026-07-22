@@ -5,6 +5,7 @@ import {
   type MatchMode,
   type StandingRow,
 } from '@air-combat/shared';
+import { onLangChange, t } from '../i18n';
 
 // Nakładki pętli meczu (faza 13) jako vanilla DOM nad canvasem (jak lobby-ui — Preact
 // dopiero, gdy vanilla zaboli). Dwie nakładki:
@@ -44,9 +45,9 @@ export type StandingExtras = ReadonlyMap<number, StandingExtra>;
 /** Powód zakończenia jako tekst. P1 (2026-06-19): oba tryby eliminacyjne — `'score'` znaczy
  *  eliminację (drużynowy: przeciwna drużyna; FFA: ostatni ocalały), nie limit zestrzeleń. */
 function reasonText(reason: MatchEndReason, mode: MatchMode): string {
-  if (reason === 'zone') return 'przejęto strefę kontroli';
-  if (mode === 'team') return 'przeciwna drużyna wyeliminowana';
-  return 'ostatni ocalały';
+  if (reason === 'zone') return t('sb.reason.zone');
+  if (mode === 'team') return t('sb.reason.teamElim');
+  return t('sb.reason.lastStanding');
 }
 
 /** Frakcje w kolejności renderu: własna drużyna pierwsza, potem rosnąco po numerze. */
@@ -71,7 +72,7 @@ function teamHeaderRow(faction: number, localFaction: number, rows: readonly Sta
   const tr = el('div', 'mui-row mui-team');
   const rankCell = el('span', 'mui-cell mui-rank');
   const nameCell = el('span', 'mui-cell mui-name');
-  nameCell.textContent = own ? 'Twoja drużyna' : 'Wrogowie';
+  nameCell.textContent = own ? t('team.own') : t('team.enemies');
   nameCell.style.color = own ? TEAM_OWN_COLOR : TEAM_FOE_COLOR;
   let kills = 0;
   let deaths = 0;
@@ -199,15 +200,15 @@ function headerRow(): HTMLDivElement {
   const head = el('div', 'mui-row mui-head');
   const cells: [string, string][] = [
     ['#', 'mui-rank'],
-    ['Pilot', 'mui-name'],
-    ['Z', 'mui-num'],
-    ['Ś', 'mui-num'],
-    ['A', 'mui-num'],
-    ['Samolot', 'mui-plane'],
-    ['Info', 'mui-info'],
-    ['Strefa', 'mui-num'],
-    ['Pkt', 'mui-num'],
-    ['ping', 'mui-num'],
+    [t('sb.col.pilot'), 'mui-name'],
+    [t('sb.col.kills'), 'mui-num'],
+    [t('sb.col.deaths'), 'mui-num'],
+    [t('sb.col.assists'), 'mui-num'],
+    [t('sb.col.plane'), 'mui-plane'],
+    [t('sb.col.info'), 'mui-info'],
+    [t('sb.col.zone'), 'mui-num'],
+    [t('sb.col.pts'), 'mui-num'],
+    [t('sb.col.ping'), 'mui-num'],
   ];
   for (const [text, cls] of cells) {
     const c = el('span', `mui-cell ${cls}`);
@@ -275,10 +276,7 @@ export class ScoreboardOverlay {
 
   private render(): void {
     // P1 (2026-06-19): oba tryby eliminacyjne (bez limitu czasu/zestrzeleń) → tytuł bez zegara.
-    this.titleEl.textContent =
-      this.mode === 'team'
-        ? 'TABELA WYNIKÓW — eliminacja drużynowa'
-        : 'TABELA WYNIKÓW — eliminacja (każdy na każdego)';
+    this.titleEl.textContent = this.mode === 'team' ? t('sb.title.team') : t('sb.title.ffa');
     this.tableEl.replaceChildren(
       ...standingsNodes(this.lastRows, this.localId, this.localFaction, this.mode, this.extras),
     );
@@ -299,26 +297,37 @@ export class ResultsOverlay {
   private readonly hintEl: HTMLDivElement;
   private shown = false;
 
+  private readonly titleEl: HTMLDivElement;
+  private readonly waitingBtn: HTMLButtonElement;
+  private readonly leaveBtn: HTMLButtonElement;
+
   constructor(private readonly actions: ResultsActions) {
     injectStyles();
     this.root = el('div', 'mui-results');
     const panel = el('div', 'mui-panel mui-results-panel');
-    const title = el('div', 'mui-title');
-    title.textContent = 'KONIEC MECZU';
+    this.titleEl = el('div', 'mui-title');
     this.bannerEl = el('div', 'mui-banner');
     this.tableEl = el('div', 'mui-table');
     this.hintEl = el('div', 'mui-hint');
     // Tabela NIE znika sama (2026-06-27): gracz wychodzi z niej WYŁĄCZNIE przyciskiem. Rewanż
     // przeniesiony do poczekalni (Start) — tu zostają „Wróć do poczekalni" (główny) i „Opuść pokój".
-    const waitingBtn = button('Wróć do poczekalni', 'mui-btn mui-btn-primary', () =>
-      this.actions.onReturnToWaiting(),
-    );
-    const leaveBtn = button('Opuść pokój', 'mui-btn', () => this.actions.onLeave());
+    this.waitingBtn = button('', 'mui-btn mui-btn-primary', () => this.actions.onReturnToWaiting());
+    this.leaveBtn = button('', 'mui-btn', () => this.actions.onLeave());
     const btnRow = el('div', 'mui-btn-row');
-    btnRow.append(waitingBtn, leaveBtn);
-    panel.append(title, this.bannerEl, this.tableEl, this.hintEl, btnRow);
+    btnRow.append(this.waitingBtn, this.leaveBtn);
+    panel.append(this.titleEl, this.bannerEl, this.tableEl, this.hintEl, btnRow);
     this.root.append(panel);
     document.body.appendChild(this.root);
+    this.applyStaticTexts();
+    onLangChange(() => this.applyStaticTexts());
+  }
+
+  /** Ustawia/odświeża teksty stałe (tytuł, przyciski, podpowiedź). Baner zależy od wyniku (show()). */
+  private applyStaticTexts(): void {
+    this.titleEl.textContent = t('results.title');
+    this.waitingBtn.textContent = t('results.backToLobby');
+    this.leaveBtn.textContent = t('results.leaveRoom');
+    this.hintEl.textContent = t('results.hint');
   }
 
   /**
@@ -334,28 +343,28 @@ export class ResultsOverlay {
       const won = winningFaction !== null && winningFaction === localFaction;
       this.bannerEl.classList.toggle('mui-banner-win', won);
       if (winningFaction === null) {
-        this.bannerEl.textContent = `Remis (${reasonStr})`; // obustronna eliminacja w jednym ticku
+        this.bannerEl.textContent = t('results.draw', { reason: reasonStr }); // obustronna eliminacja
       } else if (won) {
-        this.bannerEl.textContent = `🏆 ZWYCIĘSTWO DRUŻYNY! (${reasonStr})`;
+        this.bannerEl.textContent = t('results.teamWin', { reason: reasonStr });
       } else {
-        this.bannerEl.textContent = `Wygrywają Wrogowie (${reasonStr})`;
+        this.bannerEl.textContent = t('results.enemiesWin', { reason: reasonStr });
       }
     } else {
       const winner = winnerId !== null ? rows.find((r) => r.id === winnerId) : undefined;
       const won = winnerId !== null && winnerId === localId;
       this.bannerEl.classList.toggle('mui-banner-win', won);
       if (won) {
-        this.bannerEl.textContent = `🏆 ZWYCIĘSTWO! (${reasonStr})`;
+        this.bannerEl.textContent = t('results.win', { reason: reasonStr });
       } else if (winner) {
-        this.bannerEl.textContent = `🏆 Wygrywa ${winner.nick} (${reasonStr})`;
+        this.bannerEl.textContent = t('results.playerWin', { nick: winner.nick, reason: reasonStr });
       } else {
-        this.bannerEl.textContent = `Koniec (${reasonStr})`;
+        this.bannerEl.textContent = t('results.over', { reason: reasonStr });
       }
     }
 
     this.tableEl.replaceChildren(...standingsNodes(rows, localId, localFaction, mode, extras));
 
-    this.hintEl.textContent = 'Wróć do poczekalni, by zagrać ponownie, albo opuść pokój. [Tab] chowa/pokazuje tabelę.';
+    this.hintEl.textContent = t('results.hint');
     this.shown = true;
     this.root.classList.add('show');
   }

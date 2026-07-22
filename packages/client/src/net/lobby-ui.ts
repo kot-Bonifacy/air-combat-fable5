@@ -17,62 +17,79 @@ import {
   type RoomState,
   type RoomSummary,
 } from '@air-combat/shared';
+import { getLang, onLangChange, setLang, t, type MessageKey } from '../i18n';
 
-/** Etykiety poziomów trudności dla UI (klucze JSON są bez polskich znaków). */
-const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
-  latwy: 'łatwy',
-  normalny: 'normalny',
-  trudny: 'trudny',
-  as: 'as', // b.trudny — najlepszy pilot (nazwa „as" wybrana przez usera 2026-07-12)
+/** Klucz i18n etykiety poziomu trudności (klucze JSON są bez polskich znaków). */
+const DIFFICULTY_KEY: Record<DifficultyLevel, MessageKey> = {
+  latwy: 'diff.latwy',
+  normalny: 'diff.normalny',
+  trudny: 'diff.trudny',
+  as: 'diff.as', // b.trudny — najlepszy pilot (nazwa „as" wybrana przez usera 2026-07-12)
 };
 
-/** Etykieta poziomu trudności do UI (poczekalnia i tabela wyników). Jedno źródło nazw — bez duplikacji. */
+/** Zlokalizowana etykieta poziomu trudności do UI (poczekalnia i tabela wyników). Jedno źródło — bez duplikacji. */
 export function difficultyLabelOf(level: DifficultyLevel): string {
-  return DIFFICULTY_LABELS[level];
+  return t(DIFFICULTY_KEY[level]);
 }
 
 /** Wartość sentinel selektora modelu nowego bota = „Losowy" (host nie wymusza typu → serwer losuje
  *  z id). Pusty string nie koliduje z żadnym PlaneType, więc bezpiecznie odróżnia „brak wyboru". */
 const RANDOM_PLANE_VALUE = '';
-/** Opcje selektora modelu przy „+ dodaj bota" (2026-06-27): „Losowy" + konkretne typy samolotów. */
-const ADD_BOT_PLANE_OPTIONS: readonly { value: string; label: string }[] = [
-  { value: RANDOM_PLANE_VALUE, label: 'Losowy' },
-  ...PLANE_TYPES.map((t) => ({ value: t, label: planeLabelOf(t) })),
+/** Opcje selektora modelu przy „+ dodaj bota": „Losowy" + typy (nazwy własne z shared). Etykieta
+ *  „Losowy" lokalizowana; nazwy samolotów zostają. */
+function addBotPlaneOptions(): { value: string; label: string }[] {
+  return [
+    { value: RANDOM_PLANE_VALUE, label: t('waiting.botRandom') },
+    ...PLANE_TYPES.map((type) => ({ value: type, label: planeLabelOf(type) })),
+  ];
+}
+
+/** Tryby meczu (faza 18) + klucze i18n etykiet selecta. */
+const MODE_OPTIONS: readonly { value: MatchMode; key: MessageKey }[] = [
+  { value: 'ffa', key: 'mode.ffa' },
+  { value: 'team', key: 'mode.team' },
 ];
 
-/** Tryby meczu w kolejności wyboru (faza 18) + ich etykiety dla selecta. */
-const MODE_OPTIONS: readonly { value: MatchMode; label: string }[] = [
-  { value: 'ffa', label: 'FFA (każdy na każdego)' },
-  { value: 'team', label: 'Drużynowy (2 drużyny)' },
-];
-
-/** Nazwy drużyn w poczekalni (rozdzielenie drużyna↔samolot 2026-06-25: drużyny nie są już
- *  narodowościami — dowolny samolot w dowolnej drużynie). Indeks = frakcja (0..TEAM_COUNT−1). */
-const TEAM_LABELS: readonly string[] = ['Drużyna A', 'Drużyna B'];
+/** Klucz i18n nazwy drużyny per frakcja (0..TEAM_COUNT−1). */
+const TEAM_KEY: readonly MessageKey[] = ['team.a', 'team.b'];
 /** Klasa CSS koloru drużyny per frakcja (stały kolor w poczekalni; w locie wróg/sojusznik jest
  *  względny do gracza, więc tu używamy własnej, bezwzględnej palety). */
 const TEAM_COLOR_CLASS: readonly string[] = ['lobby-team-a', 'lobby-team-b'];
 
 function teamLabel(faction: number): string {
-  return TEAM_LABELS[faction] ?? `Drużyna ${String(faction + 1)}`;
+  const key = TEAM_KEY[faction];
+  return key ? t(key) : t('team.n', { n: faction + 1 });
 }
+
+// Karta samolotu: nazwa/wariant/uzbrojenie/glif = z shared (nazwy własne, kalibry — zostają), a
+// rola (trait) i opis (blurb) lokalizowane per typ w kliencie (i18n).
+const PLANE_TRAIT_KEY: Record<PlaneType, MessageKey> = {
+  spitfire: 'plane.spitfire.trait',
+  bf109: 'plane.bf109.trait',
+  zero: 'plane.zero.trait',
+};
+const PLANE_BLURB_KEY: Record<PlaneType, MessageKey> = {
+  spitfire: 'plane.spitfire.blurb',
+  bf109: 'plane.bf109.blurb',
+  zero: 'plane.zero.blurb',
+};
 
 // Sterowanie w wersji ONLINE (onboarding, parytet z ekranem „JAK GRAĆ" w menu.ts SP).
 // Źródło prawdy = input.ts + obsługa klawiszy w online-main.ts. Różnice względem SP: BEZ
 // „Respawn (R)" (w MP nie ma respawnu graczem), dochodzi „Panel sieci (N)". WEP (L.Shift przy 100%
 // gazu) i klapy (F) dodane w fizyce v2 (R2/R3) — instrukcja klawiszy żyje TU (HUD jej nie dubluje).
-const ONLINE_CONTROL_ROWS: readonly (readonly [string, string])[] = [
-  ['Celowanie / lot', 'Mysz (kliknij w ekran)'],
-  ['Ogień', 'LPM  •  Spacja'],
-  ['Nos w górę / w dół', 'S / ↓   •   W / ↑'],
-  ['Przechylenie L / P', 'A / ←   •   D / →'],
-  ['Ster kierunku L / P', 'Q   •   E'],
-  ['Gaz +  /  −', 'L.Shift  /  L.Ctrl'],
-  ['WEP / dopalacz', 'L.Shift przy 100% gazu'],
-  ['Klapy (wysuń / schowaj)', 'F (cyklicznie)'],
-  ['Rozglądanie się (kamera)', 'Lewy Alt (przytrzymaj)'],
-  ['Tabela wyników', 'Tab (przytrzymaj)'],
-  ['Panel sieci', 'N'],
+const ONLINE_CONTROL_ROWS: readonly (readonly [MessageKey, MessageKey])[] = [
+  ['help.act.aim', 'help.key.aim'],
+  ['help.act.fire', 'help.key.fire'],
+  ['help.act.pitch', 'help.key.pitch'],
+  ['help.act.roll', 'help.key.roll'],
+  ['help.act.yaw', 'help.key.yaw'],
+  ['help.act.throttle', 'help.key.throttle'],
+  ['help.act.wep', 'help.key.wep'],
+  ['help.act.flaps', 'help.key.flaps'],
+  ['help.act.look', 'help.key.look'],
+  ['help.act.scoreboard', 'help.key.scoreboard'],
+  ['help.act.netpanel', 'help.key.netpanel'],
 ];
 
 // Ekrany lobby (faza 10) jako vanilla DOM nad canvasem (decyzja PLAN.md — Preact dopiero,
@@ -189,6 +206,38 @@ export class LobbyUI {
   // osobista pomoc HUD (per gracz, localStorage — bez protokołu): strzałki off-screen do innych samolotów
   private readonly hudOptionsRow: HTMLDivElement;
   private readonly offscreenArrowsCheckbox: HTMLInputElement;
+  // --- lokalizacja (i18n): przełącznik PL/EN + odświeżanie statycznych tekstów przy zmianie języka ---
+  private readonly langPlBtn: HTMLButtonElement;
+  private readonly langEnBtn: HTMLButtonElement;
+  /** Closures odświeżające statyczne teksty (etykiety/przyciski/opcje selectów) — wołane przy zmianie
+   *  języka. Element „śledzimy" przez track(); dynamiczne teksty (updateWaiting) i tak wołają t() na bieżąco. */
+  private readonly langUpdaters: (() => void)[] = [];
+
+  /** Rejestruje element do retranslacji: ustawia jego textContent na t(key) i zapamiętuje do odświeżenia. */
+  private track(elx: HTMLElement, key: MessageKey): void {
+    const upd = (): void => {
+      elx.textContent = t(key);
+    };
+    upd();
+    this.langUpdaters.push(upd);
+  }
+
+  /** Jak track(), ale dla placeholdera pola input. */
+  private trackPlaceholder(input: HTMLInputElement, key: MessageKey): void {
+    const upd = (): void => {
+      input.placeholder = t(key);
+    };
+    upd();
+    this.langUpdaters.push(upd);
+  }
+
+  /** Odświeża wszystkie statyczne teksty (po zmianie języka). Podświetlenie przycisku PL/EN też tutaj. */
+  private applyStaticTexts(): void {
+    for (const upd of this.langUpdaters) upd();
+    const lang = getLang();
+    this.langPlBtn.classList.toggle('is-active', lang === 'pl');
+    this.langEnBtn.classList.toggle('is-active', lang === 'en');
+  }
 
   constructor(private readonly cb: LobbyCallbacks) {
     injectStyles();
@@ -201,7 +250,7 @@ export class LobbyUI {
 
     const nickRow = el('div', 'lobby-row');
     const nickLabel = el('label', 'lobby-label');
-    nickLabel.textContent = 'Twój nick';
+    this.track(nickLabel, 'entry.nick');
     this.nickInput = document.createElement('input');
     this.nickInput.className = 'lobby-input';
     this.nickInput.maxLength = MAX_NICK_LENGTH;
@@ -210,48 +259,66 @@ export class LobbyUI {
     this.nickInput.addEventListener('change', () => saveNick(this.nickInput.value));
     nickRow.append(nickLabel, this.nickInput);
 
+    // --- przełącznik języka (PL/EN): dwa przyciski obok nicku, aktywny podświetlony (decyzja usera
+    // 2026-07-22). Zmiana zapisuje wybór (localStorage) i odświeża CAŁE UI klienta przez onLangChange. ---
+    const langRow = el('div', 'lobby-row');
+    const langLabel = el('label', 'lobby-label');
+    this.track(langLabel, 'lang.label');
+    this.langPlBtn = button('PL', 'lobby-btn lobby-btn-small lobby-lang-btn', () => setLang('pl'));
+    this.langEnBtn = button('EN', 'lobby-btn lobby-btn-small lobby-lang-btn', () => setLang('en'));
+    const langBtns = el('div', 'lobby-lang-btns');
+    langBtns.append(this.langPlBtn, this.langEnBtn);
+    langRow.append(langLabel, langBtns);
+
     // auto-wykryta otwarta gra: jedyna poczekalnia z wolnym miejscem (setRoomList wybiera ją z
     // listy pokoi odświeżanej cyklicznie przez online-main). Widoczna TYLKO, gdy taka istnieje;
     // „Dołącz" wchodzi prosto do niej. Brak otwartej gry → ramka znika, zostaje „Załóż własną grę".
     this.openGameBox = el('div', 'lobby-open-game');
     this.openGameTitle = el('div', 'lobby-open-title');
     this.openGameDetail = el('div', 'lobby-open-detail');
-    const openJoinBtn = button('Dołącz', 'lobby-btn lobby-btn-primary', () => {
+    const openJoinBtn = button('', 'lobby-btn lobby-btn-primary', () => {
       if (this.openGameCode === null) return;
       this.beforeAction();
       this.cb.onJoinRoom(this.openGameCode);
     });
+    this.track(openJoinBtn, 'entry.join');
     this.openGameBox.append(this.openGameTitle, this.openGameDetail, openJoinBtn);
 
     // „Załóż własną grę": tworzy pokój z domyślnymi ustawieniami — tryb/boty/poziom i samolot
     // host konfiguruje już w poczekalni (settingsRow), żeby wejście było jednym prostym ekranem.
-    const createBtn = button('Załóż własną grę', 'lobby-btn', () => {
+    const createBtn = button('', 'lobby-btn', () => {
       this.beforeAction();
       this.cb.onCreateRoom();
     });
+    this.track(createBtn, 'entry.create');
 
     this.errorEl = el('div', 'lobby-error');
 
-    const helpBtn = button('❔ Jak grać — sterowanie i cel', 'lobby-btn lobby-btn-small', () =>
-      this.showHelp(),
-    );
+    const helpBtn = button('', 'lobby-btn lobby-btn-small', () => this.showHelp());
+    this.track(helpBtn, 'entry.help');
+
+    // atrybucja CC — spójniki lokalizowane (nazwy/autorzy/licencje zostają); przebudowa przy zmianie języka
+    const attribution = el('div', 'lobby-attribution');
+    fillAttribution(attribution);
+    this.langUpdaters.push(() => fillAttribution(attribution));
 
     this.entry.append(
       title,
       nickRow,
+      langRow,
       this.openGameBox,
       createBtn,
       this.errorEl,
       helpBtn,
-      attributionEl(),
+      attribution,
     );
 
     // --- poczekalnia ---
     this.waiting = el('div', 'lobby-screen lobby-waiting');
     const wTitle = el('div', 'lobby-title');
-    wTitle.textContent = 'POCZEKALNIA';
+    this.track(wTitle, 'waiting.title');
     const codeCaption = el('div', 'lobby-label');
-    codeCaption.textContent = 'Kod pokoju (podaj znajomym):';
+    this.track(codeCaption, 'waiting.codeCaption');
     this.waitingCodeEl = el('div', 'lobby-code');
     this.waitingPlayersEl = el('div', 'lobby-players');
     // kolumny drużyn (tryb drużynowy): gracze pogrupowani po frakcji, dwie kolumny obok siebie
@@ -259,7 +326,7 @@ export class LobbyUI {
     // selektor drużyny (tryb drużynowy): każdy wybiera swoją stronę — dwóch ludzi może grać razem
     this.teamRow = el('div', 'lobby-row lobby-bot-row');
     const teamLabelEl = el('label', 'lobby-label');
-    teamLabelEl.textContent = 'Twoja drużyna';
+    this.track(teamLabelEl, 'waiting.yourTeam');
     this.teamSelect = selectEl(
       'lobby-select lobby-select-mode',
       Array.from({ length: TEAM_COUNT }, (_, i) => ({ value: String(i), label: teamLabel(i) })),
@@ -268,12 +335,19 @@ export class LobbyUI {
     this.teamSelect.addEventListener('change', () => {
       this.cb.onSelectTeam(Number(this.teamSelect.value) || 0);
     });
+    // opcje selektora drużyny lokalizowane — odśwież ich etykiety przy zmianie języka
+    this.langUpdaters.push(() => {
+      for (let i = 0; i < this.teamSelect.options.length; i++) {
+        const opt = this.teamSelect.options[i];
+        if (opt) opt.textContent = teamLabel(Number(opt.value) || 0);
+      }
+    });
     this.teamRow.append(teamLabelEl, this.teamSelect);
     // wybór samolotu: KARTY (2026-06-26) — w obu trybach wybór płatowca, niezależny od drużyny.
     // Klik w kartę = onSelectPlane; podświetlenie wybranej idzie za stanem z serwera (updateWaiting).
     this.planeRow = el('div', 'lobby-plane-section');
     const planeCaption = el('div', 'lobby-label');
-    planeCaption.textContent = 'Twój samolot';
+    this.track(planeCaption, 'waiting.yourPlane');
     this.planeCardsEl = el('div', 'lobby-plane-cards');
     for (const type of PLANE_TYPES) {
       const card = this.buildPlaneCard(type);
@@ -296,15 +370,17 @@ export class LobbyUI {
       this.cb.onToggleOffscreenArrows(on);
     });
     const arrowsText = el('span', 'lobby-checkbox-text');
-    arrowsText.textContent = 'Strzałki wskazujące inne samoloty poza ekranem (dla początkujących)';
+    this.track(arrowsText, 'waiting.arrowsHelp');
     arrowsLabel.append(this.offscreenArrowsCheckbox, arrowsText);
     this.hudOptionsRow.append(arrowsLabel);
 
     // gotowość (system „Gotów" 2026-06-26): przycisk dla nie-hosta — trafia do paska akcji obok „Wyjdź"
-    // (host widzi tam Start; oba są rozłączne), więc nie zajmuje osobnego pełnego wiersza.
-    this.readyBtn = button('✔ Gotów', 'lobby-btn lobby-btn-ready', () => {
+    // (host widzi tam Start; oba są rozłączne), więc nie zajmuje osobnego pełnego wiersza. Etykieta
+    // (Gotów / cofnij) ustawiana dynamicznie w updateWaiting — tu tylko sensowny start.
+    this.readyBtn = button('', 'lobby-btn lobby-btn-ready', () => {
       this.cb.onSetReady(!this.myReady);
     });
+    this.track(this.readyBtn, 'waiting.readyBtn');
 
     // --- ustawienia pokoju w poczekalni (host steruje, reszta widzi podsumowanie) ---
     // Bez osobnego pełnowymiarowego podpisu — selektor trybu jest samoopisowy, a rolę hosta
@@ -314,31 +390,41 @@ export class LobbyUI {
     this.settingsRow = el('div', 'lobby-row lobby-bot-row lobby-settings-row');
     this.waitModeSelect = selectEl(
       'lobby-select lobby-select-mode',
-      MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+      MODE_OPTIONS.map((o) => ({ value: o.value, label: t(o.key) })),
       'ffa', // domyślnie FFA (życzenie usera 2026-07-12); i tak nadpisywany view.mode dla hosta
     );
     this.waitModeSelect.addEventListener('change', () => this.emitSettings());
+    // opcje selektora trybu lokalizowane — odśwież przy zmianie języka
+    this.langUpdaters.push(() => {
+      for (const o of MODE_OPTIONS) {
+        const opt = Array.from(this.waitModeSelect.options).find((x) => x.value === o.value);
+        if (opt) opt.textContent = t(o.key);
+      }
+    });
     this.settingsRow.append(this.waitModeSelect);
     this.settingsSummary = el('div', 'lobby-sub lobby-settings-summary');
 
     // --- czat poczekalni ---
     const chatCaption = el('div', 'lobby-label');
-    chatCaption.textContent = 'Czat';
+    this.track(chatCaption, 'waiting.chat');
     this.chatLogEl = el('div', 'lobby-chat-log');
     const chatRow = el('div', 'lobby-row lobby-chat-row');
     this.chatInput = document.createElement('input');
     this.chatInput.className = 'lobby-input lobby-chat-input';
     this.chatInput.maxLength = MAX_CHAT_LENGTH;
-    this.chatInput.placeholder = 'Napisz wiadomość…';
+    this.trackPlaceholder(this.chatInput, 'waiting.chatPlaceholder');
     this.chatInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.trySendChat();
     });
-    const chatSendBtn = button('Wyślij', 'lobby-btn lobby-btn-small', () => this.trySendChat());
+    const chatSendBtn = button('', 'lobby-btn lobby-btn-small', () => this.trySendChat());
+    this.track(chatSendBtn, 'waiting.send');
     chatRow.append(this.chatInput, chatSendBtn);
 
     this.waitingHintEl = el('div', 'lobby-sub lobby-hint');
-    this.startBtn = button('Start meczu', 'lobby-btn lobby-btn-primary', () => this.cb.onStartMatch());
-    const leaveBtn = button('Wyjdź', 'lobby-btn lobby-btn-small', () => this.cb.onLeaveRoom());
+    this.startBtn = button('', 'lobby-btn lobby-btn-primary', () => this.cb.onStartMatch());
+    this.track(this.startBtn, 'waiting.start');
+    const leaveBtn = button('', 'lobby-btn lobby-btn-small', () => this.cb.onLeaveRoom());
+    this.track(leaveBtn, 'waiting.leave');
 
     // kod pokoju w jednym wierszu (podpis + kod) zamiast dwóch pełnowymiarowych wierszy
     const codeRow = el('div', 'lobby-row lobby-code-row');
@@ -387,30 +473,35 @@ export class LobbyUI {
     this.help = el('div', 'lobby-help');
     const helpPanel = el('div', 'lobby-help-panel');
     const hTitle = el('div', 'lobby-title');
-    hTitle.textContent = 'JAK GRAĆ';
+    this.track(hTitle, 'help.title');
     const hSub = el('div', 'lobby-sub');
-    hSub.textContent = 'Spitfire Mk IIa — kamera pościgowa, celowanie myszą';
+    this.track(hSub, 'help.sub');
     const helpTable = el('table', 'lobby-help-table');
-    for (const [action, keys] of ONLINE_CONTROL_ROWS) {
+    for (const [actionKey, keysKey] of ONLINE_CONTROL_ROWS) {
       const tr = document.createElement('tr');
       const actionCell = el('td', 'lobby-help-action');
-      actionCell.textContent = action;
+      this.track(actionCell, actionKey);
       const keysCell = el('td', 'lobby-help-keys');
-      keysCell.textContent = keys;
+      this.track(keysCell, keysKey);
       tr.append(actionCell, keysCell);
       helpTable.append(tr);
     }
     const goal = el('div', 'lobby-help-goal');
     const zoneMin = Math.round(ZONE_CAPTURE_SECONDS / 60);
-    goal.textContent =
-      `Cel: utrzymaj STREFĘ nad górą przez ${String(zoneMin)} min albo wybij wrogów. ` +
-      `Uważaj na ziemię i przeciągnięcie przy ostrym zakręcie.`;
-    const helpClose = button('▶ Zaczynamy', 'lobby-btn lobby-btn-primary', () => this.hideHelp());
+    this.langUpdaters.push(() => {
+      goal.textContent = t('help.goal', { min: zoneMin });
+    });
+    goal.textContent = t('help.goal', { min: zoneMin });
+    const helpClose = button('', 'lobby-btn lobby-btn-primary', () => this.hideHelp());
+    this.track(helpClose, 'help.start');
     helpPanel.append(hTitle, hSub, helpTable, goal, helpClose);
     this.help.append(helpPanel);
 
     this.root.append(this.entry, this.waiting, this.help);
     document.body.appendChild(this.root);
+    // odśwież całe UI klienta przy przełączeniu języka (dynamiczne teksty i tak wołają t() na bieżąco)
+    onLangChange(() => this.applyStaticTexts());
+    this.applyStaticTexts();
     this.hide();
   }
 
@@ -462,9 +553,13 @@ export class LobbyUI {
       return;
     }
     this.openGameCode = best.code;
-    const modeLabel = best.mode === 'team' ? 'Drużynowy' : 'FFA';
-    this.openGameTitle.textContent = `Trwa otwarta gra: ${best.code}`;
-    this.openGameDetail.textContent = `${modeLabel}  ·  ${String(best.playerCount)}/${String(best.maxPlayers)} graczy`;
+    const modeLabel = best.mode === 'team' ? t('mode.team.short') : t('mode.ffa.short');
+    this.openGameTitle.textContent = t('entry.openGameTitle', { code: best.code });
+    this.openGameDetail.textContent = t('entry.openGameDetail', {
+      mode: modeLabel,
+      count: best.playerCount,
+      max: best.maxPlayers,
+    });
     this.openGameBox.classList.add('show');
   }
 
@@ -483,17 +578,22 @@ export class LobbyUI {
     const glyph = el('div', 'lobby-plane-glyph');
     glyph.textContent = '✈';
     const name = el('div', 'lobby-plane-name');
-    name.textContent = info.label;
+    name.textContent = info.label; // nazwa własna — bez tłumaczenia
     const variant = el('div', 'lobby-plane-variant');
-    variant.textContent = info.fullName;
+    variant.textContent = info.fullName; // nazwa wariantu — bez tłumaczenia
     const trait = el('div', 'lobby-plane-trait');
-    trait.textContent = `${info.traitIcon} ${info.trait}`;
     const weapons = el('div', 'lobby-plane-weapons');
-    weapons.textContent = info.weapons;
+    weapons.textContent = info.weapons; // kalibry/uzbrojenie — bez tłumaczenia
     const blurb = el('div', 'lobby-plane-blurb');
-    blurb.textContent = info.blurb;
     const pick = el('div', 'lobby-plane-pick');
-    pick.textContent = 'wybierz';
+    // rola + opis lokalizowane (glif z shared zostaje); pick ustawia updateWaiting wg wyboru
+    const refreshCardTexts = (): void => {
+      trait.textContent = `${info.traitIcon} ${t(PLANE_TRAIT_KEY[type])}`;
+      blurb.textContent = t(PLANE_BLURB_KEY[type]);
+    };
+    refreshCardTexts();
+    this.track(pick, 'plane.pick');
+    this.langUpdaters.push(refreshCardTexts);
     card.append(glyph, name, variant, trait, weapons, blurb, pick);
     card.addEventListener('click', () => this.cb.onSelectPlane(type));
     return card;
@@ -504,7 +604,8 @@ export class LobbyUI {
   private buildPlayerRow(p: RoomPlayer, view: WaitingView): HTMLDivElement {
     const row = el('div', 'lobby-player-row');
     const tag = el('span', 'lobby-player-tag');
-    tag.textContent = p.isBot ? 'BOT' : p.id === view.hostId ? 'HOST' : p.id === view.youId ? 'TY' : '';
+    // HOST/BOT to uniwersalne skróty (zostają); „TY" lokalizowane
+    tag.textContent = p.isBot ? 'BOT' : p.id === view.hostId ? 'HOST' : p.id === view.youId ? t('waiting.tag.you') : '';
     const name = el('span', 'lobby-player-name');
     name.textContent = p.nick; // textContent → bez interpretacji HTML (XSS)
     // typ samolotu przy nicku (faza 19b: widać, kto czym leci — niezależnie od drużyny)
@@ -518,7 +619,7 @@ export class LobbyUI {
     if (p.disconnected) {
       row.classList.add('is-disconnected');
       const dc = el('span', 'lobby-player-disconnected');
-      dc.textContent = '(rozłączony)';
+      dc.textContent = t('waiting.disconnected');
       row.append(dc, plane);
       return row;
     }
@@ -536,7 +637,7 @@ export class LobbyUI {
       if (!p.isBot && p.id !== view.hostId) {
         ready.textContent = p.ready ? '✔' : '⏳';
         ready.classList.add(p.ready ? 'is-ready' : 'is-waiting');
-        ready.title = p.ready ? 'gotów' : 'czeka';
+        ready.title = p.ready ? t('waiting.ready.tip.ready') : t('waiting.ready.tip.waiting');
       }
       row.append(ready);
     }
@@ -552,7 +653,7 @@ export class LobbyUI {
     // poziom trudności tego bota — zmiana wysyła editBot{difficulty}
     const diff = selectEl(
       'lobby-select lobby-bot-diff',
-      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: DIFFICULTY_LABELS[lvl] })),
+      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: difficultyLabelOf(lvl) })),
       p.botDifficulty ?? 'normalny',
     );
     diff.addEventListener('change', () => {
@@ -563,12 +664,12 @@ export class LobbyUI {
     if (showMove) {
       const otherTeam = (p.faction + 1) % TEAM_COUNT;
       const move = button('⇄', 'lobby-btn lobby-btn-icon', () => this.cb.onEditBot(p.id, { team: otherTeam }));
-      move.title = `Przenieś do: ${teamLabel(otherTeam)}`;
+      move.title = t('waiting.moveTo', { team: teamLabel(otherTeam) });
       box.append(move);
     }
     // usuń bota
     const remove = button('✕', 'lobby-btn lobby-btn-icon lobby-btn-danger', () => this.cb.onRemoveBot(p.id));
-    remove.title = 'Usuń bota';
+    remove.title = t('waiting.removeBot');
     box.append(remove);
     return box;
   }
@@ -583,30 +684,30 @@ export class LobbyUI {
     const wrap = el('div', 'lobby-add-bot-box');
     const plane = selectEl(
       'lobby-select lobby-bot-diff',
-      ADD_BOT_PLANE_OPTIONS,
+      addBotPlaneOptions(),
       this.pendingBotPlane ?? RANDOM_PLANE_VALUE,
     );
-    plane.title = 'Model nowego bota';
+    plane.title = t('waiting.botModel.tip');
     plane.addEventListener('change', () => {
       this.pendingBotPlane = plane.value === RANDOM_PLANE_VALUE ? null : (plane.value as PlaneType);
     });
     const diff = selectEl(
       'lobby-select lobby-bot-diff',
-      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: DIFFICULTY_LABELS[lvl] })),
+      DIFFICULTY_LEVELS.map((lvl) => ({ value: lvl, label: difficultyLabelOf(lvl) })),
       this.pendingBotDifficulty,
     );
-    diff.title = 'Poziom trudności nowego bota';
+    diff.title = t('waiting.botDiff.tip');
     diff.addEventListener('change', () => {
       this.pendingBotDifficulty = diff.value as DifficultyLevel;
     });
     const selectors = el('div', 'lobby-add-bot-selectors');
     selectors.append(plane, diff);
     // brak modelu (Losowy) → onAddBot bez plane (undefined) → serwer losuje typ
-    const add = button('+ dodaj bota', 'lobby-btn lobby-btn-small lobby-add-bot', () =>
+    const add = button(t('waiting.addBot'), 'lobby-btn lobby-btn-small lobby-add-bot', () =>
       this.cb.onAddBot(team, this.pendingBotDifficulty, this.pendingBotPlane ?? undefined),
     );
     add.disabled = roomFull;
-    if (roomFull) add.title = 'Pokój pełny';
+    if (roomFull) add.title = t('waiting.addBot.roomFull');
     wrap.append(selectors, add);
     return wrap;
   }
@@ -638,7 +739,7 @@ export class LobbyUI {
         teamSizes.push(members.length);
         const col = el('div', `lobby-team-col ${TEAM_COLOR_CLASS[faction] ?? ''}`);
         const head = el('div', 'lobby-team-head');
-        head.textContent = `${teamLabel(faction)} (${String(members.length)})`;
+        head.textContent = t('waiting.teamHead', { team: teamLabel(faction), count: members.length });
         col.append(head);
         // sloty RTS: host dorzuca boty do KONKRETNEJ drużyny (dowolne składy). Kontrolki (model+poziom)
         // i „+ dodaj bota" NAD listą, żeby po dodaniu bota przycisk został pod kursorem (lista rośnie
@@ -669,7 +770,7 @@ export class LobbyUI {
       const selected = type === myPlane;
       card.classList.toggle('selected', selected);
       const pick = card.querySelector('.lobby-plane-pick');
-      if (pick) pick.textContent = selected ? '✔ WYBRANY' : 'wybierz';
+      if (pick) pick.textContent = selected ? t('plane.selected') : t('plane.pick');
     }
     // selektor drużyny: ustawiony na MOJĄ frakcję z serwera (drużynowy); każdy gracz wybiera niezależnie
     if (mine && isTeam && this.teamSelect.value !== String(mine.faction)) {
@@ -679,7 +780,7 @@ export class LobbyUI {
     // gotowość (system „Gotów" 2026-06-26): przycisk dla NIE-hosta w poczekalni (host startuje sam)
     this.myReady = mine?.ready ?? false;
     this.readyBtn.style.display = !isHost && !matchInProgress ? '' : 'none';
-    this.readyBtn.textContent = this.myReady ? '✔ Gotów — kliknij, by cofnąć' : '✔ Oznacz: jestem gotów';
+    this.readyBtn.textContent = this.myReady ? t('waiting.readyOn') : t('waiting.readyOff');
     this.readyBtn.classList.toggle('is-ready', this.myReady);
 
     // ustawienia pokoju: host edytuje (selektor trybu), reszta widzi podsumowanie tekstowe. Boty są per
@@ -691,8 +792,8 @@ export class LobbyUI {
     } else {
       // poziom botów jest teraz per slot (nie globalny), więc nie podajemy pojedynczego poziomu — sama liczba
       this.settingsSummary.textContent = isTeam
-        ? 'Tryb: Drużynowy'
-        : `Tryb: FFA  ·  Boty: ${String(view.botCount)}`;
+        ? t('waiting.summaryTeam')
+        : t('waiting.summaryFfa', { count: view.botCount });
     }
 
     // Start (host): licznik gotowości + BLOKADA przy pustej drużynie (decyzja usera: „pozwól, ale zablokuj
@@ -705,21 +806,21 @@ export class LobbyUI {
     const others = view.players.filter((p) => !p.isBot && !p.disconnected && p.id !== view.hostId);
     const readyCount = others.filter((p) => p.ready).length;
     this.startBtn.textContent = emptyTeam
-      ? 'Start — obsadź obie drużyny'
+      ? t('waiting.startEmptyTeam')
       : others.length > 0
-        ? `Start meczu (${String(readyCount)}/${String(others.length)} gotowych)`
-        : 'Start meczu';
+        ? t('waiting.startCount', { ready: readyCount, total: others.length })
+        : t('waiting.start');
     this.startBtn.classList.toggle('lobby-btn-wait', !emptyTeam && others.length > 0 && readyCount < others.length);
 
     // podpowiedź: dla hosta pusta (samoopisowe kontrolki — usunięty nadmiarowy „Jesteś hostem…");
     // ostrzeżenie o pustej drużynie jest nadrzędne i zostaje. Pusty tekst → chowamy wiersz (bez gapu).
     const hint = matchInProgress
-      ? 'Mecz w toku — dołączysz, gdy host wystartuje kolejny.'
+      ? t('waiting.matchInProgress')
       : emptyTeam
-        ? '⚠ Każda drużyna musi mieć przynajmniej jednego pilota lub bota — obsadź pustą stronę.'
+        ? t('waiting.emptyTeamWarn')
         : isHost
           ? ''
-          : 'Wybierz samolot i drużynę, a potem kliknij „Gotów". Host wystartuje mecz.';
+          : t('waiting.hintPlayer');
     this.waitingHintEl.textContent = hint;
     this.waitingHintEl.style.display = hint ? '' : 'none';
   }
@@ -839,8 +940,8 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
  * co SP (plane-mesh.ts), więc kredyt jest wymagany licencją (parytet z modelAttribution() w
  * menu.ts). Tekst przez textContent + kontrolowany link (bez innerHTML — bezpieczeństwo).
  */
-function attributionEl(): HTMLDivElement {
-  const wrap = el('div', 'lobby-attribution');
+function fillAttribution(wrap: HTMLDivElement): void {
+  wrap.replaceChildren();
   const link = (label: string, href: string): HTMLAnchorElement => {
     const a = document.createElement('a');
     a.textContent = label;
@@ -851,23 +952,23 @@ function attributionEl(): HTMLDivElement {
   };
   // CC-BY 4.0 wymaga widocznego uznania autorstwa KAŻDEGO użytego modelu (publiczny deploy
   // ładuje wszystkie GLB — Spitfire, Bf 109 i Zero); CC-BY audio analogicznie (freesound,
-  // pełne formuły w assets/LICENSES.md).
-  wrap.append(document.createTextNode('Modele: „Supermarine Spitfire Mk.IIa" — '));
+  // pełne formuły w assets/LICENSES.md). Lokalizujemy tylko SPÓJNIKI — nazwy własne, autorzy,
+  // identyfikatory licencji zostają (wymóg CC).
+  wrap.append(document.createTextNode(t('attr.models')));
   wrap.append(link('barking_dogo', 'https://sketchfab.com/barking_dogo'));
   wrap.append(document.createTextNode('; „Messerschmitt BF 109" — '));
   wrap.append(link('Jankenstein', 'https://sketchfab.com/Jankenstein'));
   wrap.append(document.createTextNode('; „Mitsubishi A6M2 ZERO - zeke" — '));
   wrap.append(link('Savinien B.', 'https://sketchfab.com/SavinienBerault'));
-  wrap.append(document.createTextNode(' (Sketchfab) — licencja CC-BY 4.0. Dźwięki (freesound, CC-BY): '));
+  wrap.append(document.createTextNode(t('attr.license')));
   wrap.append(link('stereostereo', 'https://freesound.org/people/stereostereo/'));
   wrap.append(document.createTextNode(', '));
   wrap.append(link('Fight2FlyPhoto', 'https://freesound.org/people/Fight2FlyPhoto/'));
   wrap.append(document.createTextNode(', '));
   wrap.append(link('juskiddink', 'https://freesound.org/people/juskiddink/'));
-  wrap.append(document.createTextNode('. Sztuczny horyzont: „Sperry F3 artificial horizon" — '));
+  wrap.append(document.createTextNode(t('attr.horizon')));
   wrap.append(link('Flappiefh', 'https://commons.wikimedia.org/wiki/File:Sperry_F3_artificial_horizon.svg'));
-  wrap.append(document.createTextNode(' (Wikimedia Commons, CC BY-SA 4.0, zmodyfikowany)'));
-  return wrap;
+  wrap.append(document.createTextNode(t('attr.modified')));
 }
 
 function selectEl(
@@ -946,6 +1047,11 @@ const LOBBY_CSS = `
 .lobby-btn-primary { background: #c8581f; border-color: #e2772f; color: #fff; }
 .lobby-btn-primary:hover { background: #db6322; }
 .lobby-btn-small { min-width: auto; padding: 8px 14px; font-size: 13px; }
+/* przełącznik języka (PL/EN): dwa małe przyciski obok siebie, aktywny podświetlony (akcent primary) */
+.lobby-lang-btns { display: inline-flex; gap: 6px; }
+.lobby-lang-btn { min-width: 46px; padding: 8px 12px; font-weight: 700; }
+.lobby-lang-btn.is-active { background: #c8581f; border-color: #e2772f; color: #fff; }
+.lobby-lang-btn.is-active:hover { background: #db6322; }
 .lobby-error { color: #ff8a6a; min-height: 20px; text-align: center; max-width: 460px; }
 .lobby-error.show { margin: 2px 0; }
 /* ramka auto-wykrytej otwartej gry — widoczna tylko, gdy jest do czego dołączyć (.show) */

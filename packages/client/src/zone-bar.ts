@@ -1,4 +1,5 @@
 import { ZONE_CAPTURE_SECONDS } from '@air-combat/shared';
+import { onLangChange, t } from './i18n';
 
 // Pasek postępu kontroli strefy u góry ekranu (faza 7). Czysty DOM/CSS nad
 // canvasem — sama góra jest punktem orientacyjnym w świecie, więc strefy NIE
@@ -11,11 +12,19 @@ import { ZONE_CAPTURE_SECONDS } from '@air-combat/shared';
 
 export type ZoneBarState = 'own' | 'enemy' | 'contested' | 'neutral';
 
-const STATUS: Record<ZoneBarState, { text: string; color: string }> = {
-  own: { text: 'PRZEJMUJESZ STREFĘ', color: '#5fe88a' },
-  enemy: { text: 'WRÓG PRZEJMUJE STREFĘ', color: '#ff6a4a' },
-  contested: { text: 'STREFA SPORNA — pauza', color: '#ffd24a' },
-  neutral: { text: 'STREFA WOLNA — leć nad górę', color: '#9fb6c8' },
+// kolory statusu stałe; tekst lokalizowany co klatkę (update woła t()) — patrz statusText
+const STATUS_COLOR: Record<ZoneBarState, string> = {
+  own: '#5fe88a',
+  enemy: '#ff6a4a',
+  contested: '#ffd24a',
+  neutral: '#9fb6c8',
+};
+
+const STATUS_KEY: Record<ZoneBarState, 'zone.own' | 'zone.enemy' | 'zone.contested' | 'zone.neutral'> = {
+  own: 'zone.own',
+  enemy: 'zone.enemy',
+  contested: 'zone.contested',
+  neutral: 'zone.neutral',
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -41,6 +50,11 @@ export class ZoneBar {
   private readonly enemyFill: HTMLDivElement;
   private readonly playerTime: HTMLSpanElement;
   private readonly enemyTime: HTMLSpanElement;
+  // statyczne etykiety (nagłówek WRÓG/TY + „cel MM:SS") — odświeżane przy zmianie języka
+  private readonly enemyLabel: HTMLSpanElement;
+  private readonly youLabel: HTMLSpanElement;
+  private readonly targetLabel: HTMLSpanElement;
+  private lastState: ZoneBarState = 'neutral';
 
   constructor(parent: HTMLElement) {
     this.root = el(
@@ -54,10 +68,12 @@ export class ZoneBar {
       'div',
       'display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;',
     );
+    this.enemyLabel = el('span', 'font:600 12px monospace;color:#ff9a86;');
+    this.youLabel = el('span', 'font:600 12px monospace;color:#7ef0a0;');
     header.append(
-      el('span', 'font:600 12px monospace;color:#ff9a86;', '◀ WRÓG'),
+      this.enemyLabel,
       (this.status = el('span', 'font:700 14px monospace;letter-spacing:1px;')),
-      el('span', 'font:600 12px monospace;color:#7ef0a0;', 'TY ▶'),
+      this.youLabel,
     );
 
     const track = el(
@@ -89,10 +105,22 @@ export class ZoneBar {
     );
     this.enemyTime = el('span', 'color:#ff9a86;');
     this.playerTime = el('span', 'color:#7ef0a0;');
-    sub.append(this.enemyTime, el('span', 'color:#9ab;', `cel ${fmtClock(ZONE_CAPTURE_SECONDS)}`), this.playerTime);
+    this.targetLabel = el('span', 'color:#9ab;');
+    sub.append(this.enemyTime, this.targetLabel, this.playerTime);
 
     this.root.append(header, track, sub);
     parent.appendChild(this.root);
+    this.applyStaticTexts();
+    onLangChange(() => this.applyStaticTexts());
+  }
+
+  /** Ustawia/odświeża statyczne etykiety (nagłówek WRÓG/TY, „cel MM:SS", bieżący status). */
+  private applyStaticTexts(): void {
+    this.enemyLabel.textContent = t('zone.enemyLabel');
+    this.youLabel.textContent = t('zone.youLabel');
+    this.targetLabel.textContent = t('zone.target', { clock: fmtClock(ZONE_CAPTURE_SECONDS) });
+    this.status.textContent = t(STATUS_KEY[this.lastState]);
+    this.status.style.color = STATUS_COLOR[this.lastState];
   }
 
   setVisible(visible: boolean): void {
@@ -101,9 +129,9 @@ export class ZoneBar {
 
   /** Aktualizuje fronty i status. `*Sec` to sekundy wyłącznej kontroli (0..próg). */
   update(state: ZoneBarState, playerSec: number, enemySec: number): void {
-    const st = STATUS[state];
-    this.status.textContent = st.text;
-    this.status.style.color = st.color;
+    this.lastState = state;
+    this.status.textContent = t(STATUS_KEY[state]);
+    this.status.style.color = STATUS_COLOR[state];
 
     // każdy front zajmuje maks. połowę paska (od środka do końca) przy 100%
     const pPct = Math.min(1, playerSec / ZONE_CAPTURE_SECONDS) * 50;

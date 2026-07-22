@@ -348,12 +348,12 @@
       <div id="loading-status">Łączenie z serwerem…</div>
     </div>
     <div id="webgl-error">
-      <div class="head">Grafika 3D niedostępna</div>
-      <div>
-        Przeglądarka utraciła kontekst WebGL albo go nie obsługuje.<br />
-        Sprawdź, czy włączona jest akceleracja sprzętowa, i odśwież stronę.
+      <div class="head" id="webgl-error-head">Grafika 3D niedostępna</div>
+      <div id="webgl-error-body">
+        Przeglądarka utraciła kontekst WebGL albo go nie obsługuje. Sprawdź, czy włączona jest
+        akceleracja sprzętowa, i odśwież stronę.
       </div>
-      <button onclick="location.reload()">Odśwież</button>
+      <button onclick="location.reload()" id="webgl-error-refresh">Odśwież</button>
     </div>
     <script type="module" src="/src/online-main.ts"></script>
   </body>

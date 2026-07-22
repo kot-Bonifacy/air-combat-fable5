@@ -1,4 +1,5 @@
 import { ZONE_ROLES, type EntityDamage, type ZoneRole } from '@air-combat/shared';
+import { onLangChange, t, type MessageKey } from './i18n';
 
 // HUD modułowych uszkodzeń (faza 22 cz.4): sylwetka własnego samolotu z góry, sześć stref
 // kolorowanych poziomem uszkodzenia (0 zielony → 3 ciemnoczerwony) + wskaźniki pożaru / wycieku /
@@ -60,14 +61,14 @@ export function damageFlags(damage: EntityDamage): { fire: boolean; leak: boolea
   };
 }
 
-/** Polska nazwa modułu (do komunikatu śmierci „ZESTRZELONY — SILNIK"). Wielkie litery jak nagłówek. */
-const ZONE_DEATH_LABEL: Record<ZoneRole, string> = {
-  engine: 'SILNIK',
-  cockpit: 'PILOT',
-  tank: 'ZBIORNIK',
-  wingL: 'SKRZYDŁO',
-  wingR: 'SKRZYDŁO',
-  tail: 'OGON',
+/** Klucz i18n nazwy modułu (do komunikatu śmierci „ZESTRZELONY — SILNIK"). Wielkie litery jak nagłówek. */
+const ZONE_DEATH_LABEL_KEY: Record<ZoneRole, MessageKey> = {
+  engine: 'zone.engine',
+  cockpit: 'zone.cockpit',
+  tank: 'zone.tank',
+  wingL: 'zone.wing',
+  wingR: 'zone.wing',
+  tail: 'zone.tail',
 };
 
 /** Priorytet przy remisie poziomów (co najpewniej dobiło): pilot > silnik > skrzydło > ogon > zbiornik. */
@@ -86,7 +87,7 @@ const ZONE_DEATH_PRIORITY: Record<ZoneRole, number> = {
  * nic krytycznego (np. zwykłe dobicie kadłuba/integralności — wtedy zostaje samo „ZESTRZELONY").
  */
 export function criticalZoneLabel(damage: EntityDamage): string | null {
-  if (damage.onFire) return 'POŻAR';
+  if (damage.onFire) return t('zone.fire');
   let bestRole: ZoneRole | null = null;
   let bestScore = -1;
   for (let i = 0; i < ZONE_ROLES.length; i++) {
@@ -99,7 +100,7 @@ export function criticalZoneLabel(damage: EntityDamage): string | null {
       bestRole = role;
     }
   }
-  return bestRole ? ZONE_DEATH_LABEL[bestRole] : null;
+  return bestRole ? t(ZONE_DEATH_LABEL_KEY[bestRole]) : null;
 }
 
 // --- geometria sylwetki (widok z góry, nos u góry; +X = lewe skrzydło = lewa strona ekranu) ---
@@ -189,12 +190,21 @@ export class DamageHud {
 
     const flags = document.createElement('div');
     flags.className = 'damage-flags';
-    this.fireEl = DamageHud.makeFlag(flags, '🔥 POŻAR', 'fire');
-    this.leakEl = DamageHud.makeFlag(flags, '⛽ WYCIEK', 'leak');
-    this.pilotEl = DamageHud.makeFlag(flags, '✚ PILOT', 'pilot');
+    this.fireEl = DamageHud.makeFlag(flags, 'fire');
+    this.leakEl = DamageHud.makeFlag(flags, 'leak');
+    this.pilotEl = DamageHud.makeFlag(flags, 'pilot');
     this.root.appendChild(flags);
 
+    this.applyStaticTexts();
+    onLangChange(() => this.applyStaticTexts());
     this.setVisible(false);
+  }
+
+  /** Ustawia/odświeża teksty flag (pożar/wyciek/pilot) — statyczne, odświeżane przy zmianie języka. */
+  private applyStaticTexts(): void {
+    this.fireEl.textContent = t('dmg.fire');
+    this.leakEl.textContent = t('dmg.leak');
+    this.pilotEl.textContent = t('dmg.pilot');
   }
 
   private makePath(d: string, fill: string, stroke: string, strokeWidth: string): SVGPathElement {
@@ -249,10 +259,9 @@ export class DamageHud {
     }
   }
 
-  private static makeFlag(parent: HTMLElement, text: string, cls: string): HTMLElement {
+  private static makeFlag(parent: HTMLElement, cls: string): HTMLElement {
     const el = document.createElement('span');
     el.className = `damage-flag ${cls}`;
-    el.textContent = text;
     el.style.display = 'none';
     parent.appendChild(el);
     return el;
@@ -284,7 +293,7 @@ export class DamageHud {
       el.setAttribute('stroke', integrityCol);
       el.setAttribute('stroke-width', integrityW);
     }
-    this.integrityReadout.textContent = `integr. ${Math.round(integrityFrac * 100)}%`;
+    this.integrityReadout.textContent = t('dmg.integrity', { pct: Math.round(integrityFrac * 100) });
     this.integrityReadout.style.color = integrityCol;
     const flags = damageFlags(damage);
     this.fireEl.style.display = flags.fire ? 'inline' : 'none';

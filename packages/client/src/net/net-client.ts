@@ -23,6 +23,7 @@ import {
   type WelcomeMessage,
 } from '@air-combat/shared';
 import { defaultNetConditions, rollDelayMs, type NetConditionsConfig } from './net-conditions';
+import { t } from '../i18n';
 
 // Klient sieciowy trybu online. Transport: handshake JSON + lobby JSON (faza 10) +
 // binarny INPUT/SNAPSHOT (faza 8) PLUS wbudowany symulator warunków sieci (faza 9):
@@ -95,13 +96,13 @@ export class NetClient {
     this.ws.addEventListener('error', () => {
       if (this.status !== 'error') {
         this.status = 'error';
-        this.statusMessage = 'błąd połączenia z serwerem';
+        this.statusMessage = t('conn.msg.error');
       }
     });
     this.ws.addEventListener('close', () => {
       if (this.status !== 'error') {
         this.status = 'closed';
-        if (!this.statusMessage) this.statusMessage = 'połączenie zamknięte';
+        if (!this.statusMessage) this.statusMessage = t('conn.msg.closed');
       }
       if (!this.deliberate) this.onClose?.(); // niezamierzone zerwanie → wyższa warstwa może wznowić sesję
     });
