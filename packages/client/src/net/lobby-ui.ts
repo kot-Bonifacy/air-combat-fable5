@@ -474,8 +474,8 @@ export class LobbyUI {
     const helpPanel = el('div', 'lobby-help-panel');
     const hTitle = el('div', 'lobby-title');
     this.track(hTitle, 'help.title');
-    const hSub = el('div', 'lobby-sub');
-    this.track(hSub, 'help.sub');
+    // BEZ podtytułu z nazwą samolotu — sterowanie jest OGÓLNE (te same klawisze dla wszystkich
+    // maszyn); nazwa „Spitfire Mk IIa" sugerowała błędnie, że klawiszologia dotyczy tylko jego (zgł. usera).
     const helpTable = el('table', 'lobby-help-table');
     for (const [actionKey, keysKey] of ONLINE_CONTROL_ROWS) {
       const tr = document.createElement('tr');
@@ -494,7 +494,7 @@ export class LobbyUI {
     goal.textContent = t('help.goal', { min: zoneMin });
     const helpClose = button('', 'lobby-btn lobby-btn-primary', () => this.hideHelp());
     this.track(helpClose, 'help.start');
-    helpPanel.append(hTitle, hSub, helpTable, goal, helpClose);
+    helpPanel.append(hTitle, helpTable, goal, helpClose);
     this.help.append(helpPanel);
 
     this.root.append(this.entry, this.waiting, this.help);

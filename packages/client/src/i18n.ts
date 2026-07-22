@@ -102,7 +102,6 @@ const pl = {
 
   // --- ekran „jak grać" ---
   'help.title': 'JAK GRAĆ',
-  'help.sub': 'Spitfire Mk IIa — kamera pościgowa, celowanie myszą',
   'help.goal': 'Cel: utrzymaj STREFĘ nad górą przez {min} min albo wybij wrogów. Uważaj na ziemię i przeciągnięcie przy ostrym zakręcie.',
   'help.start': '▶ Zaczynamy',
   'help.act.aim': 'Celowanie / lot',
@@ -367,7 +366,6 @@ const en: Record<MessageKey, string> = {
   'plane.selected': '✔ SELECTED',
 
   'help.title': 'HOW TO PLAY',
-  'help.sub': 'Spitfire Mk IIa — chase camera, mouse aiming',
   'help.goal': 'Goal: hold the ZONE over the mountain for {min} min or wipe out the enemies. Watch out for the ground and for stalling in a hard turn.',
   'help.start': '▶ Let’s go',
   'help.act.aim': 'Aim / fly',
